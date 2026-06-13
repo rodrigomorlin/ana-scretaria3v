@@ -29,6 +29,8 @@ GCAL_ID      = os.environ.get("GCAL_CALENDAR_ID", "primary")
 
 USE_POSTGRES = bool(DATABASE_URL and DATABASE_URL.startswith("postgres"))
 
+def hash_pin(pin): return hashlib.sha256(f"{pin}{SECRET}".encode()).hexdigest()
+
 if USE_POSTGRES:
     import psycopg2, psycopg2.extras
     log.info("Usando PostgreSQL")
@@ -190,8 +192,6 @@ CREATE TABLE IF NOT EXISTS logs (
 init_db()
 
 # ── AUTH ───────────────────────────────────────────────────
-def hash_pin(pin): return hashlib.sha256(f"{pin}{SECRET}".encode()).hexdigest()
-
 def create_token(uid):
     token = secrets.token_urlsafe(32)
     expires = (datetime.now() + timedelta(hours=12)).isoformat()

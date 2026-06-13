@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<meta name="theme-color" content="#6C63D4">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Ana">
+<title>Ana v3 · Secretária de Anestesia</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.31.0/dist/tabler-icons.min.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+:root{
+  --bg:#F8F8FB;--surface:#FFF;--border:#E4E4EF;--faint:#F0F0F8;
+  --text:#1A1A2E;--muted:#6B6B80;--hint:#9898A8;
+  --accent:#6C63D4;--al:#EEEDFE;--ad:#4C45A0;
+  --ok:#1D9E75;--err:#C84040;--warn:#EF9F27;
+  --r:10px;--rs:6px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;background:var(--bg);color:var(--text);
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px}
+
+/* LOGIN */
+.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1rem}
+.login-card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:2rem;width:340px;max-width:100%}
+.login-logo{width:52px;height:52px;background:#CECBF6;border-radius:12px;display:flex;align-items:center;justify-content:center;color:#3C3489;font-size:26px;margin:0 auto 1rem}
+.login-title{text-align:center;font-size:20px;font-weight:600;margin-bottom:4px}
+.login-sub{text-align:center;font-size:12px;color:var(--muted);margin-bottom:1.5rem}
+.f label{font-size:11px;font-weight:500;color:var(--muted);display:block;margin-bottom:4px}
+.f input{width:100%;border:1px solid var(--border);border-radius:var(--rs);padding:9px 12px;font-size:14px;background:var(--surface);color:var(--text);outline:none;margin-bottom:12px}
+.f input:focus{border-color:var(--accent)}
+.btn-full{width:100%;padding:10px;border-radius:var(--rs);border:none;background:var(--accent);color:#fff;font-size:14px;font-weight:500;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px}
+.btn-full:hover{background:var(--ad)}
+.login-err{background:#FEF0F0;border:0.5px solid #F4C4B0;border-radius:var(--rs);padding:8px 12px;font-size:12px;color:var(--err);margin-top:10px;display:none}
+.login-hint{font-size:10px;color:var(--hint);text-align:center;margin-top:12px}
+
+/* APP */
+.app{display:none;height:100vh;flex-direction:column}
+.app.on{display:flex}
+
+/* NAV */
+.nav{background:var(--surface);border-bottom:1px solid var(--border);padding:0 14px;display:flex;align-items:center;gap:10px;height:50px;flex-shrink:0}
+.nav-logo{display:flex;align-items:center;gap:7px;font-weight:600;font-size:15px}
+.nav-ico{width:28px;height:28px;background:#CECBF6;border-radius:7px;display:flex;align-items:center;justify-content:center;color:#3C3489;font-size:14px}
+.ntabs{display:flex;gap:1px;margin-left:6px;overflow-x:auto}
+.ntab{padding:5px 11px;border-radius:var(--rs);font-size:12px;cursor:pointer;color:var(--muted);border:none;background:none;white-space:nowrap;display:flex;align-items:center;gap:4px}
+.ntab:hover{background:var(--faint)}
+.ntab.on{background:var(--al);color:var(--accent);font-weight:500}
+.nright{margin-left:auto;display:flex;align-items:center;gap:7px}
+.user-info{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:4px}
+.dot-ok{width:6px;height:6px;border-radius:50%;background:var(--ok)}
+.ico-btn{width:28px;height:28px;border-radius:50%;border:0.5px solid var(--border);cursor:pointer;background:transparent;color:var(--muted);display:flex;align-items:center;justify-content:center;font-size:14px}
+.ico-btn:hover{background:var(--faint);color:var(--accent)}
+
+/* LAYOUT */
+.main{flex:1;display:flex;overflow:hidden}
+.sidebar{width:210px;border-right:1px solid var(--border);display:flex;flex-direction:column;background:var(--surface);flex-shrink:0}
+.mem-hdr{padding:9px 12px;border-bottom:1px solid var(--border);font-size:11px;font-weight:500;color:var(--muted);display:flex;align-items:center;gap:5px}
+.mem-cnt{background:var(--accent);color:#fff;border-radius:20px;font-size:9px;padding:1px 6px;margin-left:auto}
+.mem-list{flex:1;overflow-y:auto;padding:5px}
+.mem-item{padding:5px 7px;border-radius:5px;font-size:10px;color:var(--muted);margin-bottom:3px;border:0.5px solid var(--border);background:var(--faint);display:flex;align-items:flex-start;gap:4px;line-height:1.4}
+.mem-item i{color:var(--accent);flex-shrink:0;margin-top:1px;font-size:11px}
+.mem-del{margin-left:auto;cursor:pointer;color:var(--hint);font-size:11px}
+.mem-del:hover{color:var(--err)}
+.mem-empty{font-size:10px;color:var(--hint);padding:12px;text-align:center;line-height:1.7}
+.mem-foot{padding:5px;border-top:1px solid var(--border)}
+.sb-btn{width:100%;padding:5px;border-radius:5px;font-size:10px;border:0.5px solid var(--border);background:transparent;cursor:pointer;color:var(--muted);display:flex;align-items:center;justify-content:center;gap:3px}
+.sb-btn:hover{background:var(--faint);color:var(--err)}
+
+/* CHAT */
+.chat-wrap{flex:1;display:flex;flex-direction:column;min-width:0}
+.msgs{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px;background:var(--faint)}
+.mw{display:flex;flex-direction:column;max-width:88%}
+.mw.r{align-self:flex-end;align-items:flex-end}
+.bub{padding:9px 13px;border-radius:12px;font-size:13px;line-height:1.6}
+.bub.bot{background:var(--surface);border:0.5px solid var(--border);border-bottom-left-radius:3px}
+.bub.user{background:var(--accent);color:#fff;border-bottom-right-radius:3px}
+.bub table{width:100%;border-collapse:collapse;font-size:11px;margin-top:6px}
+.bub th{background:var(--faint);padding:4px 7px;text-align:left;font-weight:500;border-bottom:0.5px solid var(--border);font-size:10px}
+.bub td{padding:4px 7px;border-bottom:0.5px solid var(--border);vertical-align:top}
+.bub tr:last-child td{border-bottom:none}
+.ev-tag{display:inline-block;padding:1px 7px;border-radius:9px;font-size:10px}
+.ev-card{background:var(--faint);border:0.5px solid var(--border);border-radius:var(--rs);padding:8px 10px;margin-top:7px}
+.ev-row{display:flex;align-items:center;gap:6px;padding:2px 0;font-size:12px;color:var(--muted)}
+.ev-row b{color:var(--text)}
+.ts{font-size:9px;color:var(--hint);margin-top:2px;padding:0 3px}
+.fb-row{display:flex;gap:4px;margin-top:5px}
+.fb-btn{padding:3px 8px;border-radius:20px;font-size:10px;border:0.5px solid var(--border);cursor:pointer;background:transparent;color:var(--muted);display:flex;align-items:center;gap:3px}
+.fb-btn:hover{border-color:var(--accent);color:var(--accent)}
+.sug-row{display:flex;gap:4px;flex-wrap:wrap;margin-top:6px}
+.sug{padding:3px 9px;border-radius:20px;font-size:10px;border:0.5px solid #AFA9EC;cursor:pointer;background:var(--al);color:var(--ad)}
+.sug:hover{background:#CECBF6}
+.typing{display:none;align-items:center;gap:4px;padding:8px 12px;background:var(--surface);border:0.5px solid var(--border);border-radius:12px;border-bottom-left-radius:3px;align-self:flex-start;width:fit-content}
+.typing span{width:6px;height:6px;border-radius:50%;background:var(--hint);animation:blink 1.2s infinite}
+.typing span:nth-child(2){animation-delay:.2s}
+.typing span:nth-child(3){animation-delay:.4s}
+@keyframes blink{0%,80%,100%{opacity:.2}40%{opacity:1}}
+.inp-area{padding:9px 11px;border-top:1px solid var(--border);background:var(--surface)}
+.pdf-prev{display:flex;align-items:center;gap:7px;background:var(--al);border:0.5px solid #AFA9EC;border-radius:var(--rs);padding:5px 9px;margin-bottom:6px;font-size:11px;color:var(--ad)}
+.inp-row{display:flex;gap:5px;align-items:center}
+.msg-inp{flex:1;border:0.5px solid var(--border);border-radius:18px;padding:7px 13px;font-size:13px;background:var(--surface);color:var(--text);outline:none;font-family:inherit}
+.msg-inp:focus{border-color:var(--accent)}
+.att-btn{width:30px;height:30px;border-radius:50%;border:0.5px solid var(--border);cursor:pointer;background:transparent;color:var(--muted);display:flex;align-items:center;justify-content:center;font-size:14px}
+.att-btn:hover{background:var(--faint);color:var(--accent)}
+.snd-btn{width:30px;height:30px;border-radius:50%;background:var(--accent);border:none;cursor:pointer;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px}
+.snd-btn:hover{background:var(--ad)}
+.snd-btn:disabled,.att-btn:disabled{opacity:.4;cursor:not-allowed}
+.hint-txt{font-size:9px;color:var(--hint);margin-top:4px;padding:0 3px}
+
+/* PANELS */
+.panel{display:none;flex:1;overflow-y:auto;padding:1.1rem}
+.panel.on{display:block}
+
+/* CARDS */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:1rem 1.2rem;margin-bottom:1rem}
+.card-title{font-size:13px;font-weight:500;margin-bottom:.7rem;display:flex;align-items:center;gap:6px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 70px;gap:8px;align-items:end}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:1rem}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:12px 16px}
+.stat-n{font-size:26px;font-weight:600}
+.stat-l{font-size:11px;color:var(--muted);margin-top:2px}
+.stat-sub{font-size:10px;color:var(--hint);margin-top:1px}
+
+/* BUTTONS */
+.btn{border:0.5px solid var(--border);border-radius:var(--rs);padding:6px 13px;font-size:12px;cursor:pointer;color:var(--text);background:var(--surface);display:inline-flex;align-items:center;gap:5px}
+.btn:hover{background:var(--faint)}
+.btn.primary{background:var(--accent);border-color:var(--ad);color:#fff}
+.btn.primary:hover{background:var(--ad)}
+.btn.danger{color:var(--err);border-color:#F4C4B0}
+.btn.danger:hover{background:#FEF0F0}
+.btn.sm{padding:3px 7px;font-size:10px}
+.btn.success{background:var(--ok);border-color:#0F6E56;color:#fff}
+
+/* FORM */
+.fl label{font-size:11px;color:var(--muted);display:block;margin-bottom:3px;font-weight:500}
+.fl input,.fl select{width:100%;border:0.5px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:13px;background:var(--surface);color:var(--text)}
+.sep{border-top:0.5px solid var(--border);padding-top:11px;margin-top:9px}
+.sep-lbl{font-size:11px;font-weight:500;color:var(--muted);margin-bottom:7px}
+
+/* LIST */
+.li{display:flex;align-items:center;gap:7px;padding:7px 9px;background:var(--faint);border-radius:var(--rs);font-size:12px;border:0.5px solid var(--border);margin-bottom:4px}
+.li-name{flex:1;font-weight:500}
+.li-spec{font-size:10px;color:var(--muted)}
+.cdot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+
+/* AGENDA TABLE */
+.ag-tbl{width:100%;border-collapse:collapse;font-size:12px}
+.ag-tbl th{background:var(--faint);padding:6px 9px;text-align:left;border-bottom:0.5px solid var(--border);font-size:10px;font-weight:500;color:var(--muted);white-space:nowrap}
+.ag-tbl td{padding:6px 9px;border-bottom:0.5px solid var(--border);vertical-align:middle}
+.ag-tbl tr:hover td{background:var(--faint)}
+
+/* CHARTS */
+.chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:1rem}
+.chart-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:1rem}
+.chart-title{font-size:12px;font-weight:500;color:var(--muted);margin-bottom:.7rem}
+.chart-wrap{position:relative;height:180px}
+
+/* LOGS */
+.log-row{display:flex;gap:7px;padding:5px 9px;border-bottom:0.5px solid var(--border);font-size:10px;font-family:monospace}
+.log-lvl{width:38px;font-weight:500;flex-shrink:0}
+.log-lvl.INFO{color:var(--ok)}.log-lvl.WARN{color:var(--warn)}.log-lvl.ERROR{color:var(--err)}
+.log-ts{color:var(--hint);white-space:nowrap;flex-shrink:0}
+.log-msg{flex:1;color:var(--text)}
+.log-usr{color:var(--muted);flex-shrink:0}
+
+/* INTEGRATION CARD */
+.int-row{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:0.5px solid var(--border)}
+.int-row:last-child{border-bottom:none}
+.int-ico{width:34px;height:34px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0}
+.int-body{flex:1}
+.int-name{font-size:13px;font-weight:500}
+.int-desc{font-size:11px;color:var(--muted)}
+.int-status{font-size:10px;padding:2px 8px;border-radius:20px}
+.int-status.ok{background:#EAF7F3;color:var(--ok)}
+.int-status.off{background:var(--faint);color:var(--muted)}
+
+/* DROP OVERLAY */
+.drop-ov{display:none;position:fixed;inset:0;background:rgba(108,99,212,.14);border:3px dashed var(--accent);z-index:100;align-items:center;justify-content:center;flex-direction:column;gap:10px;pointer-events:none}
+.drop-ov.on{display:flex}
+
+/* TOAST */
+.toast{position:fixed;bottom:18px;right:18px;border-radius:var(--rs);padding:9px 16px;font-size:13px;z-index:999;display:none;align-items:center;gap:6px;box-shadow:0 4px 16px rgba(0,0,0,.12)}
+.toast.ok{background:var(--ok);color:#fff}
+.toast.err{background:var(--err);color:#fff}
+.toast.warn{background:var(--warn);color:#fff}
+
+/* COLORS */
+.bc{background:#CECBF6;color:#3C3489}.bt{background:#9FE1CB;color:#085041}
+.ba{background:#FAC775;color:#633806}.bp{background:#F4C0D1;color:#72243E}.bb{background:#B5D4F4;color:#0C447C}
+
+@media(max-width:680px){
+  .sidebar{display:none}.grid4{grid-template-columns:1fr 1fr}.chart-grid{grid-template-columns:1fr}
+  .grid2{grid-template-columns:1fr}.ntabs .ntab span{display:none}
+}
+</style>
+</head>
+<body>
+
+<div class="drop-ov" id="dov"><i class="ti ti-file-text" style="font-size:46px;color:var(--accent)"></i><div style="font-size:15px;font-weight:500;color:var(--accent)">Solte o PDF aqui</div></div>
+
+<!-- LOGIN -->
+<div class="login-wrap" id="lwrap">
+  <div class="login-card">
+    <div class="login-logo"><i class="ti ti-stethoscope"></i></div>
+    <div class="login-title">Ana v3</div>
+    <div class="login-sub">Secretária de Anestesiologia</div>
+    <div class="f">
+      <label>ID do usuário</label><input id="lu" placeholder="admin" onkeydown="if(event.key==='Enter')doLogin()">
+      <label>PIN</label><input id="lp" type="password" placeholder="••••" maxlength="8" onkeydown="if(event.key==='Enter')doLogin()">
+    </div>
+    <button class="btn-full" onclick="doLogin()" id="lbtn"><i class="ti ti-login"></i> Entrar</button>
+    <div class="login-err" id="lerr"></div>
+    <div class="login-hint">Padrão: admin / 1234 · Troque após o primeiro acesso</div>
+  </div>
+</div>
+
+<!-- APP -->
+<div class="app" id="app">
+<div class="nav">
+  <div class="nav-logo"><div class="nav-ico"><i class="ti ti-stethoscope"></i></div>Ana <span style="font-size:10px;color:var(--muted);font-weight:400">v3</span></div>
+  <div class="ntabs">
+    <button class="ntab on" onclick="tab('chat')"><i class="ti ti-message-circle"></i><span>Chat</span></button>
+    <button class="ntab" onclick="tab('agenda')"><i class="ti ti-calendar"></i><span>Agenda</span></button>
+    <button class="ntab" onclick="tab('relatorios')"><i class="ti ti-chart-bar"></i><span>Relatórios</span></button>
+    <button class="ntab" onclick="tab('config')"><i class="ti ti-settings"></i><span>Config</span></button>
+    <button class="ntab" id="tab-logs" onclick="tab('logs')" style="display:none"><i class="ti ti-terminal"></i><span>Logs</span></button>
+  </div>
+  <div class="nright">
+    <div class="user-info"><span class="dot-ok"></span><span id="uname">—</span></div>
+    <button class="ico-btn" onclick="doLogout()" title="Sair"><i class="ti ti-logout"></i></button>
+  </div>
+</div>
+
+<div class="main">
+
+<!-- SIDEBAR -->
+<div class="sidebar">
+  <div class="mem-hdr"><i class="ti ti-brain" style="color:var(--accent)"></i>Memória<span class="mem-cnt" id="mcnt">0</span></div>
+  <div class="mem-list" id="mlist"><div class="mem-empty">A Ana aprende<br>com o uso.</div></div>
+  <div class="mem-foot"><button class="sb-btn" onclick="clearMem()"><i class="ti ti-trash"></i> Limpar</button></div>
+</div>
+
+<!-- CHAT -->
+<div id="pchat" style="flex:1;display:flex;flex-direction:column;min-width:0">
+  <div class="msgs" id="msgs"><div class="typing" id="typ"><span></span><span></span><span></span></div></div>
+  <div class="inp-area">
+    <div id="pdfwrap" style="display:none">
+      <div class="pdf-prev"><i class="ti ti-file-text" style="font-size:14px;flex-shrink:0"></i><span id="pdfname" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span><span style="cursor:pointer;color:var(--accent);margin-left:auto" onclick="rmPDF()"><i class="ti ti-x"></i></span></div>
+    </div>
+    <div class="inp-row">
+      <button class="att-btn" onclick="document.getElementById('pfi').click()" aria-label="PDF"><i class="ti ti-paperclip"></i></button>
+      <input type="file" id="pfi" accept=".pdf" style="display:none" onchange="attachPDF(this.files[0])">
+      <input class="msg-inp" id="minp" placeholder="Fale com a Ana..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}">
+      <button class="snd-btn" id="sbtn" onclick="send()" aria-label="Enviar"><i class="ti ti-send"></i></button>
+    </div>
+    <div class="hint-txt">📎 PDF · arraste · "novo CC terça 08h — raqui cesárea Maria, Dra. Ana" · "relatório semana"</div>
+  </div>
+</div>
+
+<!-- AGENDA -->
+<div id="pagenda" class="panel">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.9rem;flex-wrap:wrap;gap:7px">
+    <div style="font-size:15px;font-weight:500">Agenda completa</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn" onclick="exportPDF()"><i class="ti ti-file-export"></i> Exportar PDF</button>
+      <button class="btn primary" onclick="tab('chat');document.getElementById('minp').focus()"><i class="ti ti-plus"></i> Novo</button>
+    </div>
+  </div>
+  <div class="grid4" id="ag-stats"></div>
+  <div class="card" style="padding:0;overflow:hidden">
+    <div style="overflow-x:auto"><table class="ag-tbl" id="agtbl"><tr><td style="padding:18px;color:var(--muted);text-align:center">Carregando...</td></tr></table></div>
+  </div>
+</div>
+
+<!-- RELATÓRIOS -->
+<div id="prelatorios" class="panel">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.9rem;flex-wrap:wrap;gap:7px">
+    <div style="font-size:15px;font-weight:500">Relatórios e análises</div>
+    <button class="btn" onclick="loadRelatorios()"><i class="ti ti-refresh"></i> Atualizar</button>
+  </div>
+  <div class="grid4" id="rel-stats"></div>
+  <div class="chart-grid">
+    <div class="chart-card"><div class="chart-title">Procedimentos por médico</div><div class="chart-wrap"><canvas id="ch-medico"></canvas></div></div>
+    <div class="chart-card"><div class="chart-title">Procedimentos por setor</div><div class="chart-wrap"><canvas id="ch-setor"></canvas></div></div>
+    <div class="chart-card"><div class="chart-title">Volume por mês (12 meses)</div><div class="chart-wrap"><canvas id="ch-mes"></canvas></div></div>
+    <div class="chart-card"><div class="chart-title">Distribuição por dia da semana</div><div class="chart-wrap"><canvas id="ch-dia"></canvas></div></div>
+  </div>
+</div>
+
+<!-- CONFIG -->
+<div id="pconfig" class="panel">
+
+  <div class="card">
+    <div class="card-title"><i class="ti ti-users" style="color:var(--accent)"></i>Médicos</div>
+    <div id="doclist"></div>
+    <div class="sep"><div class="sep-lbl">Adicionar</div>
+      <div class="grid2" style="margin-bottom:8px">
+        <div class="fl"><label>Nome</label><input id="ndname" placeholder="Dr. Nome Sobrenome"></div>
+        <div class="fl"><label>Especialidade</label><input id="ndspec" placeholder="Anestesia cardíaca"></div>
+      </div>
+      <div class="fl" style="margin-bottom:8px"><label>Email (para notificações)</label><input id="ndemail" type="email" placeholder="medico@hospital.com"></div>
+      <button class="btn primary" onclick="addDoc()"><i class="ti ti-user-plus"></i> Adicionar</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title"><i class="ti ti-building-hospital" style="color:var(--accent)"></i>Setores</div>
+    <div id="setlist"></div>
+    <div class="sep"><div class="sep-lbl">Adicionar</div>
+      <div class="grid3" style="margin-bottom:8px">
+        <div class="fl"><label>Nome</label><input id="nsname" placeholder="Hemodinâmica"></div>
+        <div class="fl"><label>Código</label><input id="nscode" placeholder="hd" maxlength="3"></div>
+        <div class="fl"><label>Cor</label><input type="color" id="nscolor" value="#CECBF6" style="width:100%;height:36px;padding:2px;border-radius:6px;border:0.5px solid var(--border);cursor:pointer"></div>
+      </div>
+      <button class="btn primary" onclick="addSetor()"><i class="ti ti-plus"></i> Adicionar</button>
+    </div>
+  </div>
+
+  <div class="card" id="usec" style="display:none">
+    <div class="card-title"><i class="ti ti-lock" style="color:var(--accent)"></i>Usuários e acesso</div>
+    <div id="ulist"></div>
+    <div class="sep"><div class="sep-lbl">Criar usuário</div>
+      <div class="grid2" style="margin-bottom:8px">
+        <div class="fl"><label>ID</label><input id="nuid" placeholder="drcarlos"></div>
+        <div class="fl"><label>Nome</label><input id="nunome" placeholder="Dr. Carlos Mendes"></div>
+      </div>
+      <div class="grid2" style="margin-bottom:8px">
+        <div class="fl"><label>PIN</label><input id="nupin" type="password" placeholder="••••" maxlength="8"></div>
+        <div class="fl"><label>Papel</label><select id="nurole"><option value="medico">Médico</option><option value="admin">Admin</option></select></div>
+      </div>
+      <button class="btn primary" onclick="addUser()"><i class="ti ti-user-plus"></i> Criar</button>
+    </div>
+    <div class="sep"><div class="sep-lbl">Alterar meu PIN</div>
+      <div class="grid2" style="margin-bottom:8px">
+        <div class="fl"><label>PIN atual</label><input id="pina" type="password" placeholder="••••"></div>
+        <div class="fl"><label>Novo PIN</label><input id="pinn" type="password" placeholder="••••"></div>
+      </div>
+      <button class="btn primary" onclick="changePin()"><i class="ti ti-key"></i> Alterar</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title"><i class="ti ti-plug" style="color:var(--accent)"></i>Integrações</div>
+    <div id="int-status"></div>
+    <div class="sep"><div class="sep-lbl" style="margin-bottom:3px">Google Calendar</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Configure via variável de ambiente <code style="background:var(--faint);padding:1px 5px;border-radius:3px">GCAL_CREDENTIALS</code> no Railway.</div>
+      <div class="sep-lbl" style="margin-bottom:3px">Notificações por email</div>
+      <div style="font-size:11px;color:var(--muted)">Configure <code style="background:var(--faint);padding:1px 5px;border-radius:3px">SMTP_HOST</code>, <code style="background:var(--faint);padding:1px 5px;border-radius:3px">SMTP_USER</code> e <code style="background:var(--faint);padding:1px 5px;border-radius:3px">SMTP_PASS</code> no Railway. O email do médico deve ser cadastrado no perfil acima.</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- LOGS -->
+<div id="plogs" class="panel">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.9rem">
+    <div style="font-size:15px;font-weight:500">Logs do sistema</div>
+    <button class="btn" onclick="loadLogs()"><i class="ti ti-refresh"></i> Atualizar</button>
+  </div>
+  <div class="card" style="padding:0;overflow:hidden">
+    <div id="logslist" style="max-height:520px;overflow-y:auto"></div>
+  </div>
+</div>
+
+</div>
+</div>
+
+<div class="toast" id="toast"><i class="ti ti-check"></i><span id="tmsg"></span></div>
+
+<script>
+// ── STATE ────────────────────────────────────────────────
+const API='';
+const BADGE={c:'bc',t:'bt',a:'ba',p:'bp',b:'bb'};
+const CPALS=['#CECBF6','#9FE1CB','#FAC775','#F4C0D1','#B5D4F4','#F0997B','#C0DD97'];
+const DIAS=['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+let token='',me=null,pdfData=null,nMid=Date.now();
+let eventos=[],medicos=[],setores=[],memorias=[];
+let charts={};
+
+// ── API ──────────────────────────────────────────────────
+async function api(m,p,b=null){
+  const o={method:m,headers:{'Content-Type':'application/json','X-Token':token}};
+  if(b)o.body=JSON.stringify(b);
+  const r=await fetch(API+p,o);
+  if(r.status===401){doLogout();throw new Error('Sessão expirada.');}
+  if(!r.ok){const e=await r.json().catch(()=>({detail:'Erro'}));throw new Error(e.detail||'Erro');}
+  return r.json();
+}
+
+// ── AUTH ─────────────────────────────────────────────────
+async function doLogin(){
+  const uid=document.getElementById('lu').value.trim();
+  const pin=document.getElementById('lp').value;
+  if(!uid||!pin){showErr('Preencha ID e PIN.');return;}
+  const btn=document.getElementById('lbtn');btn.disabled=true;
+  try{
+    const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({usuario_id:uid,pin})});
+    if(!r.ok){const e=await r.json().catch(()=>({detail:'Erro'}));throw new Error(e.detail);}
+    const d=await r.json();token=d.token;me=d.usuario;
+    sessionStorage.setItem('ana_token',token);showApp();
+  }catch(e){showErr(e.message||'Erro.');}
+  btn.disabled=false;
+}
+function showErr(m){const e=document.getElementById('lerr');e.textContent=m;e.style.display='block';}
+async function doLogout(){
+  try{await api('POST','/api/logout');}catch{}
+  token='';me=null;sessionStorage.removeItem('ana_token');
+  document.getElementById('app').classList.remove('on');
+  document.getElementById('lwrap').style.display='flex';
+  document.getElementById('msgs').innerHTML='<div class="typing" id="typ"><span></span><span></span><span></span></div>';
+}
+async function showApp(){
+  document.getElementById('lwrap').style.display='none';
+  document.getElementById('app').classList.add('on');
+  document.getElementById('uname').textContent=me.nome;
+  if(me.role==='admin'){document.getElementById('tab-logs').style.display='flex';document.getElementById('usec').style.display='block';}
+  await loadAll();loadIntStatus();initWelcome();
+  setInterval(loadAll,30000);
+}
+async function tryAuto(){
+  const t=sessionStorage.getItem('ana_token');if(!t)return;
+  try{const r=await fetch('/api/me',{headers:{'X-Token':t}});if(r.ok){token=t;me=await r.json();showApp();}}catch{}
+}
+
+// ── DATA ─────────────────────────────────────────────────
+async function loadAll(){
+  try{
+    [medicos,setores,eventos,memorias]=await Promise.all([
+      api('GET','/api/medicos'),api('GET','/api/setores'),
+      api('GET','/api/eventos'),api('GET','/api/memorias')]);
+    renderMem();renderDocList();renderSetorList();
+    if(me?.role==='admin')loadUList();
+  }catch(e){toast(e.message,'err');}
+}
+
+function getS(id){return setores.find(s=>s.id===id)||{name:id,color:'#ddd',text_color:'#333'}}
+function nowT(){return new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}
+function fmtD(iso){return new Date(iso+'T12:00').toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short'})}
+
+// ── TABS ─────────────────────────────────────────────────
+function tab(n){
+  const names=['chat','agenda','relatorios','config','logs'];
+  document.querySelectorAll('.ntab').forEach((t,i)=>t.classList.toggle('on',names[i]===n));
+  document.getElementById('pchat').style.display=n==='chat'?'flex':'none';
+  ['agenda','relatorios','config','logs'].forEach(p=>{
+    const el=document.getElementById('p'+p);if(el)el.classList.toggle('on',p===n);
+  });
+  if(n==='agenda')renderAgenda();
+  if(n==='relatorios')loadRelatorios();
+  if(n==='logs')loadLogs();
+}
+
+// ── MEMÓRIA ──────────────────────────────────────────────
+function renderMem(){
+  const el=document.getElementById('mlist');
+  document.getElementById('mcnt').textContent=memorias.length;
+  if(!memorias.length){el.innerHTML='<div class="mem-empty">A Ana aprende<br>com o uso.</div>';return;}
+  el.innerHTML=memorias.map(m=>`<div class="mem-item"><i class="ti ${m.icone||'ti-brain'}"></i><span style="flex:1">${m.texto}</span><span class="mem-del" onclick="delMem('${m.id}')"><i class="ti ti-x"></i></span></div>`).join('');
+}
+async function addMem(txt,ico='ti-brain'){
+  if(memorias.find(m=>m.texto.toLowerCase()===txt.toLowerCase()))return;
+  const m={id:'m'+nMid++,texto:txt,icone:ico,tipo:'aprendido'};
+  try{await api('POST','/api/memorias',m);memorias.unshift(m);renderMem();}catch{}
+}
+async function delMem(id){try{await api('DELETE',`/api/memorias/${id}`);memorias=memorias.filter(m=>m.id!==id);renderMem();}catch{}}
+async function clearMem(){
+  if(!confirm('Limpar memórias aprendidas?'))return;
+  try{await api('DELETE','/api/memorias');memorias=memorias.filter(m=>m.tipo==='padrao');renderMem();}catch(e){toast(e.message,'err');}
+}
+
+// ── PDF ──────────────────────────────────────────────────
+document.body.addEventListener('dragover',e=>{e.preventDefault();document.getElementById('dov').classList.add('on')});
+document.body.addEventListener('dragleave',e=>{if(!document.body.contains(e.relatedTarget))document.getElementById('dov').classList.remove('on')});
+document.body.addEventListener('drop',e=>{
+  e.preventDefault();document.getElementById('dov').classList.remove('on');
+  const f=e.dataTransfer.files[0];if(f&&f.type==='application/pdf')attachPDF(f);else if(f)addMsg('Só aceito PDFs.','bot');
+});
+function attachPDF(file){
+  if(!file)return;
+  const r=new FileReader();
+  r.onload=()=>{pdfData={name:file.name,b64:r.result.split(',')[1]};document.getElementById('pdfname').textContent=file.name;document.getElementById('pdfwrap').style.display='block';document.getElementById('minp').placeholder='Instrução adicional (opcional)...';document.getElementById('minp').focus();};
+  r.readAsDataURL(file);
+}
+function rmPDF(){pdfData=null;document.getElementById('pdfwrap').style.display='none';document.getElementById('pfi').value='';document.getElementById('minp').placeholder='Fale com a Ana...';}
+
+// ── CHAT ─────────────────────────────────────────────────
+function addMsg(html,type,extras={}){
+  const msgs=document.getElementById('msgs');const typ=document.getElementById('typ');
+  const wrap=document.createElement('div');wrap.className='mw'+(type==='user'?' r':'');
+  const b=document.createElement('div');b.className='bub '+type;b.innerHTML=html;wrap.appendChild(b);
+  if(extras.feedback){const fb=document.createElement('div');fb.className='fb-row';fb.innerHTML=`<button class="fb-btn" onclick="fbOk(this)"><i class="ti ti-thumb-up"></i> Certo</button><button class="fb-btn" onclick="fbErr(this)"><i class="ti ti-thumb-down"></i> Corrigir</button>`;wrap.appendChild(fb);}
+  if(extras.sug?.length){const sr=document.createElement('div');sr.className='sug-row';extras.sug.forEach(s=>{const sp=document.createElement('span');sp.className='sug';sp.textContent=s;sp.onclick=()=>{sr.querySelectorAll('.sug').forEach(x=>x.style.opacity='.4');processInput(s,null);};sr.appendChild(sp);});wrap.appendChild(sr);}
+  const ts=document.createElement('div');ts.className='ts'+(type==='user'?' r':'');ts.textContent=nowT();wrap.appendChild(ts);
+  msgs.insertBefore(wrap,typ);msgs.scrollTop=msgs.scrollHeight;
+}
+function fbOk(btn){btn.closest('.fb-row').innerHTML='<span style="font-size:10px;color:var(--muted)">✓ Ótimo!</span>';addMem('Agendamento confirmado','ti-thumb-up');}
+function fbErr(btn){btn.closest('.fb-row').innerHTML='<span style="font-size:10px;color:var(--muted)">Me diga o que estava errado.</span>';document.getElementById('minp').focus();}
+function showTyp(){document.getElementById('typ').style.display='flex';document.getElementById('msgs').scrollTop=99999;}
+function hideTyp(){document.getElementById('typ').style.display='none';}
+
+function send(){
+  const inp=document.getElementById('minp');const txt=inp.value.trim();const pdf=pdfData;
+  if(!txt&&!pdf)return;rmPDF();inp.value='';
+  processInput(txt||'Analise este pedido médico.',pdf);
+}
+
+async function processInput(txt,pdf=null){
+  if(pdf)addMsg(`<i class="ti ti-file-text" style="color:var(--accent);margin-right:5px"></i><b>${pdf.name}</b>${txt&&txt!=='Analise este pedido médico.'?`<br><span style="font-size:11px;opacity:.8">${txt}</span>`:''}`, 'user');
+  else addMsg(txt,'user');
+  document.getElementById('sbtn').disabled=true;showTyp();
+  await new Promise(r=>setTimeout(r,400));
+
+  let ctx;try{ctx=await api('GET','/api/contexto-ia');}catch{ctx={eventos,memorias:memorias.map(m=>m.texto),historico:[],medicos:medicos.map(m=>m.name),setores:Object.fromEntries(setores.map(s=>[s.id,s.name]))};}
+
+  const today=new Date().toISOString().slice(0,10);
+  const todayFull=new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
+  const nextId=Math.max(100,...eventos.map(e=>e.id),1)+1;
+
+  const system=`Você é Ana, secretária virtual de anestesiologia. Usuário: ${me.nome}. Hoje: ${todayFull} (${today}).
+MÉDICOS: ${ctx.medicos.join(', ')}
+SETORES: ${Object.entries(ctx.setores).map(([k,v])=>`${v}(${k})`).join(', ')}
+AGENDA: ${JSON.stringify(ctx.eventos)}
+PRÓXIMO ID: ${nextId}
+MEMÓRIAS: ${ctx.memorias.slice(0,20).join(' | ')}
+HISTÓRICO: ${ctx.historico.slice(0,10).map(h=>`${h.date} ${h.time} ${h.setor} ${h.proc} ${h.paciente}`).join(' | ')}
+REGRAS: interprete linguagem natural e abreviações (CC=Centro Cirúrgico, raqui=raquianestesia, AG=anestesia geral). Use memórias/histórico para preencher campos omitidos. Detecte conflito. Para PDFs: extraia tudo e sugira anestesista. novas_memorias: máx 2. suggests: 2 ações. Seja breve.
+RETORNE APENAS JSON sem markdown:
+{"acao":"AGENDAR"|"CANCELAR"|"RELATORIO"|"CONSULTAR"|"CORRECAO"|"DUVIDA","resposta":"HTML","evento":{"id":N,"doc":"","setor":"","proc":"","paciente":"","date":"YYYY-MM-DD","time":"HH:MM","obs":""},"cancelar_id":N|null,"tabela":[{"data":"","hora":"","setor":"","proc":"","paciente":"","medico":"","obs":""}],"novas_memorias":[{"texto":"","icone":""}],"suggests":["",""]}`;
+
+  const mc=pdf?[{type:'document',source:{type:'base64',media_type:'application/pdf',data:pdf.b64}},{type:'text',text:txt}]:txt;
+  try{
+    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1500,system,messages:[{role:'user',content:mc}]})});
+    const data=await res.json();
+    const raw=data.content.map(i=>i.text||'').join('').replace(/```json[\s\S]*?```|```/g,'').trim();
+    let p;try{p=JSON.parse(raw);}catch{p={acao:'DUVIDA',resposta:'Não entendi. Pode reformular?',suggests:['Relatório da semana','Novo agendamento']};}
+    hideTyp();
+    if(p.novas_memorias)p.novas_memorias.forEach(m=>{if(m.texto)addMem(m.texto,m.icone||'ti-brain');});
+    const sug=p.suggests||[];
+
+    if(p.acao==='AGENDAR'&&p.evento?.proc&&p.evento?.date){
+      const ev=p.evento;
+      const cf=eventos.find(e=>e.doc===ev.doc&&e.date===ev.date&&e.time===ev.time);
+      if(cf){addMsg(`⚠️ <b>Conflito:</b> ${ev.doc} já tem <b>${cf.proc}</b> às ${ev.time}.<br>${p.resposta||''}`, 'bot',{sug});}
+      else{
+        try{
+          const saved=await api('POST','/api/eventos',{...ev,ai:true});eventos.push(saved);
+          const s=getS(ev.setor);const bc=BADGE[ev.setor]||'';
+          let html=pdf?'📄 <b>PDF lido!</b><br>':'✅ <b>Agendado!</b><br>';
+          html+=`<div class="ev-card"><div class="ev-row"><i class="ti ti-calendar"></i><b>${fmtD(ev.date)}</b> às <b>${ev.time}</b></div><div class="ev-row"><i class="ti ti-building-hospital"></i><span class="ev-tag ${bc}">${s.name}</span></div><div class="ev-row"><i class="ti ti-clipboard-list"></i>${ev.proc}</div><div class="ev-row"><i class="ti ti-user"></i>${ev.paciente||'—'}</div><div class="ev-row"><i class="ti ti-stethoscope"></i>${ev.doc}</div>${ev.obs?`<div class="ev-row"><i class="ti ti-notes"></i><span style="font-size:11px">${ev.obs}</span></div>`:''}</div>`;
+          addMsg(html,'bot',{feedback:true,sug});
+          const same=eventos.filter(e=>e.setor===ev.setor&&e.proc?.split(' ')[0]===ev.proc?.split(' ')[0]);
+          if(same.length>=3)addMem(`"${ev.proc.split('—')[0].trim()}" frequente no ${s.name}`,'ti-star');
+        }catch(e){addMsg(`⚠️ ${e.message}`,'bot',{sug});}
+      }
+    } else if(p.acao==='CANCELAR'&&p.cancelar_id!=null){
+      const idx=eventos.findIndex(e=>e.id===p.cancelar_id);
+      if(idx>=0){const ev=eventos[idx];try{await api('DELETE',`/api/eventos/${p.cancelar_id}`);eventos.splice(idx,1);addMsg(`🗑️ Cancelado: <b>${ev.proc}</b> — ${ev.paciente||'—'} — ${fmtD(ev.date)} às ${ev.time}.`,'bot',{sug});}catch(e){addMsg(`⚠️ ${e.message}`,'bot',{sug});}}
+      else addMsg(p.resposta||'Não encontrado.','bot',{sug});
+    } else if((p.acao==='RELATORIO'||p.acao==='CONSULTAR')&&p.tabela){
+      const t=p.tabela;
+      if(!t.length){addMsg(p.resposta||'Nenhum agendamento.','bot',{sug});}
+      else{
+        let html=`${p.resposta||'📅 Agenda:'}<br><table><tr><th>Data</th><th>Hora</th><th>Setor</th><th>Procedimento</th><th>Paciente</th><th>Médico</th></tr>`;
+        t.forEach(r=>{const en=setores.find(s=>s.name===r.setor||s.id===r.setor);const bc=en?BADGE[en.id]:'';html+=`<tr><td style="white-space:nowrap">${r.data}</td><td>${r.hora}</td><td><span class="ev-tag ${bc}">${r.setor}</span></td><td>${r.proc}</td><td>${r.paciente||'—'}</td><td style="font-size:10px;color:var(--muted)">${r.medico}</td></tr>`;});
+        html+=`</table><div style="font-size:10px;color:var(--hint);margin-top:4px">${t.length} procedimento${t.length!==1?'s':''}</div>`;
+        addMsg(html,'bot',{sug});
+      }
+    } else {addMsg(p.resposta||'Como posso ajudar?','bot',{sug});}
+  }catch(e){hideTyp();addMsg('Erro ao processar. Verifique a conexão.','bot');}
+  document.getElementById('sbtn').disabled=false;document.getElementById('minp').focus();
+}
+
+// ── AGENDA ───────────────────────────────────────────────
+function renderAgenda(){
+  const sorted=[...eventos].sort((a,b)=>a.date.localeCompare(b.date)||a.time.localeCompare(b.time));
+  const hoje=new Date().toISOString().slice(0,10);
+  const hojeN=sorted.filter(e=>e.date===hoje).length;
+  const fut=sorted.filter(e=>e.date>=hoje).length;
+  const docs=new Set(sorted.filter(e=>e.date>=hoje).map(e=>e.doc)).size;
+  const mes=new Date().toISOString().slice(0,7);
+  const mesN=sorted.filter(e=>e.date.startsWith(mes)).length;
+  document.getElementById('ag-stats').innerHTML=`
+    <div class="stat-card"><div class="stat-n">${sorted.length}</div><div class="stat-l">total</div></div>
+    <div class="stat-card"><div class="stat-n">${hojeN}</div><div class="stat-l">hoje</div></div>
+    <div class="stat-card"><div class="stat-n">${fut}</div><div class="stat-l">futuros</div></div>
+    <div class="stat-card"><div class="stat-n">${mesN}</div><div class="stat-l">este mês</div></div>`;
+  if(!sorted.length){document.getElementById('agtbl').innerHTML='<tr><td colspan="7" style="padding:18px;color:var(--muted);text-align:center">Nenhum agendamento.</td></tr>';return;}
+  let html=`<tr><th>Data</th><th>Hora</th><th>Setor</th><th>Procedimento</th><th>Paciente</th><th>Médico</th><th></th></tr>`;
+  sorted.forEach(e=>{const s=getS(e.setor);const bc=BADGE[e.setor]||'';const past=e.date<hoje;
+    html+=`<tr style="${past?'opacity:.5':''}"><td style="white-space:nowrap">${fmtD(e.date)}</td><td>${e.time}</td><td><span class="ev-tag ${bc}">${s.name}</span></td><td>${e.proc}</td><td>${e.paciente||'—'}</td><td style="font-size:11px;color:var(--muted)">${e.doc}</td><td><button class="btn danger sm" onclick="delEvt(${e.id})"><i class="ti ti-trash"></i></button></td></tr>`;
+  });
+  document.getElementById('agtbl').innerHTML=html;
+}
+async function delEvt(id){
+  if(!confirm('Excluir?'))return;
+  try{await api('DELETE',`/api/eventos/${id}`);eventos=eventos.filter(e=>e.id!==id);renderAgenda();toast('Excluído.');}catch(e){toast(e.message,'err');}
+}
+
+// ── EXPORTAR PDF ─────────────────────────────────────────
+function exportPDF(){
+  const sorted=[...eventos].sort((a,b)=>a.date.localeCompare(b.date)||a.time.localeCompare(b.time));
+  let rows=sorted.map(e=>{const s=getS(e.setor);return`<tr><td>${fmtD(e.date)}</td><td>${e.time}</td><td>${s.name}</td><td>${e.proc}</td><td>${e.paciente||'—'}</td><td>${e.doc}</td><td>${e.obs||'—'}</td></tr>`;}).join('');
+  const html=`<html><head><meta charset="UTF-8"><title>Agenda Ana</title><style>body{font-family:Arial;margin:22px;color:#1a1a2e}h1{font-size:17px;color:#6C63D4;margin-bottom:3px}.sub{font-size:11px;color:#888;margin-bottom:14px}table{width:100%;border-collapse:collapse;font-size:11px}th{background:#EEEDFE;color:#3C3489;padding:5px 8px;text-align:left;border-bottom:1px solid #ccc}td{padding:5px 8px;border-bottom:.5px solid #eee}tr:nth-child(even){background:#f9f9ff}@media print{button{display:none}}</style></head><body><h1>Agenda · Grupo de Anestesia</h1><div class="sub">Gerado em ${new Date().toLocaleDateString('pt-BR',{day:'2-digit',month:'long',year:'numeric'})} · ${sorted.length} procedimentos</div><button onclick="window.print()" style="margin-bottom:10px;padding:5px 14px;background:#6C63D4;color:#fff;border:none;border-radius:5px;cursor:pointer">🖨️ Imprimir / PDF</button><table><tr><th>Data</th><th>Hora</th><th>Setor</th><th>Procedimento</th><th>Paciente</th><th>Médico</th><th>Obs</th></tr>${rows}</table></body></html>`;
+  const w=window.open('','_blank');if(w){w.document.write(html);w.document.close();}
+}
+
+// ── RELATÓRIOS ───────────────────────────────────────────
+let relData=null;
+async function loadRelatorios(){
+  try{
+    relData=await api('GET','/api/relatorios/resumo');
+    const d=relData;
+    document.getElementById('rel-stats').innerHTML=`
+      <div class="stat-card"><div class="stat-n">${d.total}</div><div class="stat-l">total geral</div></div>
+      <div class="stat-card"><div class="stat-n">${d.hoje}</div><div class="stat-l">hoje</div></div>
+      <div class="stat-card"><div class="stat-n">${d.futuros}</div><div class="stat-l">futuros</div></div>
+      <div class="stat-card"><div class="stat-n">${d.mes}</div><div class="stat-l">este mês</div></div>`;
+    renderCharts(d);
+  }catch(e){toast(e.message,'err');}
+}
+
+function mkChart(id,type,labels,data,colors){
+  if(charts[id])charts[id].destroy();
+  const ctx=document.getElementById(id).getContext('2d');
+  charts[id]=new Chart(ctx,{type,data:{labels,datasets:[{data,backgroundColor:colors||'#CECBF6',borderColor:type==='line'?'#6C63D4':'transparent',borderWidth:type==='line'?2:0,fill:type==='line',tension:.35,pointRadius:3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:type==='bar'||type==='line'?{y:{beginAtZero:true,ticks:{font:{size:10}},grid:{color:'rgba(0,0,0,.05)'}},x:{ticks:{font:{size:10}},grid:{display:false}}}:{}}});
+}
+
+function renderCharts(d){
+  const pal=['#CECBF6','#9FE1CB','#FAC775','#F4C0D1','#B5D4F4','#F0997B','#C0DD97','#ED93B1'];
+  // Por médico
+  mkChart('ch-medico','bar',d.por_medico.map(r=>r.doc.split(' ').slice(-1)[0]),d.por_medico.map(r=>r.total),d.por_medico.map((_,i)=>pal[i%pal.length]));
+  // Por setor
+  const setMap=Object.fromEntries(setores.map(s=>[s.id,s.name]));
+  mkChart('ch-setor','bar',d.por_setor.map(r=>setMap[r.setor]||r.setor),d.por_setor.map(r=>r.total),d.por_setor.map(r=>setores.find(s=>s.id===r.setor)?.color||'#CECBF6'));
+  // Por mês
+  mkChart('ch-mes','line',d.por_mes.map(r=>r.mes),d.por_mes.map(r=>r.total));
+  // Por dia semana
+  mkChart('ch-dia','bar',d.por_dia.map(r=>DIAS[r.dow]||r.dow),d.por_dia.map(r=>r.total),pal);
+}
+
+// ── CONFIG ───────────────────────────────────────────────
+function renderDocList(){
+  document.getElementById('doclist').innerHTML=medicos.map((d,i)=>`<div class="li"><div class="cdot" style="background:${CPALS[i%CPALS.length]}"></div><div class="li-name">${d.name}</div><div class="li-spec">${d.spec||''}${d.email?` · ${d.email}`:''}</div><button class="btn danger sm" onclick="rmDoc('${d.id}')"><i class="ti ti-trash"></i></button></div>`).join('')||'<div style="font-size:12px;color:var(--muted)">Nenhum médico.</div>';
+}
+async function addDoc(){
+  const name=document.getElementById('ndname').value.trim();
+  const spec=document.getElementById('ndspec').value.trim();
+  const email=document.getElementById('ndemail').value.trim();
+  if(!name)return;
+  try{const m={id:'d'+Date.now(),name,spec,email};await api('POST','/api/medicos',m);medicos.push(m);renderDocList();document.getElementById('ndname').value='';document.getElementById('ndspec').value='';document.getElementById('ndemail').value='';toast('Médico adicionado!');}catch(e){toast(e.message,'err');}
+}
+async function rmDoc(id){try{await api('DELETE',`/api/medicos/${id}`);medicos=medicos.filter(d=>d.id!==id);renderDocList();}catch(e){toast(e.message,'err');}}
+
+function renderSetorList(){
+  document.getElementById('setlist').innerHTML=setores.map(s=>`<div class="li"><div class="cdot" style="background:${s.color}"></div><div class="li-name">${s.name}</div><div class="li-spec">cód: ${s.id}</div><button class="btn danger sm" onclick="rmSetor('${s.id}')"><i class="ti ti-trash"></i></button></div>`).join('');
+}
+async function addSetor(){
+  const name=document.getElementById('nsname').value.trim();
+  const code=document.getElementById('nscode').value.trim().toLowerCase().replace(/\s/g,'').substring(0,3);
+  const color=document.getElementById('nscolor').value;
+  if(!name||!code){toast('Preencha nome e código.','warn');return;}
+  try{const s={id:code,name,color,text_color:'#1A1A2E'};await api('POST','/api/setores',s);setores.push(s);renderSetorList();toast('Setor adicionado!');}catch(e){toast(e.message,'err');}
+}
+async function rmSetor(id){try{await api('DELETE',`/api/setores/${id}`);setores=setores.filter(s=>s.id!==id);renderSetorList();}catch(e){toast(e.message,'err');}}
+
+// ── USERS ────────────────────────────────────────────────
+async function loadUList(){
+  try{const u=await api('GET','/api/usuarios');document.getElementById('ulist').innerHTML=u.map(r=>`<div class="li"><i class="ti ti-user" style="color:var(--accent);font-size:13px"></i><div class="li-name">${r.nome}</div><div class="li-spec">${r.role} · ${r.id}</div>${r.id!==me.id?`<button class="btn danger sm" onclick="rmUser('${r.id}')"><i class="ti ti-trash"></i></button>`:'<span style="font-size:10px;color:var(--muted)">você</span>'}</div>`).join('');}catch(e){toast(e.message,'err');}
+}
+async function addUser(){
+  const id=document.getElementById('nuid').value.trim();
+  const nome=document.getElementById('nunome').value.trim();
+  const pin=document.getElementById('nupin').value;
+  const role=document.getElementById('nurole').value;
+  if(!id||!nome||!pin){toast('Preencha todos.','warn');return;}
+  try{await api('POST','/api/usuarios',{id,nome,pin,role,email:''});loadUList();toast('Usuário criado!');}catch(e){toast(e.message,'err');}
+}
+async function rmUser(id){if(!confirm(`Remover ${id}?`))return;try{await api('DELETE',`/api/usuarios/${id}`);loadUList();toast('Removido.');}catch(e){toast(e.message,'err');}}
+async function changePin(){
+  const a=document.getElementById('pina').value;const n=document.getElementById('pinn').value;
+  if(!a||!n){toast('Preencha os dois.','warn');return;}
+  if(n.length<4){toast('PIN mínimo 4 dígitos.','warn');return;}
+  try{await api('POST','/api/change-pin',{pin_atual:a,pin_novo:n});toast('PIN alterado!');document.getElementById('pina').value='';document.getElementById('pinn').value='';}catch(e){toast(e.message,'err');}
+}
+
+// ── INTEGRAÇÕES ──────────────────────────────────────────
+async function loadIntStatus(){
+  try{
+    const h=await api('GET','/api/health');
+    document.getElementById('int-status').innerHTML=`
+      <div class="int-row"><div class="int-ico" style="background:#EAF3DE"><i class="ti ti-mail" style="color:#1D9E75"></i></div><div class="int-body"><div class="int-name">Email (SMTP)</div><div class="int-desc">Notificações automáticas para médicos</div></div><span class="int-status ${h.email?'ok':'off'}">${h.email?'Ativo':'Não configurado'}</span></div>
+      <div class="int-row"><div class="int-ico" style="background:#E8F0FE"><i class="ti ti-brand-google" style="color:#4285F4"></i></div><div class="int-body"><div class="int-name">Google Calendar</div><div class="int-desc">Sincronização de eventos</div></div><span class="int-status ${h.gcal?'ok':'off'}">${h.gcal?'Ativo':'Não configurado'}</span></div>
+      <div class="int-row"><div class="int-ico" style="background:#EEEDFE"><i class="ti ti-database" style="color:var(--accent)"></i></div><div class="int-body"><div class="int-name">Banco de dados</div><div class="int-desc">Armazenamento dos dados</div></div><span class="int-status ok">${h.db==='postgres'?'PostgreSQL':'SQLite'}</span></div>`;
+  }catch{}
+}
+
+// ── LOGS ─────────────────────────────────────────────────
+async function loadLogs(){
+  try{const logs=await api('GET','/api/logs');document.getElementById('logslist').innerHTML=logs.map(l=>`<div class="log-row"><span class="log-lvl ${l.nivel}">${l.nivel}</span><span class="log-ts">${(l.created_at||'').slice(0,16)}</span><span class="log-msg">${l.mensagem}</span><span class="log-usr">${l.usuario||''}</span></div>`).join('')||'<div style="padding:18px;color:var(--muted);text-align:center">Nenhum log.</div>';}catch(e){toast(e.message,'err');}
+}
+
+// ── TOAST ────────────────────────────────────────────────
+function toast(msg,type='ok',ms=2200){
+  const t=document.getElementById('toast');t.className='toast '+type;
+  document.getElementById('tmsg').textContent=msg;t.style.display='flex';setTimeout(()=>t.style.display='none',ms);
+}
+
+// ── WELCOME ──────────────────────────────────────────────
+function initWelcome(){
+  const n=eventos.length;const hoje=eventos.filter(e=>e.date===new Date().toISOString().slice(0,10)).length;
+  setTimeout(()=>{addMsg(`Olá, ${me.nome}! 👩‍⚕️<br><br><b>${n} agendamento${n!==1?'s':''}</b> na agenda · <b>${hoje} hoje</b><br><br>Fale naturalmente ou envie um PDF.<br><span style="font-size:11px;color:var(--muted)">Memória ativa · Google Calendar · notificações por email · relatórios</span>`,'bot',{sug:['Relatório de hoje','Agenda da semana','Novo agendamento']});},300);
+}
+
+// ── PWA ──────────────────────────────────────────────────
+if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
+
+// ── INIT ─────────────────────────────────────────────────
+tryAuto();
+</script>
+</body>
+</html>

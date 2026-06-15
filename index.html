@@ -191,6 +191,13 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 .bc{background:#CECBF6;color:#3C3489}.bt{background:#9FE1CB;color:#085041}
 .ba{background:#FAC775;color:#633806}.bp{background:#F4C0D1;color:#72243E}.bb{background:#B5D4F4;color:#0C447C}
 
+/* MODAL */
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:200;align-items:center;justify-content:center}
+.modal-bg.open{display:flex}
+.modal{background:var(--surface);border-radius:var(--r);border:1px solid var(--border);padding:1.4rem;width:420px;max-width:96vw;max-height:90vh;overflow-y:auto}
+.modal h3{font-size:15px;font-weight:600;margin-bottom:1rem;display:flex;align-items:center;gap:7px}
+.modal .ma{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+
 @media(max-width:680px){
   .sidebar{display:none}.grid4{grid-template-columns:1fr 1fr}.chart-grid{grid-template-columns:1fr}
   .grid2{grid-template-columns:1fr}.ntabs .ntab span{display:none}
@@ -289,7 +296,10 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 <div id="pagenda" class="panel">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.9rem;flex-wrap:wrap;gap:7px">
     <div style="font-size:15px;font-weight:500">Agenda completa</div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap">
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+      <div id="minha-toggle-wrap" style="display:none">
+        <button class="btn sm" id="minha-toggle" onclick="toggleMinhaAgenda()"><i class="ti ti-user-circle"></i> Minha agenda</button>
+      </div>
       <button class="btn" onclick="exportPDF()"><i class="ti ti-file-export"></i> Exportar PDF</button>
       <button class="btn primary" onclick="tab('chat');document.getElementById('minp').focus()"><i class="ti ti-plus"></i> Novo</button>
     </div>
@@ -356,6 +366,9 @@ html,body{height:100%;background:var(--bg);color:var(--text);
         <div class="fl"><label>PIN</label><input id="nupin" type="password" placeholder="••••" maxlength="8"></div>
         <div class="fl"><label>Papel</label><select id="nurole"><option value="medico">Médico</option><option value="admin">Admin</option></select></div>
       </div>
+      <div class="fl" style="margin-bottom:8px"><label>Vincular a um médico (opcional — habilita "Minha agenda")</label>
+        <select id="numedico"><option value="">— nenhum —</option></select>
+      </div>
       <button class="btn primary" onclick="addUser()"><i class="ti ti-user-plus"></i> Criar</button>
     </div>
     <div class="sep"><div class="sep-lbl">Alterar meu PIN</div>
@@ -373,7 +386,10 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <div class="sep"><div class="sep-lbl" style="margin-bottom:3px">Google Calendar</div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Configure via variável de ambiente <code style="background:var(--faint);padding:1px 5px;border-radius:3px">GCAL_CREDENTIALS</code> no Railway.</div>
       <div class="sep-lbl" style="margin-bottom:3px">Notificações por email</div>
-      <div style="font-size:11px;color:var(--muted)">Configure <code style="background:var(--faint);padding:1px 5px;border-radius:3px">SMTP_HOST</code>, <code style="background:var(--faint);padding:1px 5px;border-radius:3px">SMTP_USER</code> e <code style="background:var(--faint);padding:1px 5px;border-radius:3px">SMTP_PASS</code> no Railway. O email do médico deve ser cadastrado no perfil acima.</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Configure <code style="background:var(--faint);padding:1px 5px;border-radius:3px">SMTP_HOST</code>, <code style="background:var(--faint);padding:1px 5px;border-radius:3px">SMTP_USER</code> e <code style="background:var(--faint);padding:1px 5px;border-radius:3px">SMTP_PASS</code> no Railway. O email do médico deve ser cadastrado no perfil acima.</div>
+      <div class="sep-lbl" style="margin-bottom:3px">Lembrete diário</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Todos os dias às 18h, a Ana envia automaticamente um resumo da agenda do dia seguinte para cada médico com email cadastrado.</div>
+      <button class="btn sm" onclick="sendDailyReminder()"><i class="ti ti-send"></i> Enviar lembrete de amanhã agora</button>
     </div>
   </div>
 
@@ -390,6 +406,27 @@ html,body{height:100%;background:var(--bg);color:var(--text);
   </div>
 </div>
 
+</div>
+</div>
+
+<!-- MODAL EDITAR EVENTO -->
+<div class="modal-bg" id="modal-edit">
+<div class="modal">
+  <h3><i class="ti ti-pencil" style="color:var(--accent)"></i>Editar agendamento</h3>
+  <div class="fl" style="margin-bottom:8px"><label>Médico</label><select id="edoc"></select></div>
+  <div class="fl" style="margin-bottom:8px"><label>Setor</label><select id="esetor"></select></div>
+  <div class="fl" style="margin-bottom:8px"><label>Procedimento</label><input id="eproc"></div>
+  <div class="grid2" style="margin-bottom:8px">
+    <div class="fl"><label>Data</label><input type="date" id="edate"></div>
+    <div class="fl"><label>Horário</label><input type="time" id="etime"></div>
+  </div>
+  <div class="fl" style="margin-bottom:8px"><label>Paciente</label><input id="epaciente"></div>
+  <div class="fl" style="margin-bottom:8px"><label>Observação</label><input id="eobs"></div>
+  <div class="login-err" id="edit-err" style="display:none"></div>
+  <div class="ma">
+    <button class="btn" onclick="closeEditModal()">Cancelar</button>
+    <button class="btn primary" onclick="saveEdit()"><i class="ti ti-check"></i> Salvar</button>
+  </div>
 </div>
 </div>
 
@@ -634,10 +671,12 @@ RETORNE APENAS JSON sem markdown:
       if(cf){addMsg(`⚠️ <b>Conflito:</b> ${ev.doc} já tem <b>${cf.proc}</b> às ${ev.time}.<br>${p.resposta||''}`, 'bot',{sug});}
       else{
         try{
-          const saved=await api('POST','/api/eventos',{...ev,ai:true});eventos.push(saved);
+          const payload={...ev,ai:true};
+          if(pdf){payload.pdf_filename=pdf.name;payload.pdf_data=pdf.b64;}
+          const saved=await api('POST','/api/eventos',payload);eventos.push(saved);
           const s=getS(ev.setor);const bc=BADGE[ev.setor]||'';
           let html=pdf?'📄 <b>PDF lido!</b><br>':'✅ <b>Agendado!</b><br>';
-          html+=`<div class="ev-card"><div class="ev-row"><i class="ti ti-calendar"></i><b>${fmtD(ev.date)}</b> às <b>${ev.time}</b></div><div class="ev-row"><i class="ti ti-building-hospital"></i><span class="ev-tag ${bc}">${s.name}</span></div><div class="ev-row"><i class="ti ti-clipboard-list"></i>${ev.proc}</div><div class="ev-row"><i class="ti ti-user"></i>${ev.paciente||'—'}</div><div class="ev-row"><i class="ti ti-stethoscope"></i>${ev.doc}</div>${ev.obs?`<div class="ev-row"><i class="ti ti-notes"></i><span style="font-size:11px">${ev.obs}</span></div>`:''}</div>`;
+          html+=`<div class="ev-card"><div class="ev-row"><i class="ti ti-calendar"></i><b>${fmtD(ev.date)}</b> às <b>${ev.time}</b></div><div class="ev-row"><i class="ti ti-building-hospital"></i><span class="ev-tag ${bc}">${s.name}</span></div><div class="ev-row"><i class="ti ti-clipboard-list"></i>${ev.proc}</div><div class="ev-row"><i class="ti ti-user"></i>${ev.paciente||'—'}</div><div class="ev-row"><i class="ti ti-stethoscope"></i>${ev.doc}</div>${ev.obs?`<div class="ev-row"><i class="ti ti-notes"></i><span style="font-size:11px">${ev.obs}</span></div>`:''}${pdf?`<div class="ev-row"><i class="ti ti-paperclip"></i><span style="font-size:11px">${pdf.name} anexado</span></div>`:''}</div>`;
           addMsg(html,'bot',{feedback:true,sug});
           const same=eventos.filter(e=>e.setor===ev.setor&&e.proc?.split(' ')[0]===ev.proc?.split(' ')[0]);
           if(same.length>=3)addMem(`"${ev.proc.split('—')[0].trim()}" frequente no ${s.name}`,'ti-star');
@@ -662,8 +701,21 @@ RETORNE APENAS JSON sem markdown:
 }
 
 // ── AGENDA ───────────────────────────────────────────────
+let minhaAgendaOn=false;
+function toggleMinhaAgenda(){
+  minhaAgendaOn=!minhaAgendaOn;
+  document.getElementById('minha-toggle').classList.toggle('primary',minhaAgendaOn);
+  renderAgenda();
+}
 function renderAgenda(){
-  const sorted=[...eventos].sort((a,b)=>a.date.localeCompare(b.date)||a.time.localeCompare(b.time));
+  // mostra toggle "minha agenda" se o usuário tiver médico vinculado
+  const minhaDoc=medicos.find(m=>m.id===me.medico_id);
+  document.getElementById('minha-toggle-wrap').style.display=minhaDoc?'block':'none';
+
+  let sorted=[...eventos].sort((a,b)=>a.date.localeCompare(b.date)||a.time.localeCompare(b.time));
+  if(minhaAgendaOn&&minhaDoc){
+    sorted=sorted.filter(e=>e.doc===minhaDoc.name);
+  }
   const hoje=new Date().toISOString().slice(0,10);
   const hojeN=sorted.filter(e=>e.date===hoje).length;
   const fut=sorted.filter(e=>e.date>=hoje).length;
@@ -675,16 +727,62 @@ function renderAgenda(){
     <div class="stat-card"><div class="stat-n">${hojeN}</div><div class="stat-l">hoje</div></div>
     <div class="stat-card"><div class="stat-n">${fut}</div><div class="stat-l">futuros</div></div>
     <div class="stat-card"><div class="stat-n">${mesN}</div><div class="stat-l">este mês</div></div>`;
-  if(!sorted.length){document.getElementById('agtbl').innerHTML='<tr><td colspan="7" style="padding:18px;color:var(--muted);text-align:center">Nenhum agendamento.</td></tr>';return;}
-  let html=`<tr><th>Data</th><th>Hora</th><th>Setor</th><th>Procedimento</th><th>Paciente</th><th>Médico</th><th></th></tr>`;
+  if(!sorted.length){document.getElementById('agtbl').innerHTML='<tr><td colspan="8" style="padding:18px;color:var(--muted);text-align:center">Nenhum agendamento.</td></tr>';return;}
+  let html=`<tr><th>Data</th><th>Hora</th><th>Setor</th><th>Procedimento</th><th>Paciente</th><th>Médico</th><th></th><th></th></tr>`;
   sorted.forEach(e=>{const s=getS(e.setor);const bc=BADGE[e.setor]||'';const past=e.date<hoje;
-    html+=`<tr style="${past?'opacity:.5':''}"><td style="white-space:nowrap">${fmtD(e.date)}</td><td>${e.time}</td><td><span class="ev-tag ${bc}">${s.name}</span></td><td>${e.proc}</td><td>${e.paciente||'—'}</td><td style="font-size:11px;color:var(--muted)">${e.doc}</td><td><button class="btn danger sm" onclick="delEvt(${e.id})"><i class="ti ti-trash"></i></button></td></tr>`;
+    const pdfIcon=e.pdf_filename?`<i class="ti ti-file-text" style="color:var(--accent);font-size:13px" title="${e.pdf_filename}"></i>`:'';
+    html+=`<tr style="${past?'opacity:.5':''}"><td style="white-space:nowrap">${fmtD(e.date)}</td><td>${e.time}</td><td><span class="ev-tag ${bc}">${s.name}</span></td><td>${e.proc} ${pdfIcon}</td><td>${e.paciente||'—'}</td><td style="font-size:11px;color:var(--muted)">${e.doc}</td><td><button class="btn sm" onclick="openEditModal(${e.id})" title="Editar"><i class="ti ti-pencil"></i></button></td><td><button class="btn danger sm" onclick="delEvt(${e.id})" title="Excluir"><i class="ti ti-trash"></i></button></td></tr>`;
   });
   document.getElementById('agtbl').innerHTML=html;
 }
 async function delEvt(id){
   if(!confirm('Excluir?'))return;
   try{await api('DELETE',`/api/eventos/${id}`);eventos=eventos.filter(e=>e.id!==id);renderAgenda();toast('Excluído.');}catch(e){toast(e.message,'err');}
+}
+
+// ── EDITAR EVENTO ──────────────────────────────────────────
+let editingId=null;
+function openEditModal(id){
+  const ev=eventos.find(e=>e.id===id);if(!ev)return;
+  editingId=id;
+  populateSelect('edoc',medicos.map(m=>m.name),ev.doc);
+  populateSelect('esetor',setores.map(s=>({value:s.id,label:s.name})),ev.setor,true);
+  document.getElementById('eproc').value=ev.proc;
+  document.getElementById('epaciente').value=ev.paciente||'';
+  document.getElementById('edate').value=ev.date;
+  document.getElementById('etime').value=ev.time;
+  document.getElementById('eobs').value=ev.obs||'';
+  document.getElementById('edit-err').style.display='none';
+  document.getElementById('modal-edit').classList.add('open');
+}
+function populateSelect(id,items,selected,isObj=false){
+  const el=document.getElementById(id);
+  el.innerHTML=items.map(it=>{
+    const val=isObj?it.value:it; const label=isObj?it.label:it;
+    return `<option value="${val}"${val===selected?' selected':''}>${label}</option>`;
+  }).join('');
+}
+function closeEditModal(){document.getElementById('modal-edit').classList.remove('open');editingId=null;}
+async function saveEdit(){
+  const body={
+    doc:document.getElementById('edoc').value,
+    setor:document.getElementById('esetor').value,
+    proc:document.getElementById('eproc').value.trim(),
+    paciente:document.getElementById('epaciente').value.trim(),
+    date:document.getElementById('edate').value,
+    time:document.getElementById('etime').value,
+    obs:document.getElementById('eobs').value.trim(),
+  };
+  if(!body.proc||!body.date||!body.time){toast('Preencha procedimento, data e hora.','warn');return;}
+  try{
+    const updated=await api('PUT',`/api/eventos/${editingId}`,body);
+    const idx=eventos.findIndex(e=>e.id===editingId);
+    if(idx>=0)eventos[idx]={...eventos[idx],...updated};
+    closeEditModal();renderAgenda();toast('Agendamento atualizado!');
+  }catch(e){
+    document.getElementById('edit-err').textContent=e.message;
+    document.getElementById('edit-err').style.display='block';
+  }
 }
 
 // ── EXPORTAR PDF ─────────────────────────────────────────
@@ -756,15 +854,27 @@ async function rmSetor(id){try{await api('DELETE',`/api/setores/${id}`);setores=
 
 // ── USERS ────────────────────────────────────────────────
 async function loadUList(){
-  try{const u=await api('GET','/api/usuarios');document.getElementById('ulist').innerHTML=u.map(r=>`<div class="li"><i class="ti ti-user" style="color:var(--accent);font-size:13px"></i><div class="li-name">${r.nome}</div><div class="li-spec">${r.role} · ${r.id}</div>${r.id!==me.id?`<button class="btn danger sm" onclick="rmUser('${r.id}')"><i class="ti ti-trash"></i></button>`:'<span style="font-size:10px;color:var(--muted)">você</span>'}</div>`).join('');}catch(e){toast(e.message,'err');}
+  try{
+    const u=await api('GET','/api/usuarios');
+    document.getElementById('ulist').innerHTML=u.map(r=>{
+      const med=medicos.find(m=>m.id===r.medico_id);
+      return `<div class="li"><i class="ti ti-user" style="color:var(--accent);font-size:13px"></i><div class="li-name">${r.nome}</div><div class="li-spec">${r.role} · ${r.id}${med?` · vinculado a ${med.name}`:''}</div>${r.id!==me.id?`<button class="btn danger sm" onclick="rmUser('${r.id}')"><i class="ti ti-trash"></i></button>`:'<span style="font-size:10px;color:var(--muted)">você</span>'}</div>`;
+    }).join('');
+    // popula select de médicos
+    const sel=document.getElementById('numedico');
+    sel.innerHTML='<option value="">— nenhum —</option>'+medicos.map(m=>`<option value="${m.id}">${m.name}</option>`).join('');
+  }catch(e){toast(e.message,'err');}
 }
 async function addUser(){
   const id=document.getElementById('nuid').value.trim();
   const nome=document.getElementById('nunome').value.trim();
   const pin=document.getElementById('nupin').value;
   const role=document.getElementById('nurole').value;
+  const medico_id=document.getElementById('numedico').value;
   if(!id||!nome||!pin){toast('Preencha todos.','warn');return;}
-  try{await api('POST','/api/usuarios',{id,nome,pin,role,email:''});loadUList();toast('Usuário criado!');}catch(e){toast(e.message,'err');}
+  try{await api('POST','/api/usuarios',{id,nome,pin,role,email:'',medico_id});loadUList();toast('Usuário criado!');
+    document.getElementById('nuid').value='';document.getElementById('nunome').value='';document.getElementById('nupin').value='';document.getElementById('numedico').value='';
+  }catch(e){toast(e.message,'err');}
 }
 async function rmUser(id){if(!confirm(`Remover ${id}?`))return;try{await api('DELETE',`/api/usuarios/${id}`);loadUList();toast('Removido.');}catch(e){toast(e.message,'err');}}
 async function changePin(){
@@ -784,6 +894,13 @@ async function loadIntStatus(){
       <div class="int-row"><div class="int-ico" style="background:#EEEDFE"><i class="ti ti-database" style="color:var(--accent)"></i></div><div class="int-body"><div class="int-name">Banco de dados</div><div class="int-desc">Armazenamento dos dados</div></div><span class="int-status ok">${h.db==='postgres'?'PostgreSQL':'SQLite'}</span></div>`;
   }catch{}
 }
+async function sendDailyReminder(){
+  try{
+    const r=await api('POST','/api/lembrete-diario');
+    if(r.sent>0)toast(`Lembrete enviado para ${r.sent} médico(s)!`);
+    else toast('Nenhum médico com agenda para amanhã e email cadastrado.','warn');
+  }catch(e){toast(e.message,'err');}
+}
 
 // ── LOGS ─────────────────────────────────────────────────
 async function loadLogs(){
@@ -801,6 +918,9 @@ function initWelcome(){
   const n=eventos.length;const hoje=eventos.filter(e=>e.date===new Date().toISOString().slice(0,10)).length;
   setTimeout(()=>{addMsg(`Olá, ${me.nome}! 👩‍⚕️<br><br><b>${n} agendamento${n!==1?'s':''}</b> na agenda · <b>${hoje} hoje</b><br><br>Fale naturalmente ou envie um PDF.<br><span style="font-size:11px;color:var(--muted)">Memória ativa · Google Calendar · notificações por email · relatórios</span>`,'bot',{sug:['Relatório de hoje','Agenda da semana','Novo agendamento']});},300);
 }
+
+// ── MODAL CLICK OUTSIDE ──────────────────────────────────
+document.getElementById('modal-edit').addEventListener('click',e=>{if(e.target.id==='modal-edit')closeEditModal();});
 
 // ── PWA ──────────────────────────────────────────────────
 if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});

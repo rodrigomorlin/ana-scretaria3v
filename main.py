@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from typing import Optional
 import os, logging, hashlib, secrets, json
 from datetime import datetime, timedelta
+import urllib.request, urllib.error
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
 log = logging.getLogger("ana")
@@ -17,15 +18,16 @@ log = logging.getLogger("ana")
 app = FastAPI(title="Ana v3", version="3.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "")
-SECRET       = os.environ.get("SECRET_KEY", "ana-secretaria-default-secret-change-me")
-SMTP_HOST    = os.environ.get("SMTP_HOST", "")
-SMTP_PORT    = int(os.environ.get("SMTP_PORT", "587"))
-SMTP_USER    = os.environ.get("SMTP_USER", "")
-SMTP_PASS    = os.environ.get("SMTP_PASS", "")
-SMTP_FROM    = os.environ.get("SMTP_FROM", "ana@grupo-anestesia.com")
-GCAL_CREDS   = os.environ.get("GCAL_CREDENTIALS", "")
-GCAL_ID      = os.environ.get("GCAL_CALENDAR_ID", "primary")
+DATABASE_URL   = os.environ.get("DATABASE_URL", "")
+SECRET         = os.environ.get("SECRET_KEY", "ana-secretaria-default-secret-change-me")
+ANTHROPIC_KEY  = os.environ.get("ANTHROPIC_API_KEY", "")
+SMTP_HOST      = os.environ.get("SMTP_HOST", "")
+SMTP_PORT      = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USER      = os.environ.get("SMTP_USER", "")
+SMTP_PASS      = os.environ.get("SMTP_PASS", "")
+SMTP_FROM      = os.environ.get("SMTP_FROM", "ana@grupo-anestesia.com")
+GCAL_CREDS     = os.environ.get("GCAL_CREDENTIALS", "")
+GCAL_ID        = os.environ.get("GCAL_CALENDAR_ID", "primary")
 
 USE_POSTGRES = bool(DATABASE_URL and DATABASE_URL.startswith("postgres"))
 
@@ -836,12 +838,50 @@ async def start_scheduler():
             await asyncio.sleep(60 * 10)  # checa a cada 10 minutos
     asyncio.create_task(scheduler_loop())
 
+# ── CHAT PROXY (evita CORS — chama Anthropic pelo servidor) ──
+class ChatRequest(BaseModel):
+    system: str
+    messages: list
+    max_tokens: Optional[int] = 1500
+
+@app.post("/api/chat")
+def chat_proxy(req: ChatRequest, user=Depends(auth)):
+    if not ANTHROPIC_KEY:
+        raise HTTPException(500, "ANTHROPIC_API_KEY não configurada no servidor.")
+    payload = json.dumps({
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": req.max_tokens or 1500,
+        "system": req.system,
+        "messages": req.messages,
+    }).encode("utf-8")
+    try:
+        http_req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": ANTHROPIC_KEY,
+                "anthropic-version": "2023-06-01",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(http_req, timeout=60) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="ignore")
+        log.error(f"Anthropic API erro {e.code}: {body[:200]}")
+        raise HTTPException(e.code, f"Erro da API: {body[:200]}")
+    except Exception as e:
+        log.error(f"Chat proxy erro: {e}")
+        raise HTTPException(500, str(e))
+
 # ── HEALTH ─────────────────────────────────────────────────
 @app.get("/api/health")
 def health():
     return {"status":"ok","version":"3.0.0",
             "db":"postgres" if USE_POSTGRES else "sqlite",
             "email":bool(SMTP_HOST),"gcal":bool(GCAL_CREDS),
+            "ai":bool(ANTHROPIC_KEY),
             "timestamp":datetime.now().isoformat()}
 
 # ── STATIC FILES ───────────────────────────────────────────

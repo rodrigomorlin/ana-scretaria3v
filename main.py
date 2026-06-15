@@ -157,13 +157,8 @@ CREATE TABLE IF NOT EXISTS logs (
         except: pass
 
     p = P()
-    # Admin padrão PIN 1234
-    c.execute("SELECT COUNT(*) FROM usuarios")
-    row = c.fetchone(); count = row[0] if USE_POSTGRES else row[0]
-    if count == 0:
-        c.execute(f"INSERT INTO usuarios (id,nome,pin_hash,role,email) VALUES ({Ps(5)})",
-                  ("admin","Administrador",hash_pin("1234"),"admin",""))
-        log.info("Admin criado — PIN padrão: 1234 — TROQUE APÓS O PRIMEIRO LOGIN")
+    # Nenhum admin é criado automaticamente — o primeiro acesso é feito
+    # pela tela de "setup" (ver /api/setup-needed e /api/setup)
 
     c.execute("SELECT COUNT(*) FROM medicos")
     if c.fetchone()[0] == 0:
@@ -321,6 +316,43 @@ class ChangePin(BaseModel):
     pin_atual: str; pin_novo: str
 
 # ── AUTH ROUTES ────────────────────────────────────────────
+class SetupData(BaseModel):
+    usuario_id: str; nome: str; pin: str
+
+@app.get("/api/setup-needed")
+def setup_needed():
+    """Indica se ainda não há nenhum usuário cadastrado (primeiro acesso)."""
+    conn = get_db(); c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM usuarios")
+    count = c.fetchone()[0]
+    conn.close()
+    return {"needed": count == 0}
+
+@app.post("/api/setup")
+def setup(data: SetupData, request: Request):
+    """Cria o primeiro usuário admin. Se já houver usuários, requer X-Emergency-Key para limpar e recriar."""
+    conn = get_db(); c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM usuarios")
+    count = c.fetchone()[0]
+    if count > 0:
+        key = request.headers.get("X-Emergency-Key", "")
+        if key != "reset-ana-2026":
+            conn.close()
+            raise HTTPException(400, "Já existe pelo menos um usuário. Use a tela de login normal.")
+        # limpa usuários e sessões existentes
+        c.execute("DELETE FROM sessoes")
+        c.execute("DELETE FROM usuarios")
+    uid = data.usuario_id.lower().strip()
+    if not uid or not data.pin or len(data.pin) < 4:
+        conn.close()
+        raise HTTPException(400, "ID e PIN (mínimo 4 dígitos) são obrigatórios.")
+    c.execute(f"INSERT INTO usuarios (id,nome,pin_hash,role,email) VALUES ({Ps(5)})",
+              (uid, data.nome or uid, hash_pin(data.pin), "admin", ""))
+    conn.commit(); conn.close()
+    db_log("INFO", f"Primeiro usuário criado via setup: {uid}")
+    log.info(f"Setup inicial: usuário {uid} criado como admin")
+    return {"ok": True}
+
 @app.post("/api/login")
 def login(data: LoginData, request: Request):
     conn = get_db(); c = conn.cursor()

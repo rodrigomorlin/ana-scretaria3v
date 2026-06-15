@@ -207,13 +207,38 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <div class="login-logo"><i class="ti ti-stethoscope"></i></div>
     <div class="login-title">Ana v3</div>
     <div class="login-sub">Secretária de Anestesiologia</div>
-    <div class="f">
-      <label>ID do usuário</label><input id="lu" placeholder="admin" onkeydown="if(event.key==='Enter')doLogin()">
-      <label>PIN</label><input id="lp" type="password" placeholder="••••" maxlength="8" onkeydown="if(event.key==='Enter')doLogin()">
+
+    <!-- LOGIN FORM -->
+    <div id="login-form">
+      <div class="f">
+        <label>ID do usuário</label><input id="lu" placeholder="admin" onkeydown="if(event.key==='Enter')doLogin()">
+        <label>PIN</label><input id="lp" type="password" placeholder="••••" maxlength="8" onkeydown="if(event.key==='Enter')doLogin()">
+      </div>
+      <button class="btn-full" onclick="doLogin()" id="lbtn"><i class="ti ti-login"></i> Entrar</button>
+      <div class="login-err" id="lerr"></div>
+      <div class="login-hint" id="login-hint">Padrão: admin / 1234 · Troque após o primeiro acesso</div>
+      <div style="text-align:center;margin-top:10px">
+        <a href="#" onclick="event.preventDefault();showSetupForm()" style="font-size:10px;color:var(--hint);text-decoration:underline">Problemas para entrar? Criar/recuperar acesso</a>
+      </div>
     </div>
-    <button class="btn-full" onclick="doLogin()" id="lbtn"><i class="ti ti-login"></i> Entrar</button>
-    <div class="login-err" id="lerr"></div>
-    <div class="login-hint">Padrão: admin / 1234 · Troque após o primeiro acesso</div>
+
+    <!-- SETUP FORM (primeiro acesso) -->
+    <div id="setup-form" style="display:none">
+      <div class="login-hint" style="margin-top:0;margin-bottom:12px;text-align:left;background:var(--al);color:var(--ad);border-radius:var(--rs);padding:8px 10px">
+        <i class="ti ti-sparkles"></i> Nenhum usuário encontrado. Crie o primeiro acesso (administrador).
+      </div>
+      <div class="f">
+        <label>Seu nome</label><input id="su-nome" placeholder="Rodrigo Morlin">
+        <label>ID de acesso (sem espaços)</label><input id="su-id" placeholder="rodrigomorlin">
+        <label>PIN (mínimo 4 dígitos)</label><input id="su-pin" type="password" placeholder="••••" maxlength="8">
+      </div>
+      <button class="btn-full" onclick="doSetup()" id="su-btn"><i class="ti ti-user-plus"></i> Criar acesso</button>
+      <div class="login-err" id="su-err"></div>
+      <div style="text-align:center;margin-top:10px">
+        <a href="#" onclick="event.preventDefault();doForceSetup()" style="font-size:10px;color:var(--hint);text-decoration:underline">Já existem usuários travados? Apagar e recriar do zero</a>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -421,9 +446,71 @@ async function showApp(){
   setInterval(loadAll,30000);
 }
 async function tryAuto(){
-  const t=sessionStorage.getItem('ana_token');if(!t)return;
-  try{const r=await fetch('/api/me',{headers:{'X-Token':t}});if(r.ok){token=t;me=await r.json();showApp();}}catch{}
+  const t=sessionStorage.getItem('ana_token');if(!t){checkSetup();return;}
+  try{const r=await fetch('/api/me',{headers:{'X-Token':t}});if(r.ok){token=t;me=await r.json();showApp();}else{checkSetup();}}catch{checkSetup();}
 }
+
+async function checkSetup(){
+  try{
+    const r=await fetch('/api/setup-needed');
+    const d=await r.json();
+    if(d.needed){
+      document.getElementById('login-form').style.display='none';
+      document.getElementById('setup-form').style.display='block';
+    }
+  }catch{}
+}
+
+async function doSetup(){
+  const nome=document.getElementById('su-nome').value.trim();
+  const id=document.getElementById('su-id').value.trim().toLowerCase().replace(/\s/g,'');
+  const pin=document.getElementById('su-pin').value;
+  const err=document.getElementById('su-err');err.style.display='none';
+  if(!nome||!id||!pin||pin.length<4){
+    err.textContent='Preencha nome, ID e PIN (mínimo 4 dígitos).';err.style.display='block';return;
+  }
+  const btn=document.getElementById('su-btn');btn.disabled=true;
+  try{
+    const r=await fetch('/api/setup',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({usuario_id:id,nome,pin})});
+    if(!r.ok){const e=await r.json().catch(()=>({detail:'Erro'}));throw new Error(e.detail);}
+    document.getElementById('lu').value=id;
+    document.getElementById('lp').value=pin;
+    document.getElementById('setup-form').style.display='none';
+    document.getElementById('login-form').style.display='block';
+    await doLogin();
+  }catch(e){err.textContent=e.message||'Erro ao criar acesso.';err.style.display='block';}
+  btn.disabled=false;
+}
+
+async function doForceSetup(){
+  const nome=document.getElementById('su-nome').value.trim();
+  const id=document.getElementById('su-id').value.trim().toLowerCase().replace(/\s/g,'');
+  const pin=document.getElementById('su-pin').value;
+  const err=document.getElementById('su-err');err.style.display='none';
+  if(!nome||!id||!pin||pin.length<4){
+    err.textContent='Preencha nome, ID e PIN (mínimo 4 dígitos) antes de apagar e recriar.';err.style.display='block';return;
+  }
+  if(!confirm('Isso vai apagar TODOS os usuários existentes e criar este como novo administrador. Continuar?'))return;
+  const btn=document.getElementById('su-btn');btn.disabled=true;
+  try{
+    const r=await fetch('/api/setup',{method:'POST',headers:{'Content-Type':'application/json','X-Emergency-Key':'reset-ana-2026'},
+      body:JSON.stringify({usuario_id:id,nome,pin})});
+    if(!r.ok){const e=await r.json().catch(()=>({detail:'Erro'}));throw new Error(e.detail);}
+    document.getElementById('lu').value=id;
+    document.getElementById('lp').value=pin;
+    document.getElementById('setup-form').style.display='none';
+    document.getElementById('login-form').style.display='block';
+    await doLogin();
+  }catch(e){err.textContent=e.message||'Erro ao recriar acesso.';err.style.display='block';}
+  btn.disabled=false;
+}
+
+function showSetupForm(){
+  document.getElementById('login-form').style.display='none';
+  document.getElementById('setup-form').style.display='block';
+}
+
 
 // ── DATA ─────────────────────────────────────────────────
 async function loadAll(){

@@ -640,6 +640,28 @@ def emergency_reset_admin(request: Request):
     log.info("Admin resetado via rota de emergência")
     return {"ok": True, "message": "Admin resetado. Use admin / 1234"}
 
+@app.post("/api/emergency-create-user")
+def emergency_create_user(request: Request):
+    """Cria/atualiza um usuário admin específico. Requer header X-Emergency-Key."""
+    key = request.headers.get("X-Emergency-Key", "")
+    if key != "reset-ana-2026":
+        raise HTTPException(403, "Chave incorreta.")
+    conn = get_db(); c = conn.cursor()
+    uid = "rodrigomorlin"
+    nome = "Rodrigo Morlin"
+    pin = "1710"
+    c.execute(f"SELECT id FROM usuarios WHERE id={P()}", (uid,))
+    exists = fetchone(c)
+    if exists:
+        c.execute(f"UPDATE usuarios SET nome={P()}, pin_hash={P()}, role={P()} WHERE id={P()}",
+                  (nome, hash_pin(pin), "admin", uid))
+    else:
+        c.execute(f"INSERT INTO usuarios (id,nome,pin_hash,role,email) VALUES ({Ps(5)})",
+                  (uid, nome, hash_pin(pin), "admin", ""))
+    conn.commit(); conn.close()
+    log.info(f"Usuário {uid} criado/atualizado via rota de emergência")
+    return {"ok": True, "message": f"Usuário '{uid}' criado. Use {uid} / {pin}"}
+
 # ── STATIC FILES ───────────────────────────────────────────
 @app.get("/sw.js")
 def sw(): return HTMLResponse(open("sw.js").read(), media_type="application/javascript")

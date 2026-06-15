@@ -662,8 +662,8 @@ RETORNE APENAS JSON sem markdown:
 
   const mc=pdf?[{type:'document',source:{type:'base64',media_type:'application/pdf',data:pdf.b64}},{type:'text',text:txt}]:txt;
   try{
-    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1500,system,messages:[{role:'user',content:mc}]})});
+    const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json','X-Token':token},
+      body:JSON.stringify({system,messages:[{role:'user',content:mc}],max_tokens:1500})});
     const data=await res.json();
     const raw=data.content.map(i=>i.text||'').join('').replace(/```json[\s\S]*?```|```/g,'').trim();
     let p;try{p=JSON.parse(raw);}catch{p={acao:'DUVIDA',resposta:'Não entendi. Pode reformular?',suggests:['Relatório da semana','Novo agendamento']};}
@@ -938,6 +938,7 @@ async function loadIntStatus(){
     document.getElementById('int-status').innerHTML=`
       <div class="int-row"><div class="int-ico" style="background:#EAF3DE"><i class="ti ti-mail" style="color:#1D9E75"></i></div><div class="int-body"><div class="int-name">Email (SMTP)</div><div class="int-desc">Notificações automáticas para médicos</div></div><span class="int-status ${h.email?'ok':'off'}">${h.email?'Ativo':'Não configurado'}</span></div>
       <div class="int-row"><div class="int-ico" style="background:#E8F0FE"><i class="ti ti-brand-google" style="color:#4285F4"></i></div><div class="int-body"><div class="int-name">Google Calendar</div><div class="int-desc">Sincronização de eventos</div></div><span class="int-status ${h.gcal?'ok':'off'}">${h.gcal?'Ativo':'Não configurado'}</span></div>
+      <div class="int-row"><div class="int-ico" style="background:#EEEDFE"><i class="ti ti-robot" style="color:var(--accent)"></i></div><div class="int-body"><div class="int-name">IA (Anthropic)</div><div class="int-desc">Motor de linguagem natural da Ana</div></div><span class="int-status ${h.ai?'ok':'off'}">${h.ai?'Ativo':'ANTHROPIC_API_KEY não configurada'}</span></div>
       <div class="int-row"><div class="int-ico" style="background:#EEEDFE"><i class="ti ti-database" style="color:var(--accent)"></i></div><div class="int-body"><div class="int-name">Banco de dados</div><div class="int-desc">Armazenamento dos dados</div></div><span class="int-status ok">${h.db==='postgres'?'PostgreSQL':'SQLite'}</span></div>`;
   }catch{}
 }

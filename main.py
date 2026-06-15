@@ -94,6 +94,7 @@ def init_db():
                 time TEXT NOT NULL, obs TEXT DEFAULT '', ai INTEGER DEFAULT 0,
                 criado_por TEXT DEFAULT '', gcal_event_id TEXT DEFAULT '',
                 pdf_filename TEXT DEFAULT '', pdf_data TEXT DEFAULT '',
+                duracao_min INTEGER DEFAULT 60,
                 created_at TIMESTAMP DEFAULT NOW())""",
             """CREATE TABLE IF NOT EXISTS medicos (
                 id TEXT PRIMARY KEY, name TEXT NOT NULL,
@@ -130,6 +131,7 @@ CREATE TABLE IF NOT EXISTS eventos (
     time TEXT NOT NULL, obs TEXT DEFAULT '', ai INTEGER DEFAULT 0,
     criado_por TEXT DEFAULT '', gcal_event_id TEXT DEFAULT '',
     pdf_filename TEXT DEFAULT '', pdf_data TEXT DEFAULT '',
+    duracao_min INTEGER DEFAULT 60,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS medicos (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, spec TEXT DEFAULT '', email TEXT DEFAULT '');
@@ -162,6 +164,7 @@ CREATE TABLE IF NOT EXISTS logs (
     for alter in [
         "ALTER TABLE eventos ADD COLUMN pdf_filename TEXT DEFAULT ''",
         "ALTER TABLE eventos ADD COLUMN pdf_data TEXT DEFAULT ''",
+        "ALTER TABLE eventos ADD COLUMN duracao_min INTEGER DEFAULT 60",
         "ALTER TABLE usuarios ADD COLUMN medico_id TEXT DEFAULT ''",
     ]:
         try:
@@ -266,6 +269,15 @@ def email_html(ev, setor_name):
         <p style="font-size:10px;color:#aaa;margin-top:14px">Ana · Secretária Virtual</p>
       </div></div>"""
 
+# ── HELPERS DE HORÁRIO ──────────────────────────────────────
+def _time_to_min(t: str) -> int:
+    """Converte 'HH:MM' em minutos desde meia-noite."""
+    try:
+        h, m = t.split(":")
+        return int(h) * 60 + int(m)
+    except Exception:
+        return 0
+
 # ── GOOGLE CALENDAR ────────────────────────────────────────
 async def gcal_create(ev, setor_name):
     if not GCAL_CREDS: return ""
@@ -276,13 +288,15 @@ async def gcal_create(ev, setor_name):
             json.loads(GCAL_CREDS),
             scopes=["https://www.googleapis.com/auth/calendar"])
         svc = build("calendar", "v3", credentials=creds)
-        h, m = ev["time"].split(":")
-        end_h = str(int(h)+2).zfill(2)
+        ini_min = _time_to_min(ev["time"])
+        fim_min = ini_min + max(ev.get("duracao_min") or 60, 1)
+        fim_min = min(fim_min, 23*60+59)  # não passa da meia-noite
+        end_h, end_m = fim_min // 60, fim_min % 60
         body = {
             "summary": f"{ev['proc']} — {ev.get('paciente','—')}",
             "description": f"Médico: {ev['doc']}\nSetor: {setor_name}\nObs: {ev.get('obs','')}",
             "start": {"dateTime": f"{ev['date']}T{ev['time']}:00", "timeZone": "America/Sao_Paulo"},
-            "end": {"dateTime": f"{ev['date']}T{end_h}:{m}:00", "timeZone": "America/Sao_Paulo"},
+            "end": {"dateTime": f"{ev['date']}T{end_h:02d}:{end_m:02d}:00", "timeZone": "America/Sao_Paulo"},
         }
         r = svc.events().insert(calendarId=GCAL_ID, body=body).execute()
         log.info(f"GCal evento criado: {r.get('id')}")
@@ -310,11 +324,12 @@ class Evento(BaseModel):
     paciente: Optional[str]=""; date: str; time: str
     obs: Optional[str]=""; ai: Optional[bool]=True
     pdf_filename: Optional[str]=""; pdf_data: Optional[str]=""
+    duracao_min: Optional[int]=60
 
 class EventoUpdate(BaseModel):
     doc: Optional[str]=None; setor: Optional[str]=None; proc: Optional[str]=None
     paciente: Optional[str]=None; date: Optional[str]=None; time: Optional[str]=None
-    obs: Optional[str]=None
+    obs: Optional[str]=None; duracao_min: Optional[int]=None
 
 class Medico(BaseModel):
     id: str; name: str; spec: Optional[str]=""; email: Optional[str]=""
@@ -438,6 +453,22 @@ def delete_usuario(uid: str, user=Depends(auth)):
     conn.commit(); conn.close(); return {"ok": True}
 
 # ── EVENTOS ────────────────────────────────────────────────
+def find_overlap(c, doc: str, date: str, time: str, duracao_min: int, exclude_id: Optional[int] = None):
+    """Retorna o evento que sobrepõe o intervalo [time, time+duracao_min) do mesmo médico no mesmo dia, ou None."""
+    c.execute(f"SELECT id,proc,time,duracao_min,paciente FROM eventos WHERE doc={P()} AND date={P()}", (doc, date))
+    existentes = fetchall(c)
+    novo_ini = _time_to_min(time)
+    novo_fim = novo_ini + max(duracao_min or 60, 1)
+    for e in existentes:
+        if exclude_id is not None and e["id"] == exclude_id:
+            continue
+        e_ini = _time_to_min(e["time"])
+        e_fim = e_ini + max(e.get("duracao_min") or 60, 1)
+        # Sobreposição se os intervalos se cruzam
+        if novo_ini < e_fim and e_ini < novo_fim:
+            return e
+    return None
+
 @app.get("/api/eventos")
 def list_eventos(user=Depends(auth)):
     conn = get_db(); c = conn.cursor()
@@ -447,12 +478,14 @@ def list_eventos(user=Depends(auth)):
 @app.post("/api/eventos")
 async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=Depends(auth)):
     conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT id,proc FROM eventos WHERE doc={P()} AND date={P()} AND time={P()}",
-              (ev.doc, ev.date, ev.time))
-    cf = fetchone(c)
+    cf = find_overlap(c, ev.doc, ev.date, ev.time, ev.duracao_min or 60)
     if cf:
         conn.close()
-        raise HTTPException(400, f"Conflito: {ev.doc} já tem '{cf['proc']}' às {ev.time}.")
+        cf_ini = cf["time"]
+        cf_dur = cf.get("duracao_min") or 60
+        cf_fim_min = _time_to_min(cf_ini) + cf_dur
+        cf_fim = f"{cf_fim_min//60:02d}:{cf_fim_min%60:02d}"
+        raise HTTPException(400, f"Conflito: {ev.doc} já tem '{cf['proc']}' das {cf_ini} às {cf_fim} (paciente {cf.get('paciente') or '—'}).")
 
     # Busca setor e email do médico
     c.execute(f"SELECT name FROM setores WHERE id={P()}", (ev.setor,))
@@ -464,11 +497,12 @@ async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=
     if GCAL_CREDS:
         gcal_id = await gcal_create(ev.dict(), sname)
 
-    c.execute(f"""INSERT INTO eventos (doc,setor,proc,paciente,date,time,obs,ai,criado_por,gcal_event_id,pdf_filename,pdf_data)
-                  VALUES ({Ps(12)})""",
+    c.execute(f"""INSERT INTO eventos (doc,setor,proc,paciente,date,time,obs,ai,criado_por,gcal_event_id,pdf_filename,pdf_data,duracao_min)
+                  VALUES ({Ps(13)})""",
               (ev.doc, ev.setor, ev.proc, ev.paciente or "", ev.date, ev.time,
                ev.obs or "", int(ev.ai or 1), user["id"], gcal_id,
-               (ev.pdf_filename or "")[:200], (ev.pdf_data or "")[:3000000]))
+               (ev.pdf_filename or "")[:200], (ev.pdf_data or "")[:3000000],
+               ev.duracao_min or 60))
 
     if USE_POSTGRES:
         c.execute("SELECT lastval()"); new_id = c.fetchone()[0]
@@ -527,20 +561,22 @@ async def update_evento(ev_id: int, ev: EventoUpdate, bg: BackgroundTasks, user=
         "date": ev.date if ev.date is not None else current["date"],
         "time": ev.time if ev.time is not None else current["time"],
         "obs": ev.obs if ev.obs is not None else current["obs"],
+        "duracao_min": ev.duracao_min if ev.duracao_min is not None else (current.get("duracao_min") or 60),
     }
 
-    # Verifica conflito (ignorando o próprio evento)
-    c.execute(f"""SELECT id,proc FROM eventos WHERE doc={P()} AND date={P()} AND time={P()} AND id!={P()}""",
-              (merged["doc"], merged["date"], merged["time"], ev_id))
-    cf = fetchone(c)
+    # Verifica sobreposição (ignorando o próprio evento)
+    cf = find_overlap(c, merged["doc"], merged["date"], merged["time"], merged["duracao_min"], exclude_id=ev_id)
     if cf:
         conn.close()
-        raise HTTPException(400, f"Conflito: {merged['doc']} já tem '{cf['proc']}' às {merged['time']}.")
+        cf_ini = cf["time"]
+        cf_fim_min = _time_to_min(cf_ini) + (cf.get("duracao_min") or 60)
+        cf_fim = f"{cf_fim_min//60:02d}:{cf_fim_min%60:02d}"
+        raise HTTPException(400, f"Conflito: {merged['doc']} já tem '{cf['proc']}' das {cf_ini} às {cf_fim}.")
 
     c.execute(f"""UPDATE eventos SET doc={P()},setor={P()},proc={P()},paciente={P()},
-                  date={P()},time={P()},obs={P()} WHERE id={P()}""",
+                  date={P()},time={P()},obs={P()},duracao_min={P()} WHERE id={P()}""",
               (merged["doc"], merged["setor"], merged["proc"], merged["paciente"] or "",
-               merged["date"], merged["time"], merged["obs"] or "", ev_id))
+               merged["date"], merged["time"], merged["obs"] or "", merged["duracao_min"], ev_id))
     conn.commit(); conn.close()
     db_log("INFO", f"Editado: evento #{ev_id} → {merged['proc']} | {merged['date']} {merged['time']}",
            usuario=user["id"])

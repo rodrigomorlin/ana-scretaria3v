@@ -620,6 +620,29 @@ def health():
             "timestamp":datetime.now().isoformat()}
 
 # ── RESET DE EMERGÊNCIA (remover após uso) ──────────────────
+@app.get("/api/debug-info")
+def debug_info(request: Request):
+    key = request.headers.get("X-Emergency-Key", "")
+    if key != "reset-ana-2026":
+        raise HTTPException(403, "Chave incorreta.")
+    db_path = os.environ.get("DB_PATH", "ana.db")
+    info = {
+        "db_path_env": db_path,
+        "db_path_exists": os.path.exists(db_path),
+        "db_path_abs": os.path.abspath(db_path),
+        "use_postgres": USE_POSTGRES,
+        "secret_is_default": SECRET == "ana-secretaria-default-secret-change-me",
+        "cwd": os.getcwd(),
+    }
+    try:
+        conn = get_db(); c = conn.cursor()
+        c.execute("SELECT id, nome, role FROM usuarios")
+        info["usuarios"] = fetchall(c)
+        conn.close()
+    except Exception as e:
+        info["db_error"] = str(e)
+    return info
+
 @app.post("/api/emergency-reset-admin")
 def emergency_reset_admin(request: Request):
     """Reseta o usuário admin para PIN 1234. Requer header X-Emergency-Key."""

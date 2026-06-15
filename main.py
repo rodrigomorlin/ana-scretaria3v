@@ -83,7 +83,7 @@ def init_db():
         stmts = [
             """CREATE TABLE IF NOT EXISTS usuarios (
                 id TEXT PRIMARY KEY, nome TEXT NOT NULL, pin_hash TEXT NOT NULL,
-                role TEXT DEFAULT 'medico', email TEXT DEFAULT '',
+                role TEXT DEFAULT 'medico', email TEXT DEFAULT '', medico_id TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT NOW())""",
             """CREATE TABLE IF NOT EXISTS sessoes (
                 token TEXT PRIMARY KEY, usuario_id TEXT NOT NULL,
@@ -93,6 +93,7 @@ def init_db():
                 proc TEXT NOT NULL, paciente TEXT DEFAULT '', date TEXT NOT NULL,
                 time TEXT NOT NULL, obs TEXT DEFAULT '', ai INTEGER DEFAULT 0,
                 criado_por TEXT DEFAULT '', gcal_event_id TEXT DEFAULT '',
+                pdf_filename TEXT DEFAULT '', pdf_data TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT NOW())""",
             """CREATE TABLE IF NOT EXISTS medicos (
                 id TEXT PRIMARY KEY, name TEXT NOT NULL,
@@ -119,7 +120,7 @@ def init_db():
         c.executescript("""
 CREATE TABLE IF NOT EXISTS usuarios (
     id TEXT PRIMARY KEY, nome TEXT NOT NULL, pin_hash TEXT NOT NULL,
-    role TEXT DEFAULT 'medico', email TEXT DEFAULT '',
+    role TEXT DEFAULT 'medico', email TEXT DEFAULT '', medico_id TEXT DEFAULT '',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS sessoes (
     token TEXT PRIMARY KEY, usuario_id TEXT NOT NULL, expires_at TEXT NOT NULL);
@@ -128,6 +129,7 @@ CREATE TABLE IF NOT EXISTS eventos (
     proc TEXT NOT NULL, paciente TEXT DEFAULT '', date TEXT NOT NULL,
     time TEXT NOT NULL, obs TEXT DEFAULT '', ai INTEGER DEFAULT 0,
     criado_por TEXT DEFAULT '', gcal_event_id TEXT DEFAULT '',
+    pdf_filename TEXT DEFAULT '', pdf_data TEXT DEFAULT '',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS medicos (
     id TEXT PRIMARY KEY, name TEXT NOT NULL, spec TEXT DEFAULT '', email TEXT DEFAULT '');
@@ -155,6 +157,17 @@ CREATE TABLE IF NOT EXISTS logs (
     ]:
         try: c.execute(idx)
         except: pass
+
+    # Migrações — adiciona colunas novas em bancos já existentes (ignora erro se já existir)
+    for alter in [
+        "ALTER TABLE eventos ADD COLUMN pdf_filename TEXT DEFAULT ''",
+        "ALTER TABLE eventos ADD COLUMN pdf_data TEXT DEFAULT ''",
+        "ALTER TABLE usuarios ADD COLUMN medico_id TEXT DEFAULT ''",
+    ]:
+        try:
+            c.execute(alter); conn.commit()
+        except Exception:
+            pass
 
     p = P()
     # Nenhum admin é criado automaticamente — o primeiro acesso é feito
@@ -296,6 +309,12 @@ class Evento(BaseModel):
     doc: str; setor: str; proc: str
     paciente: Optional[str]=""; date: str; time: str
     obs: Optional[str]=""; ai: Optional[bool]=True
+    pdf_filename: Optional[str]=""; pdf_data: Optional[str]=""
+
+class EventoUpdate(BaseModel):
+    doc: Optional[str]=None; setor: Optional[str]=None; proc: Optional[str]=None
+    paciente: Optional[str]=None; date: Optional[str]=None; time: Optional[str]=None
+    obs: Optional[str]=None
 
 class Medico(BaseModel):
     id: str; name: str; spec: Optional[str]=""; email: Optional[str]=""
@@ -311,6 +330,7 @@ class Memoria(BaseModel):
 class Usuario(BaseModel):
     id: str; nome: str; pin: str
     role: Optional[str]="medico"; email: Optional[str]=""
+    medico_id: Optional[str]=""
 
 class ChangePin(BaseModel):
     pin_atual: str; pin_novo: str
@@ -395,7 +415,7 @@ def change_pin(data: ChangePin, user=Depends(auth)):
 def list_usuarios(user=Depends(auth)):
     if user["role"]!="admin": raise HTTPException(403,"Acesso negado.")
     conn = get_db(); c = conn.cursor()
-    c.execute("SELECT id,nome,role,email,created_at FROM usuarios ORDER BY nome")
+    c.execute("SELECT id,nome,role,email,medico_id,created_at FROM usuarios ORDER BY nome")
     rows = fetchall(c); conn.close(); return rows
 
 @app.post("/api/usuarios")
@@ -403,8 +423,8 @@ def create_usuario(u: Usuario, user=Depends(auth)):
     if user["role"]!="admin": raise HTTPException(403,"Acesso negado.")
     conn = get_db(); c = conn.cursor()
     try:
-        c.execute(f"INSERT INTO usuarios (id,nome,pin_hash,role,email) VALUES ({Ps(5)})",
-                  (u.id.lower(), u.nome, hash_pin(u.pin), u.role or "medico", u.email or ""))
+        c.execute(f"INSERT INTO usuarios (id,nome,pin_hash,role,email,medico_id) VALUES ({Ps(6)})",
+                  (u.id.lower(), u.nome, hash_pin(u.pin), u.role or "medico", u.email or "", u.medico_id or ""))
         conn.commit()
     except Exception: raise HTTPException(400,"ID já existe.")
     conn.close(); return {"ok": True}
@@ -444,10 +464,11 @@ async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=
     if GCAL_CREDS:
         gcal_id = await gcal_create(ev.dict(), sname)
 
-    c.execute(f"""INSERT INTO eventos (doc,setor,proc,paciente,date,time,obs,ai,criado_por,gcal_event_id)
-                  VALUES ({Ps(10)})""",
+    c.execute(f"""INSERT INTO eventos (doc,setor,proc,paciente,date,time,obs,ai,criado_por,gcal_event_id,pdf_filename,pdf_data)
+                  VALUES ({Ps(12)})""",
               (ev.doc, ev.setor, ev.proc, ev.paciente or "", ev.date, ev.time,
-               ev.obs or "", int(ev.ai or 1), user["id"], gcal_id))
+               ev.obs or "", int(ev.ai or 1), user["id"], gcal_id,
+               (ev.pdf_filename or "")[:200], (ev.pdf_data or "")[:3000000]))
 
     if USE_POSTGRES:
         c.execute("SELECT lastval()"); new_id = c.fetchone()[0]
@@ -482,6 +503,63 @@ async def delete_evento(ev_id: int, bg: BackgroundTasks, user=Depends(auth)):
     db_log("INFO", f"Cancelado: {ev['proc']} | {ev['date']}", usuario=user["id"])
     if gcal_id: bg.add_task(gcal_delete, gcal_id)
     return {"ok": True}
+
+@app.get("/api/eventos/{ev_id}")
+def get_evento(ev_id: int, user=Depends(auth)):
+    conn = get_db(); c = conn.cursor()
+    c.execute(f"SELECT * FROM eventos WHERE id={P()}", (ev_id,))
+    ev = fetchone(c); conn.close()
+    if not ev: raise HTTPException(404,"Não encontrado.")
+    return ev
+
+@app.put("/api/eventos/{ev_id}")
+async def update_evento(ev_id: int, ev: EventoUpdate, bg: BackgroundTasks, user=Depends(auth)):
+    conn = get_db(); c = conn.cursor()
+    c.execute(f"SELECT * FROM eventos WHERE id={P()}", (ev_id,))
+    current = fetchone(c)
+    if not current: conn.close(); raise HTTPException(404,"Não encontrado.")
+
+    merged = {
+        "doc": ev.doc if ev.doc is not None else current["doc"],
+        "setor": ev.setor if ev.setor is not None else current["setor"],
+        "proc": ev.proc if ev.proc is not None else current["proc"],
+        "paciente": ev.paciente if ev.paciente is not None else current["paciente"],
+        "date": ev.date if ev.date is not None else current["date"],
+        "time": ev.time if ev.time is not None else current["time"],
+        "obs": ev.obs if ev.obs is not None else current["obs"],
+    }
+
+    # Verifica conflito (ignorando o próprio evento)
+    c.execute(f"""SELECT id,proc FROM eventos WHERE doc={P()} AND date={P()} AND time={P()} AND id!={P()}""",
+              (merged["doc"], merged["date"], merged["time"], ev_id))
+    cf = fetchone(c)
+    if cf:
+        conn.close()
+        raise HTTPException(400, f"Conflito: {merged['doc']} já tem '{cf['proc']}' às {merged['time']}.")
+
+    c.execute(f"""UPDATE eventos SET doc={P()},setor={P()},proc={P()},paciente={P()},
+                  date={P()},time={P()},obs={P()} WHERE id={P()}""",
+              (merged["doc"], merged["setor"], merged["proc"], merged["paciente"] or "",
+               merged["date"], merged["time"], merged["obs"] or "", ev_id))
+    conn.commit(); conn.close()
+    db_log("INFO", f"Editado: evento #{ev_id} → {merged['proc']} | {merged['date']} {merged['time']}",
+           usuario=user["id"])
+
+    # Atualiza Google Calendar: remove o antigo e cria novo (mais simples e confiável)
+    old_gcal = current.get("gcal_event_id","")
+    if GCAL_CREDS and old_gcal:
+        bg.add_task(gcal_delete, old_gcal)
+    if GCAL_CREDS:
+        conn2 = get_db(); c2 = conn2.cursor()
+        c2.execute(f"SELECT name FROM setores WHERE id={P()}", (merged["setor"],))
+        sr = fetchone(c2); conn2.close()
+        sname = sr["name"] if sr else merged["setor"]
+        new_gcal = await gcal_create(merged, sname)
+        conn3 = get_db(); c3 = conn3.cursor()
+        c3.execute(f"UPDATE eventos SET gcal_event_id={P()} WHERE id={P()}", (new_gcal, ev_id))
+        conn3.commit(); conn3.close()
+
+    return {"id": ev_id, **merged}
 
 # ── MÉDICOS ────────────────────────────────────────────────
 @app.get("/api/medicos")
@@ -643,6 +721,85 @@ def list_logs(user=Depends(auth)):
     c.execute("SELECT * FROM logs ORDER BY created_at DESC LIMIT 300")
     rows = fetchall(c); conn.close(); return rows
 
+# ── LEMBRETE DIÁRIO ──────────────────────────────────────────
+def reminder_email_html(eventos_dia, data_str):
+    rows = ""
+    for e in eventos_dia:
+        s = e.get("setor","")
+        rows += f"""<tr>
+          <td style="padding:5px 8px;border-bottom:0.5px solid #eee">{e['time']}</td>
+          <td style="padding:5px 8px;border-bottom:0.5px solid #eee">{s}</td>
+          <td style="padding:5px 8px;border-bottom:0.5px solid #eee">{e['proc']}</td>
+          <td style="padding:5px 8px;border-bottom:0.5px solid #eee">{e.get('paciente','—')}</td>
+          <td style="padding:5px 8px;border-bottom:0.5px solid #eee;font-size:11px;color:#888">{e['doc']}</td>
+        </tr>"""
+    return f"""<div style="font-family:Arial;max-width:560px;margin:0 auto;padding:20px">
+      <div style="background:#6C63D4;color:#fff;border-radius:10px 10px 0 0;padding:14px 18px">
+        <b>Ana · Resumo de {data_str}</b></div>
+      <div style="background:#f9f9ff;border:1px solid #E4E4EF;border-radius:0 0 10px 10px;padding:18px">
+        <p style="font-size:13px;color:#555;margin-bottom:10px">{len(eventos_dia)} procedimento(s) agendado(s) para o dia.</p>
+        <table style="width:100%;font-size:12px;border-collapse:collapse">
+          <tr><th style="text-align:left;padding:5px 8px;background:#EEEDFE;color:#3C3489">Hora</th>
+              <th style="text-align:left;padding:5px 8px;background:#EEEDFE;color:#3C3489">Setor</th>
+              <th style="text-align:left;padding:5px 8px;background:#EEEDFE;color:#3C3489">Procedimento</th>
+              <th style="text-align:left;padding:5px 8px;background:#EEEDFE;color:#3C3489">Paciente</th>
+              <th style="text-align:left;padding:5px 8px;background:#EEEDFE;color:#3C3489">Médico</th></tr>
+          {rows}
+        </table>
+        <p style="font-size:10px;color:#aaa;margin-top:14px">Ana · Secretária Virtual — lembrete automático</p>
+      </div></div>"""
+
+async def run_daily_reminder():
+    """Envia email de resumo do dia seguinte para cada médico com email cadastrado."""
+    if not SMTP_HOST:
+        return {"sent": 0, "reason": "SMTP não configurado"}
+    conn = get_db(); c = conn.cursor()
+    amanha = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+    amanha_str = (datetime.now() + timedelta(days=1)).strftime("%d/%m/%Y")
+    c.execute(f"SELECT e.*, s.name as setor_nome FROM eventos e LEFT JOIN setores s ON e.setor=s.id WHERE e.date={P()} ORDER BY e.time", (amanha,))
+    eventos_amanha = fetchall(c)
+    for ev in eventos_amanha:
+        ev["setor"] = ev.get("setor_nome") or ev.get("setor")
+    c.execute("SELECT name, email FROM medicos WHERE email != ''")
+    medicos_com_email = fetchall(c)
+    conn.close()
+
+    sent = 0
+    for m in medicos_com_email:
+        evs_medico = [e for e in eventos_amanha if e["doc"] == m["name"]]
+        if not evs_medico:
+            continue
+        await send_email(m["email"], f"Ana · Sua agenda de {amanha_str}",
+                         reminder_email_html(evs_medico, amanha_str))
+        sent += 1
+    db_log("INFO", f"Lembrete diário enviado para {sent} médico(s) — {amanha_str}")
+    return {"sent": sent, "date": amanha}
+
+@app.post("/api/lembrete-diario")
+async def trigger_daily_reminder(user=Depends(auth)):
+    """Dispara manualmente o envio do lembrete do dia seguinte (admin)."""
+    if user["role"] != "admin":
+        raise HTTPException(403, "Acesso negado.")
+    result = await run_daily_reminder()
+    return result
+
+@app.on_event("startup")
+async def start_scheduler():
+    import asyncio
+    async def scheduler_loop():
+        last_run_date = None
+        while True:
+            now = datetime.now()
+            # Dispara uma vez por dia, próximo das 18h
+            if now.hour == 18 and last_run_date != now.date():
+                try:
+                    await run_daily_reminder()
+                except Exception as e:
+                    log.error(f"Erro no lembrete diário: {e}")
+                last_run_date = now.date()
+            await asyncio.sleep(60 * 10)  # checa a cada 10 minutos
+    asyncio.create_task(scheduler_loop())
+
 # ── HEALTH ─────────────────────────────────────────────────
 @app.get("/api/health")
 def health():
@@ -650,72 +807,6 @@ def health():
             "db":"postgres" if USE_POSTGRES else "sqlite",
             "email":bool(SMTP_HOST),"gcal":bool(GCAL_CREDS),
             "timestamp":datetime.now().isoformat()}
-
-# ── RESET DE EMERGÊNCIA (remover após uso) ──────────────────
-@app.get("/api/debug-info")
-def debug_info(request: Request):
-    key = request.headers.get("X-Emergency-Key", "")
-    if key != "reset-ana-2026":
-        raise HTTPException(403, "Chave incorreta.")
-    db_path = os.environ.get("DB_PATH", "ana.db")
-    info = {
-        "db_path_env": db_path,
-        "db_path_exists": os.path.exists(db_path),
-        "db_path_abs": os.path.abspath(db_path),
-        "use_postgres": USE_POSTGRES,
-        "secret_is_default": SECRET == "ana-secretaria-default-secret-change-me",
-        "cwd": os.getcwd(),
-    }
-    try:
-        conn = get_db(); c = conn.cursor()
-        c.execute("SELECT id, nome, role FROM usuarios")
-        info["usuarios"] = fetchall(c)
-        conn.close()
-    except Exception as e:
-        info["db_error"] = str(e)
-    return info
-
-@app.post("/api/emergency-reset-admin")
-def emergency_reset_admin(request: Request):
-    """Reseta o usuário admin para PIN 1234. Requer header X-Emergency-Key."""
-    key = request.headers.get("X-Emergency-Key", "")
-    if key != "reset-ana-2026":
-        raise HTTPException(403, "Chave incorreta.")
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT id FROM usuarios WHERE id={P()}", ("admin",))
-    exists = fetchone(c)
-    if exists:
-        c.execute(f"UPDATE usuarios SET pin_hash={P()}, role={P()} WHERE id={P()}",
-                  (hash_pin("1234"), "admin", "admin"))
-    else:
-        c.execute(f"INSERT INTO usuarios (id,nome,pin_hash,role,email) VALUES ({Ps(5)})",
-                  ("admin","Administrador",hash_pin("1234"),"admin",""))
-    c.execute(f"DELETE FROM sessoes")
-    conn.commit(); conn.close()
-    log.info("Admin resetado via rota de emergência")
-    return {"ok": True, "message": "Admin resetado. Use admin / 1234"}
-
-@app.post("/api/emergency-create-user")
-def emergency_create_user(request: Request):
-    """Cria/atualiza um usuário admin específico. Requer header X-Emergency-Key."""
-    key = request.headers.get("X-Emergency-Key", "")
-    if key != "reset-ana-2026":
-        raise HTTPException(403, "Chave incorreta.")
-    conn = get_db(); c = conn.cursor()
-    uid = "rodrigomorlin"
-    nome = "Rodrigo Morlin"
-    pin = "1710"
-    c.execute(f"SELECT id FROM usuarios WHERE id={P()}", (uid,))
-    exists = fetchone(c)
-    if exists:
-        c.execute(f"UPDATE usuarios SET nome={P()}, pin_hash={P()}, role={P()} WHERE id={P()}",
-                  (nome, hash_pin(pin), "admin", uid))
-    else:
-        c.execute(f"INSERT INTO usuarios (id,nome,pin_hash,role,email) VALUES ({Ps(5)})",
-                  (uid, nome, hash_pin(pin), "admin", ""))
-    conn.commit(); conn.close()
-    log.info(f"Usuário {uid} criado/atualizado via rota de emergência")
-    return {"ok": True, "message": f"Usuário '{uid}' criado. Use {uid} / {pin}"}
 
 # ── STATIC FILES ───────────────────────────────────────────
 @app.get("/sw.js")

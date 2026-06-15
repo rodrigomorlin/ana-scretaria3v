@@ -18,7 +18,7 @@ app = FastAPI(title="Ana v3", version="3.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
-SECRET       = os.environ.get("SECRET_KEY", secrets.token_hex(32))
+SECRET       = os.environ.get("SECRET_KEY", "ana-secretaria-default-secret-change-me")
 SMTP_HOST    = os.environ.get("SMTP_HOST", "")
 SMTP_PORT    = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USER    = os.environ.get("SMTP_USER", "")
@@ -31,11 +31,15 @@ USE_POSTGRES = bool(DATABASE_URL and DATABASE_URL.startswith("postgres"))
 
 def hash_pin(pin): return hashlib.sha256(f"{pin}{SECRET}".encode()).hexdigest()
 
+import sqlite3
 if USE_POSTGRES:
-    import psycopg2, psycopg2.extras
-    log.info("Usando PostgreSQL")
+    try:
+        import psycopg2, psycopg2.extras
+        log.info("Usando PostgreSQL")
+    except ImportError:
+        log.warning("psycopg2 nao disponivel — usando SQLite como fallback")
+        USE_POSTGRES = False
 else:
-    import sqlite3
     log.info("Usando SQLite")
 
 # ── DB CONNECTION ──────────────────────────────────────────
@@ -614,6 +618,27 @@ def health():
             "db":"postgres" if USE_POSTGRES else "sqlite",
             "email":bool(SMTP_HOST),"gcal":bool(GCAL_CREDS),
             "timestamp":datetime.now().isoformat()}
+
+# ── RESET DE EMERGÊNCIA (remover após uso) ──────────────────
+@app.post("/api/emergency-reset-admin")
+def emergency_reset_admin(request: Request):
+    """Reseta o usuário admin para PIN 1234. Requer header X-Emergency-Key."""
+    key = request.headers.get("X-Emergency-Key", "")
+    if key != "reset-ana-2026":
+        raise HTTPException(403, "Chave incorreta.")
+    conn = get_db(); c = conn.cursor()
+    c.execute(f"SELECT id FROM usuarios WHERE id={P()}", ("admin",))
+    exists = fetchone(c)
+    if exists:
+        c.execute(f"UPDATE usuarios SET pin_hash={P()}, role={P()} WHERE id={P()}",
+                  (hash_pin("1234"), "admin", "admin"))
+    else:
+        c.execute(f"INSERT INTO usuarios (id,nome,pin_hash,role,email) VALUES ({Ps(5)})",
+                  ("admin","Administrador",hash_pin("1234"),"admin",""))
+    c.execute(f"DELETE FROM sessoes")
+    conn.commit(); conn.close()
+    log.info("Admin resetado via rota de emergência")
+    return {"ok": True, "message": "Admin resetado. Use admin / 1234"}
 
 # ── STATIC FILES ───────────────────────────────────────────
 @app.get("/sw.js")

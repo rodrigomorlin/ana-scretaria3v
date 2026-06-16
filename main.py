@@ -116,6 +116,10 @@ def init_db():
                 id SERIAL PRIMARY KEY, nivel TEXT, mensagem TEXT,
                 usuario TEXT DEFAULT '', ip TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT NOW())""",
+            """CREATE TABLE IF NOT EXISTS correcoes (
+                id SERIAL PRIMARY KEY, contexto TEXT, campo TEXT,
+                valor_errado TEXT, valor_certo TEXT,
+                usuario TEXT DEFAULT '', created_at TIMESTAMP DEFAULT NOW())""",
         ]
         for s in stmts:
             c.execute(s)
@@ -151,6 +155,10 @@ CREATE TABLE IF NOT EXISTS historico (
 CREATE TABLE IF NOT EXISTS logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT, nivel TEXT, mensagem TEXT,
     usuario TEXT DEFAULT '', ip TEXT DEFAULT '',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS correcoes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, contexto TEXT, campo TEXT,
+    valor_errado TEXT, valor_certo TEXT, usuario TEXT DEFAULT '',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 """)
 
@@ -351,6 +359,12 @@ class Usuario(BaseModel):
 
 class ChangePin(BaseModel):
     pin_atual: str; pin_novo: str
+
+class Correcao(BaseModel):
+    contexto: str  # texto original que o usuário digitou
+    campo: str     # qual campo estava errado (ex: "setor", "horario", "medico")
+    valor_errado: Optional[str] = ""
+    valor_certo: str
 
 # ── AUTH ROUTES ────────────────────────────────────────────
 class SetupData(BaseModel):
@@ -682,12 +696,64 @@ def clear_memorias(user=Depends(auth)):
     c.execute(f"DELETE FROM memorias WHERE tipo != {P()}", ("padrao",))
     conn.commit(); conn.close(); return {"ok": True}
 
+# ── CORREÇÕES (aprendizado a partir de erros) ───────────────
+@app.post("/api/correcoes")
+def create_correcao(c_in: Correcao, user=Depends(auth)):
+    conn = get_db(); c = conn.cursor()
+    c.execute(f"""INSERT INTO correcoes (contexto,campo,valor_errado,valor_certo,usuario)
+                  VALUES ({Ps(5)})""",
+              (c_in.contexto[:300], c_in.campo[:50], (c_in.valor_errado or "")[:200],
+               c_in.valor_certo[:200], user["id"]))
+    conn.commit(); conn.close()
+    db_log("INFO", f"Correção registrada: {c_in.campo} → {c_in.valor_certo}", usuario=user["id"])
+    return {"ok": True}
+
+@app.get("/api/correcoes")
+def list_correcoes(user=Depends(auth)):
+    conn = get_db(); c = conn.cursor()
+    c.execute("SELECT * FROM correcoes ORDER BY created_at DESC LIMIT 30")
+    rows = fetchall(c); conn.close(); return rows
+
 # ── CONTEXTO IA ────────────────────────────────────────────
+def _calc_preferencias_medicos(c) -> dict:
+    """Analisa o histórico e extrai padrões por médico: setor mais comum,
+    horário mais comum, duração média — para a IA usar como sugestão default."""
+    c.execute("""SELECT doc, setor, time, duracao_min FROM eventos
+                 ORDER BY created_at DESC LIMIT 300""")
+    rows = fetchall(c)
+    por_medico = {}
+    for r in rows:
+        doc = r.get("doc")
+        if not doc:
+            continue
+        por_medico.setdefault(doc, {"setores": {}, "horarios": {}, "duracoes": []})
+        s = r.get("setor") or ""
+        if s:
+            por_medico[doc]["setores"][s] = por_medico[doc]["setores"].get(s, 0) + 1
+        t = r.get("time") or ""
+        if t:
+            por_medico[doc]["horarios"][t] = por_medico[doc]["horarios"].get(t, 0) + 1
+        d = r.get("duracao_min")
+        if d:
+            por_medico[doc]["duracoes"].append(d)
+
+    resultado = {}
+    for doc, dados in por_medico.items():
+        setor_top = max(dados["setores"], key=dados["setores"].get) if dados["setores"] else None
+        horario_top = max(dados["horarios"], key=dados["horarios"].get) if dados["horarios"] else None
+        dur_media = round(sum(dados["duracoes"]) / len(dados["duracoes"])) if dados["duracoes"] else None
+        resultado[doc] = {
+            "setor_frequente": setor_top,
+            "horario_frequente": horario_top,
+            "duracao_media": dur_media,
+        }
+    return resultado
+
 @app.get("/api/contexto-ia")
 def get_contexto(user=Depends(auth)):
     conn = get_db(); c = conn.cursor()
     desde = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
-    c.execute(f"""SELECT id,doc,setor,proc,paciente,date,time,obs FROM eventos
+    c.execute(f"""SELECT id,doc,setor,proc,paciente,date,time,obs,duracao_min FROM eventos
                   WHERE date >= {P()} ORDER BY date,time LIMIT 80""", (desde,))
     eventos = fetchall(c)
     c.execute("SELECT texto FROM memorias ORDER BY uso DESC LIMIT 25")
@@ -698,9 +764,14 @@ def get_contexto(user=Depends(auth)):
     medicos = [r["name"] for r in fetchall(c)]
     c.execute("SELECT id,name FROM setores")
     setores = {r["id"]:r["name"] for r in fetchall(c)}
+    preferencias_medicos = _calc_preferencias_medicos(c)
+    c.execute("SELECT campo,valor_errado,valor_certo FROM correcoes ORDER BY created_at DESC LIMIT 15")
+    correcoes = fetchall(c)
     conn.close()
     return {"eventos":eventos,"memorias":memorias,"historico":historico,
-            "medicos":medicos,"setores":setores}
+            "medicos":medicos,"setores":setores,
+            "preferencias_medicos":preferencias_medicos,
+            "correcoes":correcoes}
 
 # ── RELATÓRIOS ─────────────────────────────────────────────
 @app.get("/api/relatorios/resumo")

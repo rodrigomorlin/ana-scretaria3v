@@ -120,6 +120,8 @@ def init_db():
                 id SERIAL PRIMARY KEY, contexto TEXT, campo TEXT,
                 valor_errado TEXT, valor_certo TEXT,
                 usuario TEXT DEFAULT '', created_at TIMESTAMP DEFAULT NOW())""",
+            """CREATE TABLE IF NOT EXISTS config (
+                chave TEXT PRIMARY KEY, valor TEXT DEFAULT '')""",
         ]
         for s in stmts:
             c.execute(s)
@@ -160,6 +162,8 @@ CREATE TABLE IF NOT EXISTS correcoes (
     id INTEGER PRIMARY KEY AUTOINCREMENT, contexto TEXT, campo TEXT,
     valor_errado TEXT, valor_certo TEXT, usuario TEXT DEFAULT '',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS config (
+    chave TEXT PRIMARY KEY, valor TEXT DEFAULT '');
 """)
 
     # Índices
@@ -247,6 +251,29 @@ def db_log(nivel, msg, usuario="", ip=""):
         conn.commit(); conn.close()
     except: pass
 
+# ── CONFIG PERSISTENTE (chave/valor no banco) ───────────────
+def get_config(chave: str, default: str = "") -> str:
+    try:
+        conn = get_db(); c = conn.cursor()
+        c.execute(f"SELECT valor FROM config WHERE chave={P()}", (chave,))
+        row = fetchone(c); conn.close()
+        return row["valor"] if row and row.get("valor") else default
+    except Exception:
+        return default
+
+def set_config(chave: str, valor: str):
+    conn = get_db(); c = conn.cursor()
+    c.execute(f"SELECT chave FROM config WHERE chave={P()}", (chave,))
+    if fetchone(c):
+        c.execute(f"UPDATE config SET valor={P()} WHERE chave={P()}", (valor, chave))
+    else:
+        c.execute(f"INSERT INTO config (chave,valor) VALUES ({Ps(2)})", (chave, valor))
+    conn.commit(); conn.close()
+
+def get_gcal_id() -> str:
+    """Prioriza o valor configurado pelo usuário no app; cai para a env var como fallback."""
+    return get_config("gcal_calendar_id", GCAL_ID)
+
 # ── EMAIL ──────────────────────────────────────────────────
 async def send_email(to, subject, body):
     if not SMTP_HOST or not to: return
@@ -308,7 +335,7 @@ async def gcal_create(ev, setor_name):
             "start": {"dateTime": f"{ev['date']}T{ev['time']}:00", "timeZone": "America/Sao_Paulo"},
             "end": {"dateTime": f"{ev['date']}T{end_h:02d}:{end_m:02d}:00", "timeZone": "America/Sao_Paulo"},
         }
-        r = svc.events().insert(calendarId=GCAL_ID, body=body).execute()
+        r = svc.events().insert(calendarId=get_gcal_id(), body=body).execute()
         log.info(f"GCal evento criado: {r.get('id')}")
         return r.get("id","")
     except Exception as e: log.error(f"GCal criar: {e}"); return ""
@@ -322,7 +349,7 @@ async def gcal_delete(gcal_id):
             json.loads(GCAL_CREDS),
             scopes=["https://www.googleapis.com/auth/calendar"])
         svc = build("calendar", "v3", credentials=creds)
-        svc.events().delete(calendarId=GCAL_ID, eventId=gcal_id).execute()
+        svc.events().delete(calendarId=get_gcal_id(), eventId=gcal_id).execute()
     except Exception as e: log.error(f"GCal delete: {e}")
 
 # ── MODELOS ────────────────────────────────────────────────
@@ -955,6 +982,42 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
     except Exception as e:
         log.error(f"Chat proxy erro: {e}")
         raise HTTPException(500, str(e))
+
+# ── CONFIGURAÇÃO DO GOOGLE CALENDAR (via app) ───────────────
+class GCalConfig(BaseModel):
+    calendar_id: str
+
+@app.get("/api/config/gcal")
+def get_gcal_config(user=Depends(auth)):
+    return {"calendar_id": get_gcal_id(), "configurado_via": "app" if get_config("gcal_calendar_id") else "env_var_ou_padrao"}
+
+@app.post("/api/config/gcal")
+def set_gcal_config(cfg: GCalConfig, user=Depends(auth)):
+    if user["role"] != "admin":
+        raise HTTPException(403, "Apenas administradores podem alterar essa configuração.")
+    set_config("gcal_calendar_id", cfg.calendar_id.strip())
+    db_log("INFO", f"Google Calendar ID alterado para: {cfg.calendar_id}", usuario=user["id"])
+    return {"ok": True, "calendar_id": cfg.calendar_id.strip()}
+
+@app.get("/api/config/gcal/list")
+def list_gcal_calendars(user=Depends(auth)):
+    """Lista os calendários acessíveis pela conta de serviço configurada — ajuda a escolher o ID certo."""
+    if not GCAL_CREDS:
+        raise HTTPException(400, "Google Calendar não está configurado (GCAL_CREDENTIALS ausente).")
+    try:
+        from google.oauth2.service_account import Credentials
+        from googleapiclient.discovery import build
+        creds = Credentials.from_service_account_info(
+            json.loads(GCAL_CREDS),
+            scopes=["https://www.googleapis.com/auth/calendar.readonly"])
+        svc = build("calendar", "v3", credentials=creds)
+        result = svc.calendarList().list().execute()
+        cals = [{"id": c.get("id"), "summary": c.get("summary"), "primary": c.get("primary", False)}
+                for c in result.get("items", [])]
+        return {"calendars": cals}
+    except Exception as e:
+        log.error(f"Erro ao listar calendários: {e}")
+        raise HTTPException(502, f"Não foi possível listar calendários: {str(e)[:200]}")
 
 # ── HEALTH ─────────────────────────────────────────────────
 @app.get("/api/health")

@@ -398,6 +398,12 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     </div>
   </div>
 
+  <div class="card">
+    <div class="card-title"><i class="ti ti-school" style="color:var(--accent)"></i>O que a Ana aprendeu</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Correções que vocês já fizeram e que a Ana passa a respeitar nas próximas conversas.</div>
+    <div id="correcoes-list"></div>
+  </div>
+
 </div>
 
 <!-- LOGS -->
@@ -581,6 +587,7 @@ function tab(n){
   if(n==='agenda')renderAgenda();
   if(n==='relatorios')loadRelatorios();
   if(n==='logs')loadLogs();
+  if(n==='config')loadCorrecoes();
 }
 
 // ── MEMÓRIA ──────────────────────────────────────────────
@@ -617,24 +624,72 @@ function attachPDF(file){
 function rmPDF(){pdfData=null;document.getElementById('pdfwrap').style.display='none';document.getElementById('pfi').value='';document.getElementById('minp').placeholder='Fale com a Ana...';}
 
 // ── CHAT ─────────────────────────────────────────────────
+let pendingCorrection=null; // {originalTxt, eventoAgendado}
 function addMsg(html,type,extras={}){
   const msgs=document.getElementById('msgs');const typ=document.getElementById('typ');
   const wrap=document.createElement('div');wrap.className='mw'+(type==='user'?' r':'');
   const b=document.createElement('div');b.className='bub '+type;b.innerHTML=html;wrap.appendChild(b);
-  if(extras.feedback){const fb=document.createElement('div');fb.className='fb-row';fb.innerHTML=`<button class="fb-btn" onclick="fbOk(this)"><i class="ti ti-thumb-up"></i> Certo</button><button class="fb-btn" onclick="fbErr(this)"><i class="ti ti-thumb-down"></i> Corrigir</button>`;wrap.appendChild(fb);}
+  if(extras.feedback){
+    const fb=document.createElement('div');fb.className='fb-row';
+    fb.innerHTML=`<button class="fb-btn" onclick="fbOk(this)"><i class="ti ti-thumb-up"></i> Certo</button><button class="fb-btn" onclick="fbErr(this)"><i class="ti ti-thumb-down"></i> Corrigir</button>`;
+    wrap.appendChild(fb);
+    wrap.dataset.evento=JSON.stringify(extras.eventoContext||{});
+    wrap.dataset.origtxt=extras.origTxt||'';
+  }
   if(extras.sug?.length){const sr=document.createElement('div');sr.className='sug-row';extras.sug.forEach(s=>{const sp=document.createElement('span');sp.className='sug';sp.textContent=s;sp.onclick=()=>{sr.querySelectorAll('.sug').forEach(x=>x.style.opacity='.4');processInput(s,null);};sr.appendChild(sp);});wrap.appendChild(sr);}
   const ts=document.createElement('div');ts.className='ts'+(type==='user'?' r':'');ts.textContent=nowT();wrap.appendChild(ts);
   msgs.insertBefore(wrap,typ);msgs.scrollTop=msgs.scrollHeight;
 }
 function fbOk(btn){btn.closest('.fb-row').innerHTML='<span style="font-size:10px;color:var(--muted)">✓ Ótimo!</span>';addMem('Agendamento confirmado','ti-thumb-up');}
-function fbErr(btn){btn.closest('.fb-row').innerHTML='<span style="font-size:10px;color:var(--muted)">Me diga o que estava errado.</span>';document.getElementById('minp').focus();}
+function fbErr(btn){
+  const wrap=btn.closest('.mw');
+  let eventoCtx={};try{eventoCtx=JSON.parse(wrap.dataset.evento||'{}');}catch{}
+  pendingCorrection={origTxt:wrap.dataset.origtxt||'',evento:eventoCtx};
+  btn.closest('.fb-row').innerHTML='<span style="font-size:10px;color:var(--muted)">Me diga o que estava errado (ex: "o setor certo era UTI").</span>';
+  document.getElementById('minp').focus();
+}
 function showTyp(){document.getElementById('typ').style.display='flex';document.getElementById('msgs').scrollTop=99999;}
 function hideTyp(){document.getElementById('typ').style.display='none';}
 
 function send(){
   const inp=document.getElementById('minp');const txt=inp.value.trim();const pdf=pdfData;
   if(!txt&&!pdf)return;rmPDF();inp.value='';
+  if(pendingCorrection&&txt){
+    handleCorrection(txt);
+    return;
+  }
   processInput(txt||'Analise este pedido médico.',pdf);
+}
+
+async function handleCorrection(txt){
+  addMsg(txt,'user');
+  const corr=pendingCorrection;pendingCorrection=null;
+  // Pede para a própria IA estruturar a correção (campo + valor certo)
+  showTyp();
+  const sysCorr=`O usuário está corrigindo um agendamento anterior. Evento original: ${JSON.stringify(corr.evento)}. Texto original do pedido: "${corr.origTxt}". Correção do usuário: "${txt}".
+Identifique qual campo estava errado (doc, setor, proc, paciente, date, time, duracao_min ou obs) e qual o valor certo.
+RETORNE APENAS JSON sem markdown: {"campo":"nome_do_campo","valor_errado":"valor antigo ou vazio","valor_certo":"valor novo","resposta":"confirmação breve em HTML"}`;
+  try{
+    const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json','X-Token':token},
+      body:JSON.stringify({system:sysCorr,messages:[{role:'user',content:txt}],max_tokens:300})});
+    if(!res.ok)throw new Error('Falha ao processar correção.');
+    const data=await res.json();
+    let raw=data.content.map(i=>i.text||'').join('').trim();
+    raw=raw.replace(/^```(?:json)?\s*/i,'').replace(/```\s*$/,'').trim();
+    const p=JSON.parse(raw);
+    hideTyp();
+    if(p.campo&&p.valor_certo){
+      await api('POST','/api/correcoes',{contexto:corr.origTxt||txt,campo:p.campo,valor_errado:p.valor_errado||'',valor_certo:p.valor_certo});
+      addMem(`Campo "${p.campo}": preferir "${p.valor_certo}"`,'ti-edit');
+      addMsg(p.resposta||`Entendido! Vou lembrar que ${p.campo} deveria ser "${p.valor_certo}".`,'bot');
+    } else {
+      addMsg('Entendido, vou levar essa correção em conta.','bot');
+    }
+  }catch(e){
+    hideTyp();
+    console.error('Erro ao processar correção:',e);
+    addMsg('Anotado — vou tentar melhorar na próxima.','bot');
+  }
 }
 
 async function processInput(txt,pdf=null){
@@ -643,11 +698,21 @@ async function processInput(txt,pdf=null){
   document.getElementById('sbtn').disabled=true;showTyp();
   await new Promise(r=>setTimeout(r,400));
 
-  let ctx;try{ctx=await api('GET','/api/contexto-ia');}catch{ctx={eventos,memorias:memorias.map(m=>m.texto),historico:[],medicos:medicos.map(m=>m.name),setores:Object.fromEntries(setores.map(s=>[s.id,s.name]))};}
+  let ctx;try{ctx=await api('GET','/api/contexto-ia');}catch{ctx={eventos,memorias:memorias.map(m=>m.texto),historico:[],medicos:medicos.map(m=>m.name),setores:Object.fromEntries(setores.map(s=>[s.id,s.name])),preferencias_medicos:{},correcoes:[]};}
 
   const today=new Date().toISOString().slice(0,10);
   const todayFull=new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
   const nextId=Math.max(100,...eventos.map(e=>e.id),1)+1;
+
+  const prefsTxt=Object.entries(ctx.preferencias_medicos||{}).map(([doc,p])=>{
+    const partes=[];
+    if(p.setor_frequente)partes.push(`setor habitual=${p.setor_frequente}`);
+    if(p.horario_frequente)partes.push(`horário habitual=${p.horario_frequente}`);
+    if(p.duracao_media)partes.push(`duração média=${p.duracao_media}min`);
+    return partes.length?`${doc}: ${partes.join(', ')}`:null;
+  }).filter(Boolean).join(' | ');
+
+  const correcoesTxt=(ctx.correcoes||[]).map(c=>`Campo "${c.campo}": evite "${c.valor_errado}", prefira "${c.valor_certo}"`).join(' | ');
 
   const system=`Você é Ana, secretária virtual de anestesiologia. Usuário: ${me.nome}. Hoje: ${todayFull} (${today}).
 MÉDICOS: ${ctx.medicos.join(', ')}
@@ -656,7 +721,9 @@ AGENDA: ${JSON.stringify(ctx.eventos)}
 PRÓXIMO ID: ${nextId}
 MEMÓRIAS: ${ctx.memorias.slice(0,20).join(' | ')}
 HISTÓRICO: ${ctx.historico.slice(0,10).map(h=>`${h.date} ${h.time} ${h.setor} ${h.proc} ${h.paciente}`).join(' | ')}
-REGRAS: interprete linguagem natural e abreviações (CC=Centro Cirúrgico, raqui=raquianestesia, AG=anestesia geral). Use memórias/histórico para preencher campos omitidos. Estime "duracao_min" com base no tipo de procedimento (padrão 60; cirurgias maiores podem ser 90-180; procedimentos rápidos como sedação podem ser 30). Detecte conflito considerando que o evento ocupa [time, time+duracao_min) — a checagem real é feita pelo servidor, mas avise no texto se notar sobreposição óbvia. Para PDFs: extraia tudo e sugira anestesista. novas_memorias: máx 2. suggests: 2 ações. Seja breve.
+PADRÕES POR MÉDICO (use como sugestão quando o usuário não especificar setor/horário/duração): ${prefsTxt||'nenhum padrão suficiente ainda'}
+CORREÇÕES APRENDIDAS (erros já cometidos antes — não repita): ${correcoesTxt||'nenhuma correção registrada ainda'}
+REGRAS: interprete linguagem natural e abreviações (CC=Centro Cirúrgico, raqui=raquianestesia, AG=anestesia geral). Use memórias/histórico/padrões por médico para preencher campos omitidos — por exemplo, se o usuário disser apenas "agenda uma raqui pro Dr. Carlos quinta" sem hora, use o horário habitual dele. Estime "duracao_min" com base no tipo de procedimento e na duração média do médico se disponível (padrão 60; cirurgias maiores podem ser 90-180; procedimentos rápidos como sedação podem ser 30). Respeite SEMPRE as correções aprendidas listadas acima. Detecte conflito considerando que o evento ocupa [time, time+duracao_min) — a checagem real é feita pelo servidor, mas avise no texto se notar sobreposição óbvia. Para PDFs: extraia tudo e sugira anestesista. novas_memorias: máx 2. suggests: 2 ações. Seja breve.
 RETORNE APENAS JSON sem markdown:
 {"acao":"AGENDAR"|"CANCELAR"|"RELATORIO"|"CONSULTAR"|"CORRECAO"|"DUVIDA","resposta":"HTML","evento":{"id":N,"doc":"","setor":"","proc":"","paciente":"","date":"YYYY-MM-DD","time":"HH:MM","duracao_min":60,"obs":""},"cancelar_id":N|null,"tabela":[{"data":"","hora":"","setor":"","proc":"","paciente":"","medico":"","obs":""}],"novas_memorias":[{"texto":"","icone":""}],"suggests":["",""]}`;
 
@@ -669,8 +736,16 @@ RETORNE APENAS JSON sem markdown:
       throw new Error(err.detail||`Erro ${res.status}`);
     }
     const data=await res.json();
-    const raw=data.content.map(i=>i.text||'').join('').replace(/```json[\s\S]*?```|```/g,'').trim();
-    let p;try{p=JSON.parse(raw);}catch{p={acao:'DUVIDA',resposta:'Não entendi. Pode reformular?',suggests:['Relatório da semana','Novo agendamento']};}
+    let raw=data.content.map(i=>i.text||'').join('').trim();
+    // Remove cercas de markdown ```json ... ``` ou ``` ... ``` preservando o conteúdo interno
+    raw=raw.replace(/^```(?:json)?\s*/i,'').replace(/```\s*$/,'').trim();
+    let p;
+    try{
+      p=JSON.parse(raw);
+    }catch(parseErr){
+      console.error('Falha ao parsear JSON da IA:', parseErr, '\nResposta recebida:', raw);
+      p={acao:'DUVIDA',resposta:'Não entendi. Pode reformular?',suggests:['Relatório da semana','Novo agendamento']};
+    }
     hideTyp();
     if(p.novas_memorias)p.novas_memorias.forEach(m=>{if(m.texto)addMem(m.texto,m.icone||'ti-brain');});
     const sug=p.suggests||[];
@@ -688,7 +763,7 @@ RETORNE APENAS JSON sem markdown:
           let html=pdf?'📄 <b>PDF lido!</b><br>':'✅ <b>Agendado!</b><br>';
           const durTxt=(ev.duracao_min&&ev.duracao_min!==60)?` <span style="font-size:11px;color:var(--hint)">(${ev.duracao_min} min)</span>`:'';
           html+=`<div class="ev-card"><div class="ev-row"><i class="ti ti-calendar"></i><b>${fmtD(ev.date)}</b> às <b>${ev.time}</b>${durTxt}</div><div class="ev-row"><i class="ti ti-building-hospital"></i><span class="ev-tag ${bc}">${s.name}</span></div><div class="ev-row"><i class="ti ti-clipboard-list"></i>${ev.proc}</div><div class="ev-row"><i class="ti ti-user"></i>${ev.paciente||'—'}</div><div class="ev-row"><i class="ti ti-stethoscope"></i>${ev.doc}</div>${ev.obs?`<div class="ev-row"><i class="ti ti-notes"></i><span style="font-size:11px">${ev.obs}</span></div>`:''}${pdf?`<div class="ev-row"><i class="ti ti-paperclip"></i><span style="font-size:11px">${pdf.name} anexado</span></div>`:''}</div>`;
-          addMsg(html,'bot',{feedback:true,sug});
+          addMsg(html,'bot',{feedback:true,sug,eventoContext:saved,origTxt:txt});
           const same=eventos.filter(e=>e.setor===ev.setor&&e.proc?.split(' ')[0]===ev.proc?.split(' ')[0]);
           if(same.length>=3)addMem(`"${ev.proc.split('—')[0].trim()}" frequente no ${s.name}`,'ti-star');
         }catch(e){addMsg(`⚠️ ${e.message}`,'bot',{sug});}
@@ -948,6 +1023,14 @@ async function loadIntStatus(){
       <div class="int-row"><div class="int-ico" style="background:#E8F0FE"><i class="ti ti-brand-google" style="color:#4285F4"></i></div><div class="int-body"><div class="int-name">Google Calendar</div><div class="int-desc">Sincronização de eventos</div></div><span class="int-status ${h.gcal?'ok':'off'}">${h.gcal?'Ativo':'Não configurado'}</span></div>
       <div class="int-row"><div class="int-ico" style="background:#EEEDFE"><i class="ti ti-robot" style="color:var(--accent)"></i></div><div class="int-body"><div class="int-name">IA (Anthropic)</div><div class="int-desc">Motor de linguagem natural da Ana</div></div><span class="int-status ${h.ai?'ok':'off'}">${h.ai?'Ativo':'ANTHROPIC_API_KEY não configurada'}</span></div>
       <div class="int-row"><div class="int-ico" style="background:#EEEDFE"><i class="ti ti-database" style="color:var(--accent)"></i></div><div class="int-body"><div class="int-name">Banco de dados</div><div class="int-desc">Armazenamento dos dados</div></div><span class="int-status ok">${h.db==='postgres'?'PostgreSQL':'SQLite'}</span></div>`;
+  }catch{}
+}
+async function loadCorrecoes(){
+  try{
+    const list=await api('GET','/api/correcoes');
+    const el=document.getElementById('correcoes-list');
+    if(!list.length){el.innerHTML='<div style="font-size:11px;color:var(--hint);padding:8px 0">Nenhuma correção registrada ainda. Use o botão "Corrigir" no chat quando a Ana errar algo.</div>';return;}
+    el.innerHTML=list.map(c=>`<div class="mem-item" style="font-size:11px;padding:7px 9px"><i class="ti ti-edit"></i><span style="flex:1"><b>${c.campo}</b>: ${c.valor_errado?`evitar "${c.valor_errado}" → `:''}preferir "${c.valor_certo}"<br><span style="color:var(--hint);font-size:10px">${(c.contexto||'').slice(0,80)}</span></span></div>`).join('');
   }catch{}
 }
 async function sendDailyReminder(){

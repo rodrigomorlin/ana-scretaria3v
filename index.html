@@ -389,8 +389,15 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <div class="card-title"><i class="ti ti-plug" style="color:var(--accent)"></i>Integrações</div>
     <div id="int-status"></div>
     <div class="sep"><div class="sep-lbl" style="margin-bottom:3px">Google Calendar</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Configure via variável de ambiente <code style="background:var(--faint);padding:1px 5px;border-radius:3px">GCAL_CREDENTIALS</code> no Railway.</div>
-      <div class="sep-lbl" style="margin-bottom:3px">Notificações por email</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">A conexão (credenciais) é configurada uma vez no Railway via <code style="background:var(--faint);padding:1px 5px;border-radius:3px">GCAL_CREDENTIALS</code>. Aqui você escolhe <b>qual calendário</b> recebe os agendamentos — sem precisar tocar no Railway.</div>
+      <div id="gcal-current" style="font-size:11px;margin-bottom:8px"></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+        <select id="gcal-select" style="flex:1;min-width:200px;border:0.5px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:12px;background:var(--surface);color:var(--text)"><option value="">Carregar calendários disponíveis...</option></select>
+        <button class="btn sm" onclick="loadGcalList()"><i class="ti ti-refresh"></i> Buscar calendários</button>
+      </div>
+      <div class="fl" style="margin-bottom:8px"><label>Ou cole o ID/domínio manualmente</label><input id="gcal-manual" placeholder="ex: medico@gmail.com ou abc123@group.calendar.google.com"></div>
+      <button class="btn primary sm" onclick="saveGcalConfig()"><i class="ti ti-check"></i> Salvar calendário</button>
+      <div class="sep-lbl" style="margin-bottom:3px;margin-top:14px">Notificações por email</div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Configure <code style="background:var(--faint);padding:1px 5px;border-radius:3px">SMTP_HOST</code>, <code style="background:var(--faint);padding:1px 5px;border-radius:3px">SMTP_USER</code> e <code style="background:var(--faint);padding:1px 5px;border-radius:3px">SMTP_PASS</code> no Railway. O email do médico deve ser cadastrado no perfil acima.</div>
       <div class="sep-lbl" style="margin-bottom:3px">Lembrete diário</div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Todos os dias às 18h, a Ana envia automaticamente um resumo da agenda do dia seguinte para cada médico com email cadastrado.</div>
@@ -587,7 +594,7 @@ function tab(n){
   if(n==='agenda')renderAgenda();
   if(n==='relatorios')loadRelatorios();
   if(n==='logs')loadLogs();
-  if(n==='config')loadCorrecoes();
+  if(n==='config'){loadCorrecoes();loadGcalCurrent();}
 }
 
 // ── MEMÓRIA ──────────────────────────────────────────────
@@ -1032,6 +1039,37 @@ async function loadCorrecoes(){
     if(!list.length){el.innerHTML='<div style="font-size:11px;color:var(--hint);padding:8px 0">Nenhuma correção registrada ainda. Use o botão "Corrigir" no chat quando a Ana errar algo.</div>';return;}
     el.innerHTML=list.map(c=>`<div class="mem-item" style="font-size:11px;padding:7px 9px"><i class="ti ti-edit"></i><span style="flex:1"><b>${c.campo}</b>: ${c.valor_errado?`evitar "${c.valor_errado}" → `:''}preferir "${c.valor_certo}"<br><span style="color:var(--hint);font-size:10px">${(c.contexto||'').slice(0,80)}</span></span></div>`).join('');
   }catch{}
+}
+async function loadGcalCurrent(){
+  try{
+    const cfg=await api('GET','/api/config/gcal');
+    document.getElementById('gcal-current').innerHTML=`<i class="ti ti-calendar-check" style="color:var(--ok)"></i> Calendário atual: <b>${cfg.calendar_id}</b>`;
+    document.getElementById('gcal-manual').value=cfg.calendar_id;
+  }catch{
+    document.getElementById('gcal-current').innerHTML='';
+  }
+}
+async function loadGcalList(){
+  const sel=document.getElementById('gcal-select');
+  sel.innerHTML='<option value="">Carregando...</option>';
+  try{
+    const r=await api('GET','/api/config/gcal/list');
+    if(!r.calendars?.length){sel.innerHTML='<option value="">Nenhum calendário encontrado</option>';return;}
+    sel.innerHTML='<option value="">Selecione um calendário...</option>'+r.calendars.map(c=>`<option value="${c.id}">${c.summary}${c.primary?' (principal)':''}</option>`).join('');
+    sel.onchange=()=>{if(sel.value)document.getElementById('gcal-manual').value=sel.value;};
+  }catch(e){
+    sel.innerHTML='<option value="">Erro ao buscar — configure GCAL_CREDENTIALS no Railway</option>';
+    toast(e.message,'err');
+  }
+}
+async function saveGcalConfig(){
+  const id=document.getElementById('gcal-manual').value.trim();
+  if(!id){toast('Informe um ID de calendário.','warn');return;}
+  try{
+    await api('POST','/api/config/gcal',{calendar_id:id});
+    toast('Calendário atualizado! Novos agendamentos usarão esse calendário.');
+    loadGcalCurrent();
+  }catch(e){toast(e.message,'err');}
 }
 async function sendDailyReminder(){
   try{

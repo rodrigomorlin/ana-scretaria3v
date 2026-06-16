@@ -664,6 +664,10 @@ RETORNE APENAS JSON sem markdown:
   try{
     const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json','X-Token':token},
       body:JSON.stringify({system,messages:[{role:'user',content:mc}],max_tokens:1500})});
+    if(!res.ok){
+      const err=await res.json().catch(()=>({detail:'Erro desconhecido'}));
+      throw new Error(err.detail||`Erro ${res.status}`);
+    }
     const data=await res.json();
     const raw=data.content.map(i=>i.text||'').join('').replace(/```json[\s\S]*?```|```/g,'').trim();
     let p;try{p=JSON.parse(raw);}catch{p={acao:'DUVIDA',resposta:'Não entendi. Pode reformular?',suggests:['Relatório da semana','Novo agendamento']};}
@@ -703,7 +707,11 @@ RETORNE APENAS JSON sem markdown:
         addMsg(html,'bot',{sug});
       }
     } else {addMsg(p.resposta||'Como posso ajudar?','bot',{sug});}
-  }catch(e){hideTyp();addMsg('Erro ao processar. Verifique a conexão.','bot');}
+  }catch(e){
+    hideTyp();
+    console.error('Chat erro:', e);
+    addMsg(`⚠️ Erro: ${e.message||'Falha ao processar. Tente novamente.'}`,'bot');
+  }
   document.getElementById('sbtn').disabled=false;document.getElementById('minp').focus();
 }
 

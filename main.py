@@ -7,7 +7,7 @@ from fastapi import FastAPI, HTTPException, Depends, Request, BackgroundTasks
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Any, List
 import os, logging, hashlib, secrets, json
 from datetime import datetime, timedelta
 import urllib.request, urllib.error
@@ -841,19 +841,21 @@ async def start_scheduler():
 # ── CHAT PROXY (evita CORS — chama Anthropic pelo servidor) ──
 class ChatRequest(BaseModel):
     system: str
-    messages: list
+    messages: List[Any]
     max_tokens: Optional[int] = 1500
 
 @app.post("/api/chat")
 def chat_proxy(req: ChatRequest, user=Depends(auth)):
     if not ANTHROPIC_KEY:
         raise HTTPException(500, "ANTHROPIC_API_KEY não configurada no servidor.")
+    log.info(f"Chat proxy: system={len(req.system)} chars, msgs={len(req.messages)}")
     payload = json.dumps({
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-sonnet-4-5",
         "max_tokens": req.max_tokens or 1500,
         "system": req.system,
         "messages": req.messages,
     }).encode("utf-8")
+    log.info(f"Payload size: {len(payload)} bytes")
     try:
         http_req = urllib.request.Request(
             "https://api.anthropic.com/v1/messages",
@@ -866,11 +868,16 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
             method="POST",
         )
         with urllib.request.urlopen(http_req, timeout=60) as resp:
-            return json.loads(resp.read())
+            result = json.loads(resp.read())
+            log.info("Chat proxy: resposta OK")
+            return result
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="ignore")
-        log.error(f"Anthropic API erro {e.code}: {body[:200]}")
-        raise HTTPException(e.code, f"Erro da API: {body[:200]}")
+        log.error(f"Anthropic API erro {e.code}: {body[:500]}")
+        raise HTTPException(502, f"Erro da API Anthropic ({e.code}): {body[:300]}")
+    except urllib.error.URLError as e:
+        log.error(f"Chat proxy URLError: {e}")
+        raise HTTPException(502, f"Erro de conexão com Anthropic: {e.reason}")
     except Exception as e:
         log.error(f"Chat proxy erro: {e}")
         raise HTTPException(500, str(e))
@@ -882,14 +889,4 @@ def health():
             "db":"postgres" if USE_POSTGRES else "sqlite",
             "email":bool(SMTP_HOST),"gcal":bool(GCAL_CREDS),
             "ai":bool(ANTHROPIC_KEY),
-            "timestamp":datetime.now().isoformat()}
-
-# ── STATIC FILES ───────────────────────────────────────────
-@app.get("/sw.js")
-def sw(): return HTMLResponse(open("sw.js").read(), media_type="application/javascript")
-
-@app.get("/manifest.json")
-def manifest(): return JSONResponse(json.load(open("manifest.json")))
-
-@app.get("/", response_class=HTMLResponse)
-def index(): return HTMLResponse(open("index.html", encoding="utf-8").read())
+            "timestamp":datetime.now(

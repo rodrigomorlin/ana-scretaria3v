@@ -20,7 +20,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 DATABASE_URL   = os.environ.get("DATABASE_URL", "")
 SECRET         = os.environ.get("SECRET_KEY", "ana-secretaria-default-secret-change-me")
-GEMINI_KEY     = os.environ.get("GEMINI_API_KEY", "")
+ANTHROPIC_KEY  = os.environ.get("ANTHROPIC_API_KEY", "")
 SMTP_HOST      = os.environ.get("SMTP_HOST", "")
 SMTP_PORT      = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USER      = os.environ.get("SMTP_USER", "")
@@ -838,7 +838,7 @@ async def start_scheduler():
             await asyncio.sleep(60 * 10)  # checa a cada 10 minutos
     asyncio.create_task(scheduler_loop())
 
-# ── CHAT PROXY (Gemini — evita CORS) ──────────────────────
+# ── CHAT PROXY (Anthropic — evita CORS) ───────────────────
 class ChatRequest(BaseModel):
     system: str
     messages: List[Any]
@@ -846,60 +846,39 @@ class ChatRequest(BaseModel):
 
 @app.post("/api/chat")
 def chat_proxy(req: ChatRequest, user=Depends(auth)):
-    if not GEMINI_KEY:
-        raise HTTPException(500, "GEMINI_API_KEY não configurada no servidor.")
-    log.info(f"Chat proxy Gemini: system={len(req.system)} chars, msgs={len(req.messages)}")
-
-    # Converte formato Anthropic → Gemini
-    contents = []
-    for msg in req.messages:
-        content = msg.get("content", "")
-        if isinstance(content, str):
-            parts = [{"text": content}]
-        elif isinstance(content, list):
-            parts = []
-            for part in content:
-                if part.get("type") == "text":
-                    parts.append({"text": part.get("text", "")})
-                elif part.get("type") == "document":
-                    src = part.get("source", {})
-                    parts.append({"inline_data": {
-                        "mime_type": src.get("media_type", "application/pdf"),
-                        "data": src.get("data", "")
-                    }})
-        else:
-            parts = [{"text": str(content)}]
-        role = "user" if msg.get("role") == "user" else "model"
-        contents.append({"role": role, "parts": parts})
+    if not ANTHROPIC_KEY:
+        raise HTTPException(500, "ANTHROPIC_API_KEY não configurada no servidor.")
+    log.info(f"Chat proxy Anthropic: system={len(req.system)} chars, msgs={len(req.messages)}")
 
     payload = json.dumps({
-        "system_instruction": {"parts": [{"text": req.system}]},
-        "contents": contents,
-        "generationConfig": {"maxOutputTokens": req.max_tokens or 1500, "temperature": 0.3}
+        "model": "claude-sonnet-4-5",
+        "max_tokens": req.max_tokens or 1500,
+        "system": req.system,
+        "messages": req.messages,
     }).encode("utf-8")
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_KEY}"
     try:
         http_req = urllib.request.Request(
-            url, data=payload,
-            headers={"Content-Type": "application/json"}, method="POST",
+            "https://api.anthropic.com/v1/messages",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": ANTHROPIC_KEY,
+                "anthropic-version": "2023-06-01",
+            },
+            method="POST",
         )
         with urllib.request.urlopen(http_req, timeout=60) as resp:
-            gemini_resp = json.loads(resp.read())
-        try:
-            text = gemini_resp["candidates"][0]["content"]["parts"][0]["text"]
-        except (KeyError, IndexError):
-            log.error(f"Gemini resposta inesperada: {gemini_resp}")
-            raise HTTPException(502, "Resposta inesperada do Gemini.")
-        # Retorna no mesmo formato Anthropic para o frontend não mudar
-        return {"content": [{"type": "text", "text": text}]}
+            result = json.loads(resp.read())
+            log.info("Chat proxy: resposta OK")
+            return result
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="ignore")
-        log.error(f"Gemini API erro {e.code}: {body[:500]}")
-        raise HTTPException(502, f"Erro da API Gemini ({e.code}): {body[:300]}")
+        log.error(f"Anthropic API erro {e.code}: {body[:500]}")
+        raise HTTPException(502, f"Erro da API Anthropic ({e.code}): {body[:300]}")
     except urllib.error.URLError as e:
         log.error(f"Chat proxy URLError: {e}")
-        raise HTTPException(502, f"Erro de conexão com Gemini: {e.reason}")
+        raise HTTPException(502, f"Erro de conexão com Anthropic: {e.reason}")
     except HTTPException:
         raise
     except Exception as e:
@@ -912,7 +891,7 @@ def health():
     return {"status":"ok","version":"3.0.0",
             "db":"postgres" if USE_POSTGRES else "sqlite",
             "email":bool(SMTP_HOST),"gcal":bool(GCAL_CREDS),
-            "ai":bool(GEMINI_KEY),
+            "ai":bool(ANTHROPIC_KEY),
             "timestamp":datetime.now().isoformat()}
 
 # ── STATIC FILES ───────────────────────────────────────────

@@ -889,4 +889,14 @@ def health():
             "db":"postgres" if USE_POSTGRES else "sqlite",
             "email":bool(SMTP_HOST),"gcal":bool(GCAL_CREDS),
             "ai":bool(ANTHROPIC_KEY),
-            "timestamp":datetime.now(
+            "timestamp":datetime.now().isoformat()}
+
+# ── STATIC FILES ───────────────────────────────────────────
+@app.get("/sw.js")
+def sw(): return HTMLResponse(open("sw.js").read(), media_type="application/javascript")
+
+@app.get("/manifest.json")
+def manifest(): return JSONResponse(json.load(open("manifest.json")))
+
+@app.get("/", response_class=HTMLResponse)
+def index(): return HTMLResponse(open("index.html", encoding="utf-8").read())

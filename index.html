@@ -238,7 +238,9 @@ html,body{height:100%;background:var(--bg);color:var(--text);
         <label>Seu nome</label><input id="su-nome" placeholder="Rodrigo Morlin">
         <label>ID de acesso (sem espaços)</label><input id="su-id" placeholder="rodrigomorlin">
         <label>PIN (mínimo 4 dígitos)</label><input id="su-pin" type="password" placeholder="••••" maxlength="8">
+        <label>Google Calendar do grupo (opcional)</label><input id="su-gcal" placeholder="ex: grupo@gmail.com ou abc123@group.calendar.google.com">
       </div>
+      <div style="font-size:10px;color:var(--hint);margin-top:-6px;margin-bottom:10px">Todos os agendamentos da Ana serão sincronizados com este calendário. Pode deixar em branco e configurar depois em Config → Integrações.</div>
       <button class="btn-full" onclick="doSetup()" id="su-btn"><i class="ti ti-user-plus"></i> Criar acesso</button>
       <div class="login-err" id="su-err"></div>
       <div style="text-align:center;margin-top:10px">
@@ -332,6 +334,13 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 
 <!-- CONFIG -->
 <div id="pconfig" class="panel">
+
+  <div class="card" id="gcal-pessoal-card">
+    <div class="card-title"><i class="ti ti-calendar-event" style="color:var(--accent)"></i>Meu Google Calendar pessoal</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Conecte seu calendário pessoal do Google para que os agendamentos feitos no seu nome sejam sincronizados diretamente nele, em vez do calendário geral do grupo.</div>
+    <div id="gcal-pessoal-status" style="margin-bottom:10px"></div>
+    <div id="gcal-pessoal-actions"></div>
+  </div>
 
   <div class="card">
     <div class="card-title"><i class="ti ti-users" style="color:var(--accent)"></i>Médicos</div>
@@ -521,6 +530,7 @@ async function doSetup(){
   const nome=document.getElementById('su-nome').value.trim();
   const id=document.getElementById('su-id').value.trim().toLowerCase().replace(/\s/g,'');
   const pin=document.getElementById('su-pin').value;
+  const gcal=document.getElementById('su-gcal').value.trim();
   const err=document.getElementById('su-err');err.style.display='none';
   if(!nome||!id||!pin||pin.length<4){
     err.textContent='Preencha nome, ID e PIN (mínimo 4 dígitos).';err.style.display='block';return;
@@ -528,7 +538,7 @@ async function doSetup(){
   const btn=document.getElementById('su-btn');btn.disabled=true;
   try{
     const r=await fetch('/api/setup',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({usuario_id:id,nome,pin})});
+      body:JSON.stringify({usuario_id:id,nome,pin,gcal_calendar_id:gcal})});
     if(!r.ok){const e=await r.json().catch(()=>({detail:'Erro'}));throw new Error(e.detail);}
     document.getElementById('lu').value=id;
     document.getElementById('lp').value=pin;
@@ -543,6 +553,7 @@ async function doForceSetup(){
   const nome=document.getElementById('su-nome').value.trim();
   const id=document.getElementById('su-id').value.trim().toLowerCase().replace(/\s/g,'');
   const pin=document.getElementById('su-pin').value;
+  const gcal=document.getElementById('su-gcal').value.trim();
   const err=document.getElementById('su-err');err.style.display='none';
   if(!nome||!id||!pin||pin.length<4){
     err.textContent='Preencha nome, ID e PIN (mínimo 4 dígitos) antes de apagar e recriar.';err.style.display='block';return;
@@ -551,7 +562,7 @@ async function doForceSetup(){
   const btn=document.getElementById('su-btn');btn.disabled=true;
   try{
     const r=await fetch('/api/setup',{method:'POST',headers:{'Content-Type':'application/json','X-Emergency-Key':'reset-ana-2026'},
-      body:JSON.stringify({usuario_id:id,nome,pin})});
+      body:JSON.stringify({usuario_id:id,nome,pin,gcal_calendar_id:gcal})});
     if(!r.ok){const e=await r.json().catch(()=>({detail:'Erro'}));throw new Error(e.detail);}
     document.getElementById('lu').value=id;
     document.getElementById('lp').value=pin;
@@ -594,7 +605,7 @@ function tab(n){
   if(n==='agenda')renderAgenda();
   if(n==='relatorios')loadRelatorios();
   if(n==='logs')loadLogs();
-  if(n==='config'){loadCorrecoes();loadGcalCurrent();}
+  if(n==='config'){loadCorrecoes();loadGcalCurrent();loadGcalPessoal();}
 }
 
 // ── MEMÓRIA ──────────────────────────────────────────────
@@ -1049,6 +1060,46 @@ async function loadGcalCurrent(){
     document.getElementById('gcal-current').innerHTML='';
   }
 }
+async function loadGcalPessoal(){
+  const card=document.getElementById('gcal-pessoal-card');
+  try{
+    const st=await api('GET','/api/oauth/google/status');
+    if(!st.oauth_disponivel){
+      card.style.display='none';
+      return;
+    }
+    card.style.display='block';
+    const statusEl=document.getElementById('gcal-pessoal-status');
+    const actionsEl=document.getElementById('gcal-pessoal-actions');
+    if(st.connected){
+      statusEl.innerHTML=`<span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ok)"><i class="ti ti-circle-check"></i> Conectado: <b>${st.email}</b></span>`;
+      actionsEl.innerHTML=`<button class="btn sm" onclick="disconnectGcalPessoal()"><i class="ti ti-plug-x"></i> Desconectar</button>`;
+    }else{
+      statusEl.innerHTML=`<span style="font-size:12px;color:var(--muted)">Não conectado — os seus agendamentos vão para o calendário geral do grupo.</span>`;
+      actionsEl.innerHTML=`<button class="btn primary sm" onclick="connectGcalPessoal()"><i class="ti ti-brand-google"></i> Conectar com Google</button>`;
+    }
+  }catch{
+    card.style.display='none';
+  }
+}
+async function connectGcalPessoal(){
+  try{
+    const r=await api('GET','/api/oauth/google/start');
+    const popup=window.open(r.auth_url,'conectar-google','width=480,height=640');
+    const check=setInterval(()=>{
+      if(popup.closed){clearInterval(check);loadGcalPessoal();}
+    },800);
+  }catch(e){toast(e.message,'err');}
+}
+async function disconnectGcalPessoal(){
+  if(!confirm('Desconectar seu Google Calendar pessoal? Os próximos agendamentos voltarão a usar o calendário do grupo.'))return;
+  try{
+    await api('POST','/api/oauth/google/disconnect');
+    toast('Desconectado.');
+    loadGcalPessoal();
+  }catch(e){toast(e.message,'err');}
+}
+
 async function loadGcalList(){
   const sel=document.getElementById('gcal-select');
   sel.innerHTML='<option value="">Carregando...</option>';

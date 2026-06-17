@@ -1255,6 +1255,106 @@ def health():
             "oauth_google":bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and APP_BASE_URL),
             "timestamp":datetime.now().isoformat()}
 
+# ── PÁGINAS PÚBLICAS (política de privacidade / termos) ────
+PRIVACY_HTML = """<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Política de Privacidade — Ana Secretária Virtual</title>
+<style>
+body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:700px;margin:0 auto;padding:32px 20px;color:#1a1a2e;line-height:1.6}
+h1{font-size:22px;color:#6C63D4;margin-bottom:4px}
+h2{font-size:16px;color:#3C3489;margin-top:28px}
+p,li{font-size:14px;color:#333}
+.upd{font-size:12px;color:#888;margin-bottom:24px}
+a{color:#6C63D4}
+ul{padding-left:20px}
+</style></head>
+<body>
+<h1>Política de Privacidade</h1>
+<div class="upd">Ana — Secretária Virtual de Anestesiologia · Última atualização: junho de 2026</div>
+
+<p>Esta política descreve como a Ana, sistema de agendamento para grupos de anestesiologia, coleta, usa e protege as informações dos usuários.</p>
+
+<h2>Quem somos</h2>
+<p>A Ana é uma aplicação de uso interno desenvolvida para auxiliar grupos de profissionais de anestesiologia a organizar agendamentos de procedimentos médicos. Contato: <a href="mailto:rodrigomorlin@gmail.com">rodrigomorlin@gmail.com</a>.</p>
+
+<h2>Quais dados coletamos</h2>
+<ul>
+<li><b>Dados de cadastro:</b> nome, identificador de usuário e PIN de acesso (armazenado de forma criptografada).</li>
+<li><b>Dados de agendamento:</b> data, horário, setor, procedimento, médico responsável e, quando informado, nome do paciente.</li>
+<li><b>Documentos anexados:</b> PDFs de pedidos médicos enviados pelo usuário para agendamento automático.</li>
+<li><b>Dados do Google Calendar:</b> quando o usuário conecta sua conta Google, criamos e gerenciamos eventos no calendário pessoal dele, exclusivamente para refletir os agendamentos feitos dentro da Ana.</li>
+</ul>
+
+<h2>Como usamos os dados</h2>
+<p>Os dados são usados exclusivamente para: organizar a agenda de procedimentos do grupo, sincronizar agendamentos com o Google Calendar do usuário (quando autorizado), enviar notificações por email sobre agendamentos, e gerar relatórios internos de uso do grupo.</p>
+
+<h2>Acesso ao Google Calendar</h2>
+<p>Ao conectar sua conta Google, a Ana solicita permissão para criar, editar e excluir eventos no seu calendário. Essa permissão é usada apenas para refletir os agendamentos feitos através do sistema. A Ana não lê, acessa ou compartilha outros eventos já existentes no seu calendário além dos que ela mesma cria.</p>
+
+<h2>Compartilhamento de dados</h2>
+<p>Os dados não são vendidos, alugados ou compartilhados com terceiros para fins de marketing. Dados podem ser processados por provedores de infraestrutura (hospedagem em nuvem) e de inteligência artificial (para interpretação de linguagem natural dos pedidos de agendamento), estritamente para o funcionamento do serviço.</p>
+
+<h2>Retenção e exclusão de dados</h2>
+<p>Os dados são mantidos enquanto a conta do usuário estiver ativa. O usuário pode solicitar a exclusão de seus dados e a desconexão do Google Calendar a qualquer momento, através do administrador do sistema ou diretamente na tela de configurações (opção "Desconectar").</p>
+
+<h2>Segurança</h2>
+<p>PINs de acesso são armazenados com hash criptográfico. Tokens de acesso ao Google são armazenados de forma segura e usados apenas para as operações descritas nesta política.</p>
+
+<h2>Alterações nesta política</h2>
+<p>Esta política pode ser atualizada periodicamente. A data da última atualização está sempre indicada no topo desta página.</p>
+
+<h2>Contato</h2>
+<p>Para dúvidas sobre esta política ou para solicitar a exclusão de dados, entre em contato: <a href="mailto:rodrigomorlin@gmail.com">rodrigomorlin@gmail.com</a>.</p>
+
+</body></html>"""
+
+TERMS_HTML = """<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Termos de Serviço — Ana Secretária Virtual</title>
+<style>
+body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:700px;margin:0 auto;padding:32px 20px;color:#1a1a2e;line-height:1.6}
+h1{font-size:22px;color:#6C63D4;margin-bottom:4px}
+h2{font-size:16px;color:#3C3489;margin-top:28px}
+p,li{font-size:14px;color:#333}
+.upd{font-size:12px;color:#888;margin-bottom:24px}
+a{color:#6C63D4}
+</style></head>
+<body>
+<h1>Termos de Serviço</h1>
+<div class="upd">Ana — Secretária Virtual de Anestesiologia · Última atualização: junho de 2026</div>
+
+<p>Ao utilizar a Ana, você concorda com os termos abaixo.</p>
+
+<h2>Uso do serviço</h2>
+<p>A Ana é destinada ao uso interno de grupos de profissionais de anestesiologia para fins de organização de agendamentos. O acesso é restrito a usuários autorizados pelo administrador do grupo.</p>
+
+<h2>Responsabilidade pelos dados inseridos</h2>
+<p>O usuário é responsável pela exatidão das informações inseridas no sistema, incluindo dados de agendamento e documentos anexados. A Ana é uma ferramenta de apoio organizacional e não substitui o julgamento clínico profissional.</p>
+
+<h2>Integração com Google Calendar</h2>
+<p>A conexão com o Google Calendar é opcional e pode ser desfeita pelo usuário a qualquer momento na tela de configurações. Ao conectar, o usuário autoriza a Ana a criar, editar e remover eventos correspondentes aos agendamentos feitos no sistema.</p>
+
+<h2>Disponibilidade</h2>
+<p>O serviço é fornecido "como está", sem garantias de disponibilidade contínua. Esforços razoáveis são feitos para manter o sistema funcionando, mas interrupções podem ocorrer.</p>
+
+<h2>Alterações</h2>
+<p>Estes termos podem ser atualizados periodicamente, com a data de revisão indicada no topo desta página.</p>
+
+<h2>Contato</h2>
+<p><a href="mailto:rodrigomorlin@gmail.com">rodrigomorlin@gmail.com</a></p>
+
+</body></html>"""
+
+@app.get("/privacidade", response_class=HTMLResponse)
+def privacy_policy():
+    return HTMLResponse(PRIVACY_HTML)
+
+@app.get("/termos", response_class=HTMLResponse)
+def terms_of_service():
+    return HTMLResponse(TERMS_HTML)
+
 # ── STATIC FILES ───────────────────────────────────────────
 @app.get("/sw.js")
 def sw(): return HTMLResponse(open("sw.js").read(), media_type="application/javascript")

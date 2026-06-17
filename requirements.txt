@@ -4,3 +4,4 @@ pydantic==2.10.3
 psycopg2-binary==2.9.9
 google-auth==2.36.0
 google-api-python-client==2.154.0
+pypdf==5.1.0

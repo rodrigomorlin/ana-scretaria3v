@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from typing import Optional, Any, List
 import os, logging, hashlib, secrets, json, base64, io
 from datetime import datetime, timedelta
-import urllib.request, urllib.error
+import urllib.request, urllib.error, urllib.parse
 
 try:
     from pypdf import PdfReader
@@ -34,6 +34,9 @@ SMTP_PASS      = os.environ.get("SMTP_PASS", "")
 SMTP_FROM      = os.environ.get("SMTP_FROM", "ana@grupo-anestesia.com")
 GCAL_CREDS     = os.environ.get("GCAL_CREDENTIALS", "")
 GCAL_ID        = os.environ.get("GCAL_CALENDAR_ID", "primary")
+GOOGLE_CLIENT_ID     = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+APP_BASE_URL         = os.environ.get("APP_BASE_URL", "")  # ex: https://web-production-468a2.up.railway.app
 
 USE_POSTGRES = bool(DATABASE_URL and DATABASE_URL.startswith("postgres"))
 
@@ -186,6 +189,10 @@ CREATE TABLE IF NOT EXISTS config (
         "ALTER TABLE eventos ADD COLUMN pdf_data TEXT DEFAULT ''",
         "ALTER TABLE eventos ADD COLUMN duracao_min INTEGER DEFAULT 60",
         "ALTER TABLE usuarios ADD COLUMN medico_id TEXT DEFAULT ''",
+        "ALTER TABLE usuarios ADD COLUMN gcal_access_token TEXT DEFAULT ''",
+        "ALTER TABLE usuarios ADD COLUMN gcal_refresh_token TEXT DEFAULT ''",
+        "ALTER TABLE usuarios ADD COLUMN gcal_token_expiry TEXT DEFAULT ''",
+        "ALTER TABLE usuarios ADD COLUMN gcal_email TEXT DEFAULT ''",
     ]:
         try:
             c.execute(alter); conn.commit()
@@ -322,15 +329,98 @@ def _time_to_min(t: str) -> int:
         return 0
 
 # ── GOOGLE CALENDAR ────────────────────────────────────────
-async def gcal_create(ev, setor_name):
-    if not GCAL_CREDS: return ""
+GOOGLE_OAUTH_SCOPES = "https://www.googleapis.com/auth/calendar email"
+
+def _oauth_redirect_uri() -> str:
+    base = APP_BASE_URL.rstrip("/") if APP_BASE_URL else ""
+    return f"{base}/api/oauth/google/callback"
+
+def build_oauth_url(state: str) -> str:
+    params = urllib.parse.urlencode({
+        "client_id": GOOGLE_CLIENT_ID,
+        "redirect_uri": _oauth_redirect_uri(),
+        "response_type": "code",
+        "scope": GOOGLE_OAUTH_SCOPES,
+        "access_type": "offline",
+        "prompt": "consent",
+        "state": state,
+    })
+    return f"https://accounts.google.com/o/oauth2/v2/auth?{params}"
+
+def exchange_oauth_code(code: str) -> dict:
+    """Troca o código de autorização por access_token + refresh_token."""
+    data = urllib.parse.urlencode({
+        "code": code,
+        "client_id": GOOGLE_CLIENT_ID,
+        "client_secret": GOOGLE_CLIENT_SECRET,
+        "redirect_uri": _oauth_redirect_uri(),
+        "grant_type": "authorization_code",
+    }).encode("utf-8")
+    req = urllib.request.Request("https://oauth2.googleapis.com/token", data=data, method="POST")
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read())
+
+def refresh_oauth_token(refresh_token: str) -> dict:
+    data = urllib.parse.urlencode({
+        "refresh_token": refresh_token,
+        "client_id": GOOGLE_CLIENT_ID,
+        "client_secret": GOOGLE_CLIENT_SECRET,
+        "grant_type": "refresh_token",
+    }).encode("utf-8")
+    req = urllib.request.Request("https://oauth2.googleapis.com/token", data=data, method="POST")
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        return json.loads(resp.read())
+
+def get_user_google_token(usuario_id: str) -> Optional[str]:
+    """Retorna um access_token válido para o usuário, renovando se necessário. None se não conectado."""
+    conn = get_db(); c = conn.cursor()
+    c.execute(f"SELECT gcal_access_token,gcal_refresh_token,gcal_token_expiry FROM usuarios WHERE id={P()}", (usuario_id,))
+    row = fetchone(c); conn.close()
+    if not row or not row.get("gcal_refresh_token"):
+        return None
+    expiry = row.get("gcal_token_expiry") or ""
     try:
+        expiry_dt = datetime.fromisoformat(expiry) if expiry else datetime.min
+    except Exception:
+        expiry_dt = datetime.min
+    if row.get("gcal_access_token") and datetime.now() < expiry_dt:
+        return row["gcal_access_token"]
+    # token expirado — renova
+    try:
+        tok = refresh_oauth_token(row["gcal_refresh_token"])
+        new_access = tok.get("access_token", "")
+        expires_in = tok.get("expires_in", 3600)
+        new_expiry = (datetime.now() + timedelta(seconds=expires_in - 60)).isoformat()
+        conn2 = get_db(); c2 = conn2.cursor()
+        c2.execute(f"UPDATE usuarios SET gcal_access_token={P()}, gcal_token_expiry={P()} WHERE id={P()}",
+                   (new_access, new_expiry, usuario_id))
+        conn2.commit(); conn2.close()
+        return new_access
+    except Exception as e:
+        log.error(f"Erro ao renovar token Google de {usuario_id}: {e}")
+        return None
+
+def _build_gcal_service(user_access_token: Optional[str] = None):
+    """Retorna um serviço do Calendar API, usando OAuth do usuário se disponível, senão a conta de serviço."""
+    from googleapiclient.discovery import build
+    if user_access_token:
+        import google.oauth2.credentials
+        creds = google.oauth2.credentials.Credentials(token=user_access_token)
+        return build("calendar", "v3", credentials=creds)
+    if GCAL_CREDS:
         from google.oauth2.service_account import Credentials
-        from googleapiclient.discovery import build
         creds = Credentials.from_service_account_info(
-            json.loads(GCAL_CREDS),
-            scopes=["https://www.googleapis.com/auth/calendar"])
-        svc = build("calendar", "v3", credentials=creds)
+            json.loads(GCAL_CREDS), scopes=["https://www.googleapis.com/auth/calendar"])
+        return build("calendar", "v3", credentials=creds)
+    return None
+
+async def gcal_create(ev, setor_name, criado_por_id: Optional[str] = None):
+    # Prioriza o calendário pessoal do médico que criou o evento (OAuth), senão usa a conta de serviço/calendário do grupo
+    user_token = get_user_google_token(criado_por_id) if criado_por_id else None
+    calendar_id = "primary" if user_token else get_gcal_id()
+    try:
+        svc = _build_gcal_service(user_token)
+        if not svc: return ""
         ini_min = _time_to_min(ev["time"])
         fim_min = ini_min + max(ev.get("duracao_min") or 60, 1)
         fim_min = min(fim_min, 23*60+59)  # não passa da meia-noite
@@ -341,21 +431,19 @@ async def gcal_create(ev, setor_name):
             "start": {"dateTime": f"{ev['date']}T{ev['time']}:00", "timeZone": "America/Sao_Paulo"},
             "end": {"dateTime": f"{ev['date']}T{end_h:02d}:{end_m:02d}:00", "timeZone": "America/Sao_Paulo"},
         }
-        r = svc.events().insert(calendarId=get_gcal_id(), body=body).execute()
-        log.info(f"GCal evento criado: {r.get('id')}")
+        r = svc.events().insert(calendarId=calendar_id, body=body).execute()
+        log.info(f"GCal evento criado: {r.get('id')} (calendário: {'pessoal' if user_token else 'grupo'})")
         return r.get("id","")
     except Exception as e: log.error(f"GCal criar: {e}"); return ""
 
-async def gcal_delete(gcal_id):
-    if not GCAL_CREDS or not gcal_id: return
+async def gcal_delete(gcal_id, criado_por_id: Optional[str] = None):
+    if not gcal_id: return
+    user_token = get_user_google_token(criado_por_id) if criado_por_id else None
+    calendar_id = "primary" if user_token else get_gcal_id()
     try:
-        from google.oauth2.service_account import Credentials
-        from googleapiclient.discovery import build
-        creds = Credentials.from_service_account_info(
-            json.loads(GCAL_CREDS),
-            scopes=["https://www.googleapis.com/auth/calendar"])
-        svc = build("calendar", "v3", credentials=creds)
-        svc.events().delete(calendarId=get_gcal_id(), eventId=gcal_id).execute()
+        svc = _build_gcal_service(user_token)
+        if not svc: return
+        svc.events().delete(calendarId=calendar_id, eventId=gcal_id).execute()
     except Exception as e: log.error(f"GCal delete: {e}")
 
 # ── MODELOS ────────────────────────────────────────────────
@@ -402,6 +490,7 @@ class Correcao(BaseModel):
 # ── AUTH ROUTES ────────────────────────────────────────────
 class SetupData(BaseModel):
     usuario_id: str; nome: str; pin: str
+    gcal_calendar_id: Optional[str] = ""
 
 @app.get("/api/setup-needed")
 def setup_needed():
@@ -433,6 +522,9 @@ def setup(data: SetupData, request: Request):
     c.execute(f"INSERT INTO usuarios (id,nome,pin_hash,role,email) VALUES ({Ps(5)})",
               (uid, data.nome or uid, hash_pin(data.pin), "admin", ""))
     conn.commit(); conn.close()
+    if data.gcal_calendar_id and data.gcal_calendar_id.strip():
+        set_config("gcal_calendar_id", data.gcal_calendar_id.strip())
+        log.info(f"Setup inicial: Google Calendar definido como {data.gcal_calendar_id.strip()}")
     db_log("INFO", f"Primeiro usuário criado via setup: {uid}")
     log.info(f"Setup inicial: usuário {uid} criado como admin")
     return {"ok": True}
@@ -543,8 +635,9 @@ async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=
     mr = fetchone(c); med_email = mr["email"] if mr else ""
 
     gcal_id = ""
-    if GCAL_CREDS:
-        gcal_id = await gcal_create(ev.dict(), sname)
+    # Tenta usar o calendário pessoal do usuário (OAuth) ou cai para a conta de serviço/calendário do grupo
+    if get_user_google_token(user["id"]) or GCAL_CREDS:
+        gcal_id = await gcal_create(ev.dict(), sname, criado_por_id=user["id"])
 
     c.execute(f"""INSERT INTO eventos (doc,setor,proc,paciente,date,time,obs,ai,criado_por,gcal_event_id,pdf_filename,pdf_data,duracao_min)
                   VALUES ({Ps(13)})""",
@@ -581,10 +674,11 @@ async def delete_evento(ev_id: int, bg: BackgroundTasks, user=Depends(auth)):
     ev = fetchone(c)
     if not ev: conn.close(); raise HTTPException(404,"Não encontrado.")
     gcal_id = ev.get("gcal_event_id","")
+    criado_por = ev.get("criado_por","")
     c.execute(f"DELETE FROM eventos WHERE id={P()}", (ev_id,))
     conn.commit(); conn.close()
     db_log("INFO", f"Cancelado: {ev['proc']} | {ev['date']}", usuario=user["id"])
-    if gcal_id: bg.add_task(gcal_delete, gcal_id)
+    if gcal_id: bg.add_task(gcal_delete, gcal_id, criado_por)
     return {"ok": True}
 
 @app.get("/api/eventos/{ev_id}")
@@ -632,14 +726,16 @@ async def update_evento(ev_id: int, ev: EventoUpdate, bg: BackgroundTasks, user=
 
     # Atualiza Google Calendar: remove o antigo e cria novo (mais simples e confiável)
     old_gcal = current.get("gcal_event_id","")
-    if GCAL_CREDS and old_gcal:
-        bg.add_task(gcal_delete, old_gcal)
-    if GCAL_CREDS:
+    criado_por = current.get("criado_por","")
+    usa_gcal = bool(get_user_google_token(criado_por) or GCAL_CREDS)
+    if usa_gcal and old_gcal:
+        bg.add_task(gcal_delete, old_gcal, criado_por)
+    if usa_gcal:
         conn2 = get_db(); c2 = conn2.cursor()
         c2.execute(f"SELECT name FROM setores WHERE id={P()}", (merged["setor"],))
         sr = fetchone(c2); conn2.close()
         sname = sr["name"] if sr else merged["setor"]
-        new_gcal = await gcal_create(merged, sname)
+        new_gcal = await gcal_create(merged, sname, criado_por_id=criado_por)
         conn3 = get_db(); c3 = conn3.cursor()
         c3.execute(f"UPDATE eventos SET gcal_event_id={P()} WHERE id={P()}", (new_gcal, ev_id))
         conn3.commit(); conn3.close()
@@ -1074,6 +1170,81 @@ def list_gcal_calendars(user=Depends(auth)):
         log.error(f"Erro ao listar calendários: {e}")
         raise HTTPException(502, f"Não foi possível listar calendários: {str(e)[:200]}")
 
+# ── OAUTH GOOGLE (calendário pessoal por usuário) ───────────
+@app.get("/api/oauth/google/status")
+def oauth_google_status(user=Depends(auth)):
+    conn = get_db(); c = conn.cursor()
+    c.execute(f"SELECT gcal_refresh_token,gcal_email FROM usuarios WHERE id={P()}", (user["id"],))
+    row = fetchone(c); conn.close()
+    connected = bool(row and row.get("gcal_refresh_token"))
+    return {"connected": connected, "email": row.get("gcal_email","") if row else "",
+            "oauth_disponivel": bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and APP_BASE_URL)}
+
+@app.get("/api/oauth/google/start")
+def oauth_google_start(request: Request, user=Depends(auth)):
+    if not (GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and APP_BASE_URL):
+        raise HTTPException(400, "OAuth do Google não está configurado no servidor. Configure GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET e APP_BASE_URL no Railway.")
+    # state = token de sessão atual, para sabermos a qual usuário vincular no callback
+    token = request.headers.get("X-Token","") or request.query_params.get("token","")
+    if not token:
+        raise HTTPException(401, "Token ausente.")
+    url = build_oauth_url(state=token)
+    return {"auth_url": url}
+
+@app.get("/api/oauth/google/callback")
+def oauth_google_callback(code: str = "", state: str = "", error: str = ""):
+    if error:
+        return HTMLResponse(f"<html><body style='font-family:sans-serif;text-align:center;padding:40px'><h3>Autorização cancelada</h3><p>{error}</p><script>setTimeout(()=>window.close(),2000)</script></body></html>")
+    user = get_user(state)
+    if not user:
+        return HTMLResponse("<html><body style='font-family:sans-serif;text-align:center;padding:40px'><h3>Sessão inválida ou expirada</h3><p>Volte ao app e tente novamente.</p></body></html>")
+    try:
+        tok = exchange_oauth_code(code)
+        access_token = tok.get("access_token","")
+        refresh_token = tok.get("refresh_token","")
+        expires_in = tok.get("expires_in", 3600)
+        expiry = (datetime.now() + timedelta(seconds=expires_in - 60)).isoformat()
+
+        # Busca o email da conta Google conectada
+        email = ""
+        try:
+            req = urllib.request.Request("https://www.googleapis.com/oauth2/v2/userinfo",
+                                          headers={"Authorization": f"Bearer {access_token}"})
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                info = json.loads(resp.read())
+                email = info.get("email","")
+        except Exception:
+            pass
+
+        conn = get_db(); c = conn.cursor()
+        if refresh_token:
+            c.execute(f"""UPDATE usuarios SET gcal_access_token={P()}, gcal_refresh_token={P()},
+                          gcal_token_expiry={P()}, gcal_email={P()} WHERE id={P()}""",
+                      (access_token, refresh_token, expiry, email, user["id"]))
+        else:
+            # Google só manda refresh_token na primeira autorização; se já existir, mantém o antigo
+            c.execute(f"UPDATE usuarios SET gcal_access_token={P()}, gcal_token_expiry={P()}, gcal_email={P()} WHERE id={P()}",
+                      (access_token, expiry, email, user["id"]))
+        conn.commit(); conn.close()
+        db_log("INFO", f"Google Calendar pessoal conectado: {email}", usuario=user["id"])
+        return HTMLResponse(f"""<html><body style='font-family:sans-serif;text-align:center;padding:40px'>
+            <h3>✅ Calendário conectado!</h3><p>{email}</p>
+            <p style='color:#888;font-size:13px'>Pode fechar esta janela.</p>
+            <script>setTimeout(()=>{{window.close();if(window.opener)window.opener.location.reload();}},1500)</script>
+            </body></html>""")
+    except Exception as e:
+        log.error(f"Erro no callback OAuth: {e}")
+        return HTMLResponse(f"<html><body style='font-family:sans-serif;text-align:center;padding:40px'><h3>Erro ao conectar</h3><p>{str(e)[:200]}</p></body></html>")
+
+@app.post("/api/oauth/google/disconnect")
+def oauth_google_disconnect(user=Depends(auth)):
+    conn = get_db(); c = conn.cursor()
+    c.execute(f"""UPDATE usuarios SET gcal_access_token='', gcal_refresh_token='',
+                  gcal_token_expiry='', gcal_email='' WHERE id={P()}""", (user["id"],))
+    conn.commit(); conn.close()
+    db_log("INFO", "Google Calendar pessoal desconectado", usuario=user["id"])
+    return {"ok": True}
+
 # ── HEALTH ─────────────────────────────────────────────────
 @app.get("/api/health")
 def health():
@@ -1081,6 +1252,7 @@ def health():
             "db":"postgres" if USE_POSTGRES else "sqlite",
             "email":bool(SMTP_HOST),"gcal":bool(GCAL_CREDS),
             "ai":bool(GROQ_KEY),
+            "oauth_google":bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and APP_BASE_URL),
             "timestamp":datetime.now().isoformat()}
 
 # ── STATIC FILES ───────────────────────────────────────────

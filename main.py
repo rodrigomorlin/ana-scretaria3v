@@ -1011,6 +1011,8 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
             headers={
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {GROQ_KEY}",
+                "User-Agent": "Mozilla/5.0 (compatible; AnaSecretaria/3.0; +https://railway.app)",
+                "Accept": "application/json",
             },
             method="POST",
         )

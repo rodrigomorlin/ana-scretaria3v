@@ -8,9 +8,15 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Any, List
-import os, logging, hashlib, secrets, json
+import os, logging, hashlib, secrets, json, base64, io
 from datetime import datetime, timedelta
 import urllib.request, urllib.error
+
+try:
+    from pypdf import PdfReader
+    PDF_SUPPORT = True
+except ImportError:
+    PDF_SUPPORT = False
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
 log = logging.getLogger("ana")
@@ -20,7 +26,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 DATABASE_URL   = os.environ.get("DATABASE_URL", "")
 SECRET         = os.environ.get("SECRET_KEY", "ana-secretaria-default-secret-change-me")
-ANTHROPIC_KEY  = os.environ.get("ANTHROPIC_API_KEY", "")
+GROQ_KEY       = os.environ.get("GROQ_API_KEY", "")
 SMTP_HOST      = os.environ.get("SMTP_HOST", "")
 SMTP_PORT      = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USER      = os.environ.get("SMTP_USER", "")
@@ -936,7 +942,24 @@ async def start_scheduler():
             await asyncio.sleep(60 * 10)  # checa a cada 10 minutos
     asyncio.create_task(scheduler_loop())
 
-# ── CHAT PROXY (Anthropic — evita CORS) ───────────────────
+# ── CHAT PROXY (Groq — gratuito, evita CORS) ──────────────
+def _extract_pdf_text(pdf_b64: str, max_chars: int = 6000) -> str:
+    """Extrai texto de um PDF em base64. Retorna string vazia se falhar."""
+    if not PDF_SUPPORT or not pdf_b64:
+        return ""
+    try:
+        pdf_bytes = base64.b64decode(pdf_b64)
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text() or ""
+            if len(text) >= max_chars:
+                break
+        return text[:max_chars].strip()
+    except Exception as e:
+        log.error(f"Erro ao extrair texto do PDF: {e}")
+        return ""
+
 class ChatRequest(BaseModel):
     system: str
     messages: List[Any]
@@ -944,39 +967,69 @@ class ChatRequest(BaseModel):
 
 @app.post("/api/chat")
 def chat_proxy(req: ChatRequest, user=Depends(auth)):
-    if not ANTHROPIC_KEY:
-        raise HTTPException(500, "ANTHROPIC_API_KEY não configurada no servidor.")
-    log.info(f"Chat proxy Anthropic: system={len(req.system)} chars, msgs={len(req.messages)}")
+    if not GROQ_KEY:
+        raise HTTPException(500, "GROQ_API_KEY não configurada no servidor.")
+    log.info(f"Chat proxy Groq: system={len(req.system)} chars, msgs={len(req.messages)}")
+
+    # Converte formato Anthropic (content pode ser string ou lista de partes) → OpenAI/Groq
+    openai_messages = [{"role": "system", "content": req.system}]
+    for msg in req.messages:
+        content = msg.get("content", "")
+        role = msg.get("role", "user")
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            text_parts = []
+            for part in content:
+                if part.get("type") == "text":
+                    text_parts.append(part.get("text", ""))
+                elif part.get("type") == "document":
+                    src = part.get("source", {})
+                    pdf_b64 = src.get("data", "")
+                    extracted = _extract_pdf_text(pdf_b64)
+                    if extracted:
+                        text_parts.append(f"[Conteúdo extraído do PDF anexado]\n{extracted}")
+                    else:
+                        text_parts.append("[Aviso: não foi possível ler o conteúdo do PDF anexado. "
+                                          "Peça ao usuário para descrever o pedido médico em texto.]")
+            text = "\n".join(text_parts)
+        else:
+            text = str(content)
+        openai_messages.append({"role": role, "content": text})
 
     payload = json.dumps({
-        "model": "claude-sonnet-4-5",
+        "model": "llama-3.3-70b-versatile",
         "max_tokens": req.max_tokens or 1500,
-        "system": req.system,
-        "messages": req.messages,
+        "messages": openai_messages,
+        "temperature": 0.3,
     }).encode("utf-8")
 
     try:
         http_req = urllib.request.Request(
-            "https://api.anthropic.com/v1/messages",
+            "https://api.groq.com/openai/v1/chat/completions",
             data=payload,
             headers={
                 "Content-Type": "application/json",
-                "x-api-key": ANTHROPIC_KEY,
-                "anthropic-version": "2023-06-01",
+                "Authorization": f"Bearer {GROQ_KEY}",
             },
             method="POST",
         )
         with urllib.request.urlopen(http_req, timeout=60) as resp:
-            result = json.loads(resp.read())
-            log.info("Chat proxy: resposta OK")
-            return result
+            groq_resp = json.loads(resp.read())
+        text = groq_resp["choices"][0]["message"]["content"]
+        log.info("Chat proxy: resposta OK (Groq)")
+        # Retorna no mesmo formato que o frontend espera (estilo Anthropic)
+        return {"content": [{"type": "text", "text": text}]}
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="ignore")
-        log.error(f"Anthropic API erro {e.code}: {body[:500]}")
-        raise HTTPException(502, f"Erro da API Anthropic ({e.code}): {body[:300]}")
+        log.error(f"Groq API erro {e.code}: {body[:500]}")
+        raise HTTPException(502, f"Erro da API Groq ({e.code}): {body[:300]}")
     except urllib.error.URLError as e:
         log.error(f"Chat proxy URLError: {e}")
-        raise HTTPException(502, f"Erro de conexão com Anthropic: {e.reason}")
+        raise HTTPException(502, f"Erro de conexão com Groq: {e.reason}")
+    except (KeyError, IndexError) as e:
+        log.error(f"Resposta inesperada da Groq: {e}")
+        raise HTTPException(502, "Resposta inesperada da API Groq.")
     except HTTPException:
         raise
     except Exception as e:
@@ -1025,7 +1078,7 @@ def health():
     return {"status":"ok","version":"3.0.0",
             "db":"postgres" if USE_POSTGRES else "sqlite",
             "email":bool(SMTP_HOST),"gcal":bool(GCAL_CREDS),
-            "ai":bool(ANTHROPIC_KEY),
+            "ai":bool(GROQ_KEY),
             "timestamp":datetime.now().isoformat()}
 
 # ── STATIC FILES ───────────────────────────────────────────

@@ -224,8 +224,26 @@ html,body{height:100%;background:var(--bg);color:var(--text);
       <button class="btn-full" onclick="doLogin()" id="lbtn"><i class="ti ti-login"></i> Entrar</button>
       <div class="login-err" id="lerr"></div>
       <div class="login-hint" id="login-hint">Padrão: admin / 1234 · Troque após o primeiro acesso</div>
-      <div style="text-align:center;margin-top:10px">
+      <div style="text-align:center;margin-top:10px;display:flex;flex-direction:column;gap:4px">
+        <a href="#" onclick="event.preventDefault();showSignupForm()" style="font-size:11px;color:var(--accent);text-decoration:underline">Ainda não tem conta? Criar conta</a>
         <a href="#" onclick="event.preventDefault();showSetupForm()" style="font-size:10px;color:var(--hint);text-decoration:underline">Problemas para entrar? Criar/recuperar acesso</a>
+      </div>
+    </div>
+
+    <!-- SIGNUP FORM (cadastro público de novo médico) -->
+    <div id="signup-form" style="display:none">
+      <div class="login-hint" style="margin-top:0;margin-bottom:12px;text-align:left;background:var(--al);color:var(--ad);border-radius:var(--rs);padding:8px 10px">
+        <i class="ti ti-user-plus"></i> Crie sua conta para acessar a Ana.
+      </div>
+      <div class="f">
+        <label>Seu nome</label><input id="sg-nome" placeholder="Nome completo">
+        <label>ID de acesso (sem espaços)</label><input id="sg-id" placeholder="ex: drsobrenome">
+        <label>PIN (mínimo 4 dígitos)</label><input id="sg-pin" type="password" placeholder="••••" maxlength="8">
+      </div>
+      <button class="btn-full" onclick="doSignup()" id="sg-btn"><i class="ti ti-user-plus"></i> Criar conta</button>
+      <div class="login-err" id="sg-err"></div>
+      <div style="text-align:center;margin-top:10px">
+        <a href="#" onclick="event.preventDefault();showLoginForm()" style="font-size:10px;color:var(--hint);text-decoration:underline">Já tem conta? Voltar ao login</a>
       </div>
     </div>
 
@@ -235,8 +253,8 @@ html,body{height:100%;background:var(--bg);color:var(--text);
         <i class="ti ti-sparkles"></i> Nenhum usuário encontrado. Crie o primeiro acesso (administrador).
       </div>
       <div class="f">
-        <label>Seu nome</label><input id="su-nome" placeholder="Rodrigo Morlin">
-        <label>ID de acesso (sem espaços)</label><input id="su-id" placeholder="rodrigomorlin">
+        <label>Seu nome</label><input id="su-nome" placeholder="Nome completo">
+        <label>ID de acesso (sem espaços)</label><input id="su-id" placeholder="ex: drsobrenome">
         <label>PIN (mínimo 4 dígitos)</label><input id="su-pin" type="password" placeholder="••••" maxlength="8">
         <label>Google Calendar do grupo (opcional)</label><input id="su-gcal" placeholder="ex: grupo@gmail.com ou abc123@group.calendar.google.com">
       </div>
@@ -575,7 +593,39 @@ async function doForceSetup(){
 
 function showSetupForm(){
   document.getElementById('login-form').style.display='none';
+  document.getElementById('signup-form').style.display='none';
   document.getElementById('setup-form').style.display='block';
+}
+function showSignupForm(){
+  document.getElementById('login-form').style.display='none';
+  document.getElementById('setup-form').style.display='none';
+  document.getElementById('signup-form').style.display='block';
+}
+function showLoginForm(){
+  document.getElementById('signup-form').style.display='none';
+  document.getElementById('setup-form').style.display='none';
+  document.getElementById('login-form').style.display='block';
+}
+async function doSignup(){
+  const nome=document.getElementById('sg-nome').value.trim();
+  const id=document.getElementById('sg-id').value.trim().toLowerCase().replace(/\s/g,'');
+  const pin=document.getElementById('sg-pin').value;
+  const err=document.getElementById('sg-err');err.style.display='none';
+  if(!nome||!id||!pin||pin.length<4){
+    err.textContent='Preencha nome, ID e PIN (mínimo 4 dígitos).';err.style.display='block';return;
+  }
+  const btn=document.getElementById('sg-btn');btn.disabled=true;
+  try{
+    const r=await fetch('/api/signup',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({usuario_id:id,nome,pin})});
+    if(!r.ok){const e=await r.json().catch(()=>({detail:'Erro'}));throw new Error(e.detail);}
+    document.getElementById('lu').value=id;
+    document.getElementById('lp').value=pin;
+    document.getElementById('signup-form').style.display='none';
+    document.getElementById('login-form').style.display='block';
+    await doLogin();
+  }catch(e){err.textContent=e.message||'Erro ao criar conta.';err.style.display='block';}
+  btn.disabled=false;
 }
 
 

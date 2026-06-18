@@ -377,6 +377,7 @@ def get_user_google_token(usuario_id: str) -> Optional[str]:
     c.execute(f"SELECT gcal_access_token,gcal_refresh_token,gcal_token_expiry FROM usuarios WHERE id={P()}", (usuario_id,))
     row = fetchone(c); conn.close()
     if not row or not row.get("gcal_refresh_token"):
+        log.info(f"GCal token: usuário {usuario_id} sem refresh_token salvo.")
         return None
     expiry = row.get("gcal_token_expiry") or ""
     try:
@@ -384,18 +385,28 @@ def get_user_google_token(usuario_id: str) -> Optional[str]:
     except Exception:
         expiry_dt = datetime.min
     if row.get("gcal_access_token") and datetime.now() < expiry_dt:
+        log.info(f"GCal token: usando access_token em cache para {usuario_id} (expira {expiry}).")
         return row["gcal_access_token"]
     # token expirado — renova
+    log.info(f"GCal token: access_token expirado/ausente para {usuario_id}, renovando via refresh_token...")
     try:
         tok = refresh_oauth_token(row["gcal_refresh_token"])
         new_access = tok.get("access_token", "")
+        if not new_access:
+            log.error(f"GCal token: refresh não retornou access_token. Resposta: {tok}")
+            return None
         expires_in = tok.get("expires_in", 3600)
         new_expiry = (datetime.now() + timedelta(seconds=expires_in - 60)).isoformat()
         conn2 = get_db(); c2 = conn2.cursor()
         c2.execute(f"UPDATE usuarios SET gcal_access_token={P()}, gcal_token_expiry={P()} WHERE id={P()}",
                    (new_access, new_expiry, usuario_id))
         conn2.commit(); conn2.close()
+        log.info(f"GCal token: renovado com sucesso para {usuario_id}.")
         return new_access
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="ignore")
+        log.error(f"GCal token: erro HTTP ao renovar token de {usuario_id}: {e.code} {body[:300]}")
+        return None
     except Exception as e:
         log.error(f"Erro ao renovar token Google de {usuario_id}: {e}")
         return None
@@ -418,9 +429,12 @@ async def gcal_create(ev, setor_name, criado_por_id: Optional[str] = None):
     # Prioriza o calendário pessoal do médico que criou o evento (OAuth), senão usa a conta de serviço/calendário do grupo
     user_token = get_user_google_token(criado_por_id) if criado_por_id else None
     calendar_id = "primary" if user_token else get_gcal_id()
+    log.info(f"GCal criar: criado_por_id={criado_por_id}, tem_token_pessoal={bool(user_token)}, calendar_id={calendar_id}")
     try:
         svc = _build_gcal_service(user_token)
-        if not svc: return ""
+        if not svc:
+            log.error("GCal criar: serviço não pôde ser construído (sem token e sem GCAL_CREDS).")
+            return ""
         ini_min = _time_to_min(ev["time"])
         fim_min = ini_min + max(ev.get("duracao_min") or 60, 1)
         fim_min = min(fim_min, 23*60+59)  # não passa da meia-noite
@@ -432,9 +446,11 @@ async def gcal_create(ev, setor_name, criado_por_id: Optional[str] = None):
             "end": {"dateTime": f"{ev['date']}T{end_h:02d}:{end_m:02d}:00", "timeZone": "America/Sao_Paulo"},
         }
         r = svc.events().insert(calendarId=calendar_id, body=body).execute()
-        log.info(f"GCal evento criado: {r.get('id')} (calendário: {'pessoal' if user_token else 'grupo'})")
+        log.info(f"GCal evento criado com sucesso: {r.get('id')} (calendário: {'pessoal' if user_token else 'grupo'}, id={calendar_id})")
         return r.get("id","")
-    except Exception as e: log.error(f"GCal criar: {e}"); return ""
+    except Exception as e:
+        log.error(f"GCal criar — FALHA: {type(e).__name__}: {e}")
+        return ""
 
 async def gcal_delete(gcal_id, criado_por_id: Optional[str] = None):
     if not gcal_id: return
@@ -527,6 +543,30 @@ def setup(data: SetupData, request: Request):
         log.info(f"Setup inicial: Google Calendar definido como {data.gcal_calendar_id.strip()}")
     db_log("INFO", f"Primeiro usuário criado via setup: {uid}")
     log.info(f"Setup inicial: usuário {uid} criado como admin")
+    return {"ok": True}
+
+class SignupData(BaseModel):
+    usuario_id: str; nome: str; pin: str
+
+@app.post("/api/signup")
+def signup(data: SignupData, request: Request):
+    """Cadastro público — qualquer pessoa pode criar uma conta própria, sempre com papel 'médico'."""
+    uid = data.usuario_id.lower().strip().replace(" ", "")
+    nome = data.nome.strip()
+    if not uid or not nome or not data.pin or len(data.pin) < 4:
+        raise HTTPException(400, "Nome, ID e PIN (mínimo 4 dígitos) são obrigatórios.")
+    if not uid.replace("_","").replace("-","").isalnum():
+        raise HTTPException(400, "ID de acesso deve conter apenas letras, números, - ou _.")
+    conn = get_db(); c = conn.cursor()
+    c.execute(f"SELECT id FROM usuarios WHERE id={P()}", (uid,))
+    if fetchone(c):
+        conn.close()
+        raise HTTPException(400, "Esse ID de acesso já está em uso. Escolha outro.")
+    c.execute(f"INSERT INTO usuarios (id,nome,pin_hash,role,email) VALUES ({Ps(5)})",
+              (uid, nome, hash_pin(data.pin), "medico", ""))
+    conn.commit(); conn.close()
+    db_log("INFO", f"Nova conta criada via cadastro público: {uid}")
+    log.info(f"Cadastro público: usuário {uid} ({nome}) criado como médico")
     return {"ok": True}
 
 @app.post("/api/login")

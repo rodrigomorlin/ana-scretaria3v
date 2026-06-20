@@ -199,8 +199,29 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 .modal .ma{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
 
 @media(max-width:680px){
-  .sidebar{display:none}.grid4{grid-template-columns:1fr 1fr}.chart-grid{grid-template-columns:1fr}
-  .grid2{grid-template-columns:1fr}.ntabs .ntab span{display:none}
+  .sidebar{display:none}
+  .grid4{grid-template-columns:1fr 1fr}
+  .chart-grid{grid-template-columns:1fr}
+  .grid2{grid-template-columns:1fr}
+  .grid3{grid-template-columns:1fr}
+  .ntabs .ntab span{display:none}
+  .ntabs{margin-left:2px}
+  .nav{padding:0 8px;gap:4px}
+  .nav-logo{font-size:13px;gap:5px}
+  .nav-logo span{display:none}
+  .user-info span:not(.dot-ok){display:none}
+  .nright{gap:4px}
+  .modal{width:100%;max-width:100vw;border-radius:var(--r) var(--r) 0 0;padding:1rem}
+  .modal-bg{align-items:flex-end}
+  .ag-tbl{font-size:11px}
+  .ag-tbl th,.ag-tbl td{padding:5px 6px}
+  .card{padding:.8rem .9rem}
+  .panel{padding:.8rem}
+}
+@media(max-width:420px){
+  .grid4{grid-template-columns:1fr 1fr;gap:6px}
+  .stat-n{font-size:21px}
+  .nav-logo{display:none}
 }
 </style>
 </head>
@@ -230,13 +251,14 @@ html,body{height:100%;background:var(--bg);color:var(--text);
       </div>
     </div>
 
-    <!-- SIGNUP FORM (cadastro público de novo médico) -->
+    <!-- SIGNUP FORM (cadastro público — cria um novo grupo isolado) -->
     <div id="signup-form" style="display:none">
       <div class="login-hint" style="margin-top:0;margin-bottom:12px;text-align:left;background:var(--al);color:var(--ad);border-radius:var(--rs);padding:8px 10px">
-        <i class="ti ti-user-plus"></i> Crie sua conta para acessar a Ana.
+        <i class="ti ti-user-plus"></i> Crie sua conta — isso cria um grupo novo e independente, do qual você será administrador.
       </div>
       <div class="f">
         <label>Seu nome</label><input id="sg-nome" placeholder="Nome completo">
+        <label>Nome do grupo/clínica (opcional)</label><input id="sg-org" placeholder="ex: Grupo de Anestesia XYZ">
         <label>ID de acesso (sem espaços)</label><input id="sg-id" placeholder="ex: drsobrenome">
         <label>PIN (mínimo 4 dígitos)</label><input id="sg-pin" type="password" placeholder="••••" maxlength="8">
       </div>
@@ -326,9 +348,9 @@ html,body{height:100%;background:var(--bg);color:var(--text);
   </div>
   <div class="grid4" id="ag-stats"></div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-    <input id="ag-search" placeholder="Buscar por paciente, médico ou procedimento..." oninput="renderAgenda()" style="flex:2;min-width:180px;border:0.5px solid var(--border);border-radius:var(--rs);padding:7px 12px;font-size:12px;background:var(--surface);color:var(--text)">
-    <select id="ag-filter-setor" onchange="renderAgenda()" style="flex:1;min-width:120px;border:0.5px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:12px;background:var(--surface);color:var(--text)"><option value="">Todos os setores</option></select>
-    <select id="ag-filter-medico" onchange="renderAgenda()" style="flex:1;min-width:140px;border:0.5px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:12px;background:var(--surface);color:var(--text)"><option value="">Todos os médicos</option></select>
+    <input id="ag-search" placeholder="Buscar por paciente, médico ou procedimento..." oninput="renderAgenda()" style="flex:2;min-width:140px;border:0.5px solid var(--border);border-radius:var(--rs);padding:7px 12px;font-size:12px;background:var(--surface);color:var(--text)">
+    <select id="ag-filter-setor" onchange="renderAgenda()" style="flex:1;min-width:100px;border:0.5px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:12px;background:var(--surface);color:var(--text)"><option value="">Todos os setores</option></select>
+    <select id="ag-filter-medico" onchange="renderAgenda()" style="flex:1;min-width:100px;border:0.5px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:12px;background:var(--surface);color:var(--text)"><option value="">Todos os médicos</option></select>
   </div>
   <div class="card" style="padding:0;overflow:hidden">
     <div style="overflow-x:auto"><table class="ag-tbl" id="agtbl"><tr><td style="padding:18px;color:var(--muted);text-align:center">Carregando...</td></tr></table></div>
@@ -608,6 +630,7 @@ function showLoginForm(){
 }
 async function doSignup(){
   const nome=document.getElementById('sg-nome').value.trim();
+  const orgNome=document.getElementById('sg-org').value.trim();
   const id=document.getElementById('sg-id').value.trim().toLowerCase().replace(/\s/g,'');
   const pin=document.getElementById('sg-pin').value;
   const err=document.getElementById('sg-err');err.style.display='none';
@@ -617,7 +640,7 @@ async function doSignup(){
   const btn=document.getElementById('sg-btn');btn.disabled=true;
   try{
     const r=await fetch('/api/signup',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({usuario_id:id,nome,pin})});
+      body:JSON.stringify({usuario_id:id,nome,pin,org_nome:orgNome})});
     if(!r.ok){const e=await r.json().catch(()=>({detail:'Erro'}));throw new Error(e.detail);}
     document.getElementById('lu').value=id;
     document.getElementById('lp').value=pin;
@@ -704,7 +727,7 @@ function addMsg(html,type,extras={}){
     wrap.dataset.evento=JSON.stringify(extras.eventoContext||{});
     wrap.dataset.origtxt=extras.origTxt||'';
   }
-  if(extras.sug?.length){const sr=document.createElement('div');sr.className='sug-row';extras.sug.forEach(s=>{const sp=document.createElement('span');sp.className='sug';sp.textContent=s;sp.onclick=()=>{sr.querySelectorAll('.sug').forEach(x=>x.style.opacity='.4');processInput(s,null);};sr.appendChild(sp);});wrap.appendChild(sr);}
+  if(extras.sug?.length){const sr=document.createElement('div');sr.className='sug-row';extras.sug.forEach(s=>{const sp=document.createElement('span');sp.className='sug';sp.textContent=s;sp.onclick=()=>{if(s==='Ir para Config'){tab('config');return;}sr.querySelectorAll('.sug').forEach(x=>x.style.opacity='.4');processInput(s,null);};sr.appendChild(sp);});wrap.appendChild(sr);}
   const ts=document.createElement('div');ts.className='ts'+(type==='user'?' r':'');ts.textContent=nowT();wrap.appendChild(ts);
   msgs.insertBefore(wrap,typ);msgs.scrollTop=msgs.scrollHeight;
 }
@@ -782,9 +805,15 @@ async function processInput(txt,pdf=null){
 
   const correcoesTxt=(ctx.correcoes||[]).map(c=>`Campo "${c.campo}": evite "${c.valor_errado}", prefira "${c.valor_certo}"`).join(' | ');
 
-  const system=`Você é Ana, secretária virtual de anestesiologia. Usuário: ${me.nome}. Hoje: ${todayFull} (${today}).
-MÉDICOS: ${ctx.medicos.join(', ')}
-SETORES: ${Object.entries(ctx.setores).map(([k,v])=>`${v}(${k})`).join(', ')}
+  const semMedicos = !ctx.medicos.length;
+  const semSetores = !Object.keys(ctx.setores).length;
+  const avisoInicial = (semMedicos||semSetores)
+    ? `\nATENÇÃO: este grupo ainda não tem ${semMedicos?'médicos':''}${semMedicos&&semSetores?' nem ':''}${semSetores?'setores':''} cadastrados. Se o usuário pedir um agendamento, explique educadamente que primeiro é preciso cadastrar ${semMedicos?'pelo menos um médico':''}${semMedicos&&semSetores?' e ':''}${semSetores?'um setor':''} em Config, antes de agendar.`
+    : '';
+
+  const system=`Você é Ana, secretária virtual de anestesiologia. Usuário: ${me.nome}. Hoje: ${todayFull} (${today}).${avisoInicial}
+MÉDICOS: ${ctx.medicos.join(', ')||'(nenhum cadastrado ainda)'}
+SETORES: ${Object.entries(ctx.setores).map(([k,v])=>`${v}(${k})`).join(', ')||'(nenhum cadastrado ainda)'}
 AGENDA: ${JSON.stringify(ctx.eventos)}
 PRÓXIMO ID: ${nextId}
 MEMÓRIAS: ${ctx.memorias.slice(0,20).join(' | ')}
@@ -1194,7 +1223,15 @@ function toast(msg,type='ok',ms=2200){
 // ── WELCOME ──────────────────────────────────────────────
 function initWelcome(){
   const n=eventos.length;const hoje=eventos.filter(e=>e.date===new Date().toISOString().slice(0,10)).length;
-  setTimeout(()=>{addMsg(`Olá, ${me.nome}! 👩‍⚕️<br><br><b>${n} agendamento${n!==1?'s':''}</b> na agenda · <b>${hoje} hoje</b><br><br>Fale naturalmente ou envie um PDF.<br><span style="font-size:11px;color:var(--muted)">Memória ativa · Google Calendar · notificações por email · relatórios</span>`,'bot',{sug:['Relatório de hoje','Agenda da semana','Novo agendamento']});},300);
+  const semNada=!medicos.length||!setores.length;
+  setTimeout(()=>{
+    if(semNada){
+      const faltaM=!medicos.length,faltaS=!setores.length;
+      addMsg(`Olá, ${me.nome}! 👋 Bem-vindo(a) à Ana.<br><br>Antes de começar a agendar, configure rapidamente em <b>Config</b>:${faltaM?'<br>• Pelo menos um <b>médico</b>':''}${faltaS?'<br>• Pelo menos um <b>setor</b>':''}<br><br>Depois disso é só falar naturalmente comigo ou enviar um PDF de pedido médico que eu agendo pra você.`,'bot',{sug:['Ir para Config']});
+    }else{
+      addMsg(`Olá, ${me.nome}! 👩‍⚕️<br><br><b>${n} agendamento${n!==1?'s':''}</b> na agenda · <b>${hoje} hoje</b><br><br>Fale naturalmente ou envie um PDF.<br><span style="font-size:11px;color:var(--muted)">Memória ativa · Google Calendar · notificações por email · relatórios</span>`,'bot',{sug:['Relatório de hoje','Agenda da semana','Novo agendamento']});
+    }
+  },300);
 }
 
 // ── MODAL CLICK OUTSIDE ──────────────────────────────────

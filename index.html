@@ -343,6 +343,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
         <button class="btn sm" id="minha-toggle" onclick="toggleMinhaAgenda()"><i class="ti ti-user-circle"></i> Minha agenda</button>
       </div>
       <button class="btn" onclick="exportPDF()"><i class="ti ti-file-export"></i> Exportar PDF</button>
+      <button class="btn" onclick="openMapaCirurgico()"><i class="ti ti-clipboard-list"></i> Mapa Cirúrgico</button>
       <button class="btn primary" onclick="tab('chat');document.getElementById('minp').focus()"><i class="ti ti-plus"></i> Novo</button>
     </div>
   </div>
@@ -374,6 +375,13 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 
 <!-- CONFIG -->
 <div id="pconfig" class="panel">
+
+  <div class="card" id="org-info-card" style="display:none">
+    <div class="card-title"><i class="ti ti-building" style="color:var(--accent)"></i>Dados do grupo</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Esse nome aparece no cabeçalho do Mapa Cirúrgico e de outros relatórios exportados.</div>
+    <div class="fl" style="margin-bottom:8px"><label>Nome do grupo/clínica</label><input id="org-nome-input" placeholder="ex: Grupo de Anestesia XYZ"></div>
+    <button class="btn primary sm" onclick="saveOrgInfo()"><i class="ti ti-check"></i> Salvar</button>
+  </div>
 
   <div class="card" id="gcal-pessoal-card">
     <div class="card-title"><i class="ti ti-calendar-event" style="color:var(--accent)"></i>Meu Google Calendar pessoal</div>
@@ -494,6 +502,18 @@ html,body{height:100%;background:var(--bg);color:var(--text);
   <div class="ma">
     <button class="btn" onclick="closeEditModal()">Cancelar</button>
     <button class="btn primary" onclick="saveEdit()"><i class="ti ti-check"></i> Salvar</button>
+  </div>
+</div>
+</div>
+
+<div class="modal-bg" id="modal-mapa">
+<div class="modal" style="width:340px">
+  <h3><i class="ti ti-clipboard-list" style="color:var(--accent)"></i>Mapa Cirúrgico</h3>
+  <div class="fl" style="margin-bottom:8px"><label>Data</label><input type="date" id="mapa-data"></div>
+  <div class="login-err" id="mapa-err" style="display:none"></div>
+  <div class="ma">
+    <button class="btn" onclick="closeMapaModal()">Cancelar</button>
+    <button class="btn primary" onclick="gerarMapaCirurgico()"><i class="ti ti-file-export"></i> Gerar PDF</button>
   </div>
 </div>
 </div>
@@ -678,7 +698,7 @@ function tab(n){
   if(n==='agenda')renderAgenda();
   if(n==='relatorios')loadRelatorios();
   if(n==='logs')loadLogs();
-  if(n==='config'){loadCorrecoes();loadGcalCurrent();loadGcalPessoal();}
+  if(n==='config'){loadCorrecoes();loadGcalCurrent();loadGcalPessoal();loadOrgInfo();}
 }
 
 // ── MEMÓRIA ──────────────────────────────────────────────
@@ -1018,6 +1038,66 @@ function exportPDF(){
   const w=window.open('','_blank');if(w){w.document.write(html);w.document.close();}
 }
 
+// ── MAPA CIRÚRGICO ───────────────────────────────────────
+function openMapaCirurgico(){
+  document.getElementById('mapa-data').value=new Date().toISOString().slice(0,10);
+  document.getElementById('mapa-err').style.display='none';
+  document.getElementById('modal-mapa').classList.add('open');
+}
+function closeMapaModal(){
+  document.getElementById('modal-mapa').classList.remove('open');
+}
+async function gerarMapaCirurgico(){
+  const data=document.getElementById('mapa-data').value;
+  const err=document.getElementById('mapa-err');err.style.display='none';
+  if(!data){err.textContent='Selecione uma data.';err.style.display='block';return;}
+  try{
+    const m=await api('GET',`/api/mapa-cirurgico?data=${data}`);
+    closeMapaModal();
+    const dataFmt=new Date(data+'T12:00:00').toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
+    if(!m.salas.length){
+      toast('Nenhum procedimento agendado para essa data.','err');
+      return;
+    }
+    let salasHtml=m.salas.map(s=>{
+      const rows=s.procedimentos.map(p=>{
+        const fimMin=(()=>{const[h,mi]=p.time.split(':').map(Number);const t=h*60+mi+(p.duracao_min||60);return `${String(Math.floor(t/60)%24).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`;})();
+        return `<tr><td class="hcell">${p.time}–${fimMin}</td><td>${p.proc}</td><td>${p.paciente||'—'}</td><td>${p.doc}</td><td>${p.obs||'—'}</td></tr>`;
+      }).join('');
+      return `<div class="sala-block">
+        <div class="sala-hdr" style="background:${s.color};color:${s.text_color}"><i class="ti ti-door"></i> ${s.setor_nome} <span class="sala-count">${s.procedimentos.length} procedimento${s.procedimentos.length!==1?'s':''}</span></div>
+        <table class="mapa-tbl"><tr><th>Horário</th><th>Procedimento</th><th>Paciente</th><th>Médico</th><th>Obs</th></tr>${rows}</table>
+      </div>`;
+    }).join('');
+    const html=`<html><head><meta charset="UTF-8"><title>Mapa Cirúrgico — ${dataFmt}</title><style>
+      body{font-family:Arial,sans-serif;margin:26px;color:#1a1a2e}
+      .hdr{display:flex;align-items:center;gap:14px;border-bottom:2px solid #6C63D4;padding-bottom:14px;margin-bottom:18px}
+      .hdr-logo{width:46px;height:46px;border-radius:10px;background:#EEEDFE;display:flex;align-items:center;justify-content:center;font-size:22px;color:#6C63D4;flex-shrink:0}
+      .hdr h1{font-size:19px;color:#1a1a2e;margin-bottom:2px;text-transform:capitalize}
+      .hdr .sub{font-size:12px;color:#888}
+      .sala-block{margin-bottom:18px;break-inside:avoid}
+      .sala-hdr{padding:7px 12px;border-radius:6px 6px 0 0;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px}
+      .sala-count{margin-left:auto;font-size:10px;font-weight:400;opacity:.75}
+      .mapa-tbl{width:100%;border-collapse:collapse;font-size:11.5px;border:1px solid #e2e2ec;border-top:none}
+      .mapa-tbl th{background:#FAFAFE;color:#3C3489;padding:6px 9px;text-align:left;border-bottom:1px solid #e2e2ec;font-size:10px;font-weight:600}
+      .mapa-tbl td{padding:6px 9px;border-bottom:.5px solid #eee}
+      .hcell{font-weight:600;white-space:nowrap;color:#3C3489}
+      .ftr{margin-top:24px;font-size:9.5px;color:#aaa;text-align:center}
+      @media print{.no-print{display:none}}
+      </style></head><body>
+      <div class="hdr">
+        <div class="hdr-logo"><i class="ti ti-stethoscope"></i></div>
+        <div><h1>${dataFmt}</h1><div class="sub">${m.nome_grupo} · Mapa Cirúrgico · ${m.total} procedimento${m.total!==1?'s':''} · Gerado em ${new Date().toLocaleDateString('pt-BR')}</div></div>
+      </div>
+      <button class="no-print" onclick="window.print()" style="margin-bottom:16px;padding:6px 16px;background:#6C63D4;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:13px">🖨️ Imprimir / Salvar PDF</button>
+      ${salasHtml}
+      <div class="ftr">Gerado automaticamente pela Ana · ${m.nome_grupo}</div>
+      </body></html>`;
+    const w=window.open('','_blank');
+    if(w){w.document.write(html);w.document.close();}
+  }catch(e){err.textContent=e.message||'Erro ao gerar mapa.';err.style.display='block';}
+}
+
 // ── RELATÓRIOS ───────────────────────────────────────────
 let relData=null;
 async function loadRelatorios(){
@@ -1129,6 +1209,22 @@ async function loadCorrecoes(){
     if(!list.length){el.innerHTML='<div style="font-size:11px;color:var(--hint);padding:8px 0">Nenhuma correção registrada ainda. Use o botão "Corrigir" no chat quando a Ana errar algo.</div>';return;}
     el.innerHTML=list.map(c=>`<div class="mem-item" style="font-size:11px;padding:7px 9px"><i class="ti ti-edit"></i><span style="flex:1"><b>${c.campo}</b>: ${c.valor_errado?`evitar "${c.valor_errado}" → `:''}preferir "${c.valor_certo}"<br><span style="color:var(--hint);font-size:10px">${(c.contexto||'').slice(0,80)}</span></span></div>`).join('');
   }catch{}
+}
+async function loadOrgInfo(){
+  if(me?.role!=='admin'){document.getElementById('org-info-card').style.display='none';return;}
+  document.getElementById('org-info-card').style.display='block';
+  try{
+    const info=await api('GET','/api/org/info');
+    document.getElementById('org-nome-input').value=info.nome;
+  }catch(e){toast(e.message,'err');}
+}
+async function saveOrgInfo(){
+  const nome=document.getElementById('org-nome-input').value.trim();
+  if(!nome){toast('Informe um nome.','err');return;}
+  try{
+    await api('POST','/api/org/info',{nome});
+    toast('Nome do grupo salvo.');
+  }catch(e){toast(e.message,'err');}
 }
 async function loadGcalCurrent(){
   try{

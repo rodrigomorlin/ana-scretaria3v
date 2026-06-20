@@ -1026,6 +1026,45 @@ def relatorio_resumo(user=Depends(auth)):
             "por_medico":por_medico,"por_setor":por_setor,
             "por_dia":por_dia,"por_mes":por_mes}
 
+# ── MAPA CIRÚRGICO (organizado por sala/setor) ──────────────
+@app.get("/api/mapa-cirurgico")
+def mapa_cirurgico(data: str, user=Depends(auth)):
+    """Retorna os procedimentos de uma data, agrupados por setor e ordenados por horário —
+    formato de mapa cirúrgico clássico, uma seção por sala."""
+    org_id = user.get("org_id","default")
+    conn = get_db(); c = conn.cursor()
+
+    c.execute(f"SELECT id,nome FROM orgs WHERE id={P()}", (org_id,))
+    org_row = fetchone(c)
+    nome_grupo = org_row["nome"] if org_row else "Grupo de Anestesia"
+
+    c.execute(f"SELECT id,name,color,text_color FROM setores WHERE org_id={P()} ORDER BY name", (org_id,))
+    setores = fetchall(c)
+
+    c.execute(f"""SELECT doc,setor,proc,paciente,time,obs,duracao_min FROM eventos
+                  WHERE date={P()} AND org_id={P()} ORDER BY setor, time""", (data, org_id))
+    eventos = fetchall(c)
+    conn.close()
+
+    mapa = []
+    for s in setores:
+        evs_setor = [e for e in eventos if e["setor"] == s["id"]]
+        if not evs_setor:
+            continue
+        mapa.append({
+            "setor_id": s["id"], "setor_nome": s["name"],
+            "color": s.get("color") or "#CECBF6", "text_color": s.get("text_color") or "#3C3489",
+            "procedimentos": evs_setor,
+        })
+
+    # Eventos cujo setor não bate com nenhum setor cadastrado (setor excluído depois, por exemplo)
+    setores_ids = {s["id"] for s in setores}
+    orfaos = [e for e in eventos if e["setor"] not in setores_ids]
+    if orfaos:
+        mapa.append({"setor_id": "", "setor_nome": "Outros", "color": "#E5E5E5", "text_color": "#444", "procedimentos": orfaos})
+
+    return {"data": data, "nome_grupo": nome_grupo, "total": len(eventos), "salas": mapa}
+
 # ── HISTÓRICO E LOGS ───────────────────────────────────────
 @app.get("/api/historico")
 def list_historico(user=Depends(auth)):
@@ -1248,6 +1287,30 @@ def set_gcal_config(cfg: GCalConfig, user=Depends(auth)):
     set_config("gcal_calendar_id", cfg.calendar_id.strip(), org_id=org_id)
     db_log("INFO", f"Google Calendar ID alterado para: {cfg.calendar_id}", usuario=user["id"], org_id=org_id)
     return {"ok": True, "calendar_id": cfg.calendar_id.strip()}
+
+# ── DADOS DO GRUPO (nome institucional para cabeçalhos de relatórios) ──
+class OrgInfo(BaseModel):
+    nome: str
+
+@app.get("/api/org/info")
+def get_org_info(user=Depends(auth)):
+    org_id = user.get("org_id","default")
+    conn = get_db(); c = conn.cursor()
+    c.execute(f"SELECT id,nome FROM orgs WHERE id={P()}", (org_id,))
+    row = fetchone(c); conn.close()
+    return {"id": org_id, "nome": row["nome"] if row else "Grupo de Anestesia"}
+
+@app.post("/api/org/info")
+def set_org_info(info: OrgInfo, user=Depends(auth)):
+    if user["role"] != "admin":
+        raise HTTPException(403, "Apenas administradores podem alterar essa configuração.")
+    org_id = user.get("org_id","default")
+    nome = info.nome.strip()[:120] or "Grupo de Anestesia"
+    conn = get_db(); c = conn.cursor()
+    c.execute(f"UPDATE orgs SET nome={P()} WHERE id={P()}", (nome, org_id))
+    conn.commit(); conn.close()
+    db_log("INFO", f"Nome do grupo alterado para: {nome}", usuario=user["id"], org_id=org_id)
+    return {"ok": True, "nome": nome}
 
 @app.get("/api/config/gcal/list")
 def list_gcal_calendars(user=Depends(auth)):

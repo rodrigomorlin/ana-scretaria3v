@@ -92,9 +92,13 @@ def init_db():
 
     if USE_POSTGRES:
         stmts = [
+            """CREATE TABLE IF NOT EXISTS orgs (
+                id TEXT PRIMARY KEY, nome TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT NOW())""",
             """CREATE TABLE IF NOT EXISTS usuarios (
                 id TEXT PRIMARY KEY, nome TEXT NOT NULL, pin_hash TEXT NOT NULL,
                 role TEXT DEFAULT 'medico', email TEXT DEFAULT '', medico_id TEXT DEFAULT '',
+                org_id TEXT DEFAULT 'default',
                 created_at TIMESTAMP DEFAULT NOW())""",
             """CREATE TABLE IF NOT EXISTS sessoes (
                 token TEXT PRIMARY KEY, usuario_id TEXT NOT NULL,
@@ -105,40 +109,49 @@ def init_db():
                 time TEXT NOT NULL, obs TEXT DEFAULT '', ai INTEGER DEFAULT 0,
                 criado_por TEXT DEFAULT '', gcal_event_id TEXT DEFAULT '',
                 pdf_filename TEXT DEFAULT '', pdf_data TEXT DEFAULT '',
-                duracao_min INTEGER DEFAULT 60,
+                duracao_min INTEGER DEFAULT 60, org_id TEXT DEFAULT 'default',
                 created_at TIMESTAMP DEFAULT NOW())""",
             """CREATE TABLE IF NOT EXISTS medicos (
                 id TEXT PRIMARY KEY, name TEXT NOT NULL,
-                spec TEXT DEFAULT '', email TEXT DEFAULT '')""",
+                spec TEXT DEFAULT '', email TEXT DEFAULT '', org_id TEXT DEFAULT 'default')""",
             """CREATE TABLE IF NOT EXISTS setores (
                 id TEXT PRIMARY KEY, name TEXT NOT NULL,
-                color TEXT DEFAULT '#CECBF6', text_color TEXT DEFAULT '#3C3489')""",
+                color TEXT DEFAULT '#CECBF6', text_color TEXT DEFAULT '#3C3489',
+                org_id TEXT DEFAULT 'default')""",
             """CREATE TABLE IF NOT EXISTS memorias (
-                id TEXT PRIMARY KEY, texto TEXT NOT NULL UNIQUE,
+                id TEXT PRIMARY KEY, texto TEXT NOT NULL,
                 icone TEXT DEFAULT 'ti-brain', tipo TEXT DEFAULT 'aprendido',
-                uso INTEGER DEFAULT 0, created_at TIMESTAMP DEFAULT NOW())""",
+                uso INTEGER DEFAULT 0, org_id TEXT DEFAULT 'default',
+                created_at TIMESTAMP DEFAULT NOW())""",
             """CREATE TABLE IF NOT EXISTS historico (
                 id SERIAL PRIMARY KEY, doc TEXT, setor TEXT, proc TEXT,
                 paciente TEXT, date TEXT, time TEXT, obs TEXT,
-                criado_por TEXT DEFAULT '', created_at TIMESTAMP DEFAULT NOW())""",
+                criado_por TEXT DEFAULT '', org_id TEXT DEFAULT 'default',
+                created_at TIMESTAMP DEFAULT NOW())""",
             """CREATE TABLE IF NOT EXISTS logs (
                 id SERIAL PRIMARY KEY, nivel TEXT, mensagem TEXT,
-                usuario TEXT DEFAULT '', ip TEXT DEFAULT '',
+                usuario TEXT DEFAULT '', ip TEXT DEFAULT '', org_id TEXT DEFAULT 'default',
                 created_at TIMESTAMP DEFAULT NOW())""",
             """CREATE TABLE IF NOT EXISTS correcoes (
                 id SERIAL PRIMARY KEY, contexto TEXT, campo TEXT,
                 valor_errado TEXT, valor_certo TEXT,
-                usuario TEXT DEFAULT '', created_at TIMESTAMP DEFAULT NOW())""",
+                usuario TEXT DEFAULT '', org_id TEXT DEFAULT 'default',
+                created_at TIMESTAMP DEFAULT NOW())""",
             """CREATE TABLE IF NOT EXISTS config (
-                chave TEXT PRIMARY KEY, valor TEXT DEFAULT '')""",
+                chave TEXT NOT NULL, valor TEXT DEFAULT '', org_id TEXT DEFAULT 'default',
+                PRIMARY KEY (chave, org_id))""",
         ]
         for s in stmts:
             c.execute(s)
     else:
         c.executescript("""
+CREATE TABLE IF NOT EXISTS orgs (
+    id TEXT PRIMARY KEY, nome TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS usuarios (
     id TEXT PRIMARY KEY, nome TEXT NOT NULL, pin_hash TEXT NOT NULL,
     role TEXT DEFAULT 'medico', email TEXT DEFAULT '', medico_id TEXT DEFAULT '',
+    org_id TEXT DEFAULT 'default',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS sessoes (
     token TEXT PRIMARY KEY, usuario_id TEXT NOT NULL, expires_at TEXT NOT NULL);
@@ -148,37 +161,52 @@ CREATE TABLE IF NOT EXISTS eventos (
     time TEXT NOT NULL, obs TEXT DEFAULT '', ai INTEGER DEFAULT 0,
     criado_por TEXT DEFAULT '', gcal_event_id TEXT DEFAULT '',
     pdf_filename TEXT DEFAULT '', pdf_data TEXT DEFAULT '',
-    duracao_min INTEGER DEFAULT 60,
+    duracao_min INTEGER DEFAULT 60, org_id TEXT DEFAULT 'default',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS medicos (
-    id TEXT PRIMARY KEY, name TEXT NOT NULL, spec TEXT DEFAULT '', email TEXT DEFAULT '');
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, spec TEXT DEFAULT '', email TEXT DEFAULT '',
+    org_id TEXT DEFAULT 'default');
 CREATE TABLE IF NOT EXISTS setores (
     id TEXT PRIMARY KEY, name TEXT NOT NULL,
-    color TEXT DEFAULT '#CECBF6', text_color TEXT DEFAULT '#3C3489');
+    color TEXT DEFAULT '#CECBF6', text_color TEXT DEFAULT '#3C3489',
+    org_id TEXT DEFAULT 'default');
 CREATE TABLE IF NOT EXISTS memorias (
-    id TEXT PRIMARY KEY, texto TEXT NOT NULL UNIQUE,
+    id TEXT PRIMARY KEY, texto TEXT NOT NULL,
     icone TEXT DEFAULT 'ti-brain', tipo TEXT DEFAULT 'aprendido',
-    uso INTEGER DEFAULT 0, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
+    uso INTEGER DEFAULT 0, org_id TEXT DEFAULT 'default',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS historico (
     id INTEGER PRIMARY KEY AUTOINCREMENT, doc TEXT, setor TEXT, proc TEXT,
     paciente TEXT, date TEXT, time TEXT, obs TEXT, criado_por TEXT DEFAULT '',
+    org_id TEXT DEFAULT 'default',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT, nivel TEXT, mensagem TEXT,
-    usuario TEXT DEFAULT '', ip TEXT DEFAULT '',
+    usuario TEXT DEFAULT '', ip TEXT DEFAULT '', org_id TEXT DEFAULT 'default',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS correcoes (
     id INTEGER PRIMARY KEY AUTOINCREMENT, contexto TEXT, campo TEXT,
     valor_errado TEXT, valor_certo TEXT, usuario TEXT DEFAULT '',
+    org_id TEXT DEFAULT 'default',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS config (
-    chave TEXT PRIMARY KEY, valor TEXT DEFAULT '');
+    chave TEXT NOT NULL, valor TEXT DEFAULT '', org_id TEXT DEFAULT 'default',
+    PRIMARY KEY (chave, org_id));
 """)
 
     # Índices
     for idx in [
         "CREATE INDEX IF NOT EXISTS idx_ev_date ON eventos(date)",
         "CREATE INDEX IF NOT EXISTS idx_hist ON historico(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_ev_org ON eventos(org_id, date)",
+        "CREATE INDEX IF NOT EXISTS idx_ev_org_doc ON eventos(org_id, doc)",
+        "CREATE INDEX IF NOT EXISTS idx_medicos_org ON medicos(org_id)",
+        "CREATE INDEX IF NOT EXISTS idx_setores_org ON setores(org_id)",
+        "CREATE INDEX IF NOT EXISTS idx_memorias_org ON memorias(org_id)",
+        "CREATE INDEX IF NOT EXISTS idx_usuarios_org ON usuarios(org_id)",
+        "CREATE INDEX IF NOT EXISTS idx_logs_org ON logs(org_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_correcoes_org ON correcoes(org_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_sessoes_token ON sessoes(token)",
     ]:
         try: c.execute(idx)
         except: pass
@@ -193,40 +221,31 @@ CREATE TABLE IF NOT EXISTS config (
         "ALTER TABLE usuarios ADD COLUMN gcal_refresh_token TEXT DEFAULT ''",
         "ALTER TABLE usuarios ADD COLUMN gcal_token_expiry TEXT DEFAULT ''",
         "ALTER TABLE usuarios ADD COLUMN gcal_email TEXT DEFAULT ''",
+        "ALTER TABLE usuarios ADD COLUMN org_id TEXT DEFAULT 'default'",
+        "ALTER TABLE eventos ADD COLUMN org_id TEXT DEFAULT 'default'",
+        "ALTER TABLE medicos ADD COLUMN org_id TEXT DEFAULT 'default'",
+        "ALTER TABLE setores ADD COLUMN org_id TEXT DEFAULT 'default'",
+        "ALTER TABLE memorias ADD COLUMN org_id TEXT DEFAULT 'default'",
+        "ALTER TABLE historico ADD COLUMN org_id TEXT DEFAULT 'default'",
+        "ALTER TABLE logs ADD COLUMN org_id TEXT DEFAULT 'default'",
+        "ALTER TABLE correcoes ADD COLUMN org_id TEXT DEFAULT 'default'",
     ]:
         try:
             c.execute(alter); conn.commit()
         except Exception:
             pass
 
+    # Garante que existe a organização "default" (para onde vai todo dado pré-existente)
+    c.execute(f"SELECT id FROM orgs WHERE id={P()}", ("default",))
+    if not fetchone(c):
+        c.execute(f"INSERT INTO orgs (id,nome) VALUES ({Ps(2)})", ("default", "Grupo Principal"))
+        conn.commit()
+
     p = P()
     # Nenhum admin é criado automaticamente — o primeiro acesso é feito
     # pela tela de "setup" (ver /api/setup-needed e /api/setup)
-
-    c.execute("SELECT COUNT(*) FROM medicos")
-    if c.fetchone()[0] == 0:
-        for r in [("d1","Dr. Carlos Mendes","Anestesia Geral",""),
-                  ("d2","Dra. Ana Souza","Obstetrícia",""),
-                  ("d3","Dr. Rafael Lima","Bloqueios Regionais",""),
-                  ("d4","Dra. Patrícia Neves","UTI / Urgência","")]:
-            c.execute(f"INSERT INTO medicos VALUES ({Ps(4)})", r)
-
-    c.execute("SELECT COUNT(*) FROM setores")
-    if c.fetchone()[0] == 0:
-        for r in [("c","Centro Cirúrgico","#CECBF6","#3C3489"),
-                  ("t","UTI","#9FE1CB","#085041"),
-                  ("a","Ambulatório","#FAC775","#633806"),
-                  ("p","Pronto-socorro","#F4C0D1","#72243E"),
-                  ("b","Endoscopia","#B5D4F4","#0C447C")]:
-            c.execute(f"INSERT INTO setores VALUES ({Ps(4)})", r)
-
-    c.execute("SELECT COUNT(*) FROM memorias")
-    if c.fetchone()[0] == 0:
-        for r in [("m1","CC = Centro Cirúrgico","ti-map-pin","padrao"),
-                  ("m2","Raqui = Raquianestesia","ti-brain","padrao"),
-                  ("m3","AG = Anestesia Geral","ti-brain","padrao"),
-                  ("m4","Cesáreas costumam ser às 07h","ti-clock","padrao")]:
-            c.execute(f"INSERT INTO memorias (id,texto,icone,tipo) VALUES ({Ps(4)})", r)
+    # Médicos, setores e memórias NÃO são mais pré-populados automaticamente:
+    # cada nova organização começa vazia e o admin cadastra o que for relevante para o grupo dela.
 
     conn.commit(); conn.close()
     log.info("Banco inicializado com sucesso")
@@ -256,36 +275,36 @@ def auth(request: Request):
     if not user: raise HTTPException(401, "Não autorizado.")
     return user
 
-def db_log(nivel, msg, usuario="", ip=""):
+def db_log(nivel, msg, usuario="", ip="", org_id="default"):
     try:
         conn = get_db(); c = conn.cursor()
-        c.execute(f"INSERT INTO logs (nivel,mensagem,usuario,ip) VALUES ({Ps(4)})",
-                  (nivel, msg, usuario, ip))
+        c.execute(f"INSERT INTO logs (nivel,mensagem,usuario,ip,org_id) VALUES ({Ps(5)})",
+                  (nivel, msg, usuario, ip, org_id))
         conn.commit(); conn.close()
     except: pass
 
-# ── CONFIG PERSISTENTE (chave/valor no banco) ───────────────
-def get_config(chave: str, default: str = "") -> str:
+# ── CONFIG PERSISTENTE (chave/valor no banco, por organização) ──
+def get_config(chave: str, default: str = "", org_id: str = "default") -> str:
     try:
         conn = get_db(); c = conn.cursor()
-        c.execute(f"SELECT valor FROM config WHERE chave={P()}", (chave,))
+        c.execute(f"SELECT valor FROM config WHERE chave={P()} AND org_id={P()}", (chave, org_id))
         row = fetchone(c); conn.close()
         return row["valor"] if row and row.get("valor") else default
     except Exception:
         return default
 
-def set_config(chave: str, valor: str):
+def set_config(chave: str, valor: str, org_id: str = "default"):
     conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT chave FROM config WHERE chave={P()}", (chave,))
+    c.execute(f"SELECT chave FROM config WHERE chave={P()} AND org_id={P()}", (chave, org_id))
     if fetchone(c):
-        c.execute(f"UPDATE config SET valor={P()} WHERE chave={P()}", (valor, chave))
+        c.execute(f"UPDATE config SET valor={P()} WHERE chave={P()} AND org_id={P()}", (valor, chave, org_id))
     else:
-        c.execute(f"INSERT INTO config (chave,valor) VALUES ({Ps(2)})", (chave, valor))
+        c.execute(f"INSERT INTO config (chave,valor,org_id) VALUES ({Ps(3)})", (chave, valor, org_id))
     conn.commit(); conn.close()
 
-def get_gcal_id() -> str:
+def get_gcal_id(org_id: str = "default") -> str:
     """Prioriza o valor configurado pelo usuário no app; cai para a env var como fallback."""
-    return get_config("gcal_calendar_id", GCAL_ID)
+    return get_config("gcal_calendar_id", GCAL_ID, org_id=org_id)
 
 # ── EMAIL ──────────────────────────────────────────────────
 async def send_email(to, subject, body):
@@ -425,11 +444,11 @@ def _build_gcal_service(user_access_token: Optional[str] = None):
         return build("calendar", "v3", credentials=creds)
     return None
 
-async def gcal_create(ev, setor_name, criado_por_id: Optional[str] = None):
+async def gcal_create(ev, setor_name, criado_por_id: Optional[str] = None, org_id: str = "default"):
     # Prioriza o calendário pessoal do médico que criou o evento (OAuth), senão usa a conta de serviço/calendário do grupo
     user_token = get_user_google_token(criado_por_id) if criado_por_id else None
-    calendar_id = "primary" if user_token else get_gcal_id()
-    log.info(f"GCal criar: criado_por_id={criado_por_id}, tem_token_pessoal={bool(user_token)}, calendar_id={calendar_id}")
+    calendar_id = "primary" if user_token else get_gcal_id(org_id)
+    log.info(f"GCal criar: criado_por_id={criado_por_id}, org_id={org_id}, tem_token_pessoal={bool(user_token)}, calendar_id={calendar_id}")
     try:
         svc = _build_gcal_service(user_token)
         if not svc:
@@ -452,10 +471,10 @@ async def gcal_create(ev, setor_name, criado_por_id: Optional[str] = None):
         log.error(f"GCal criar — FALHA: {type(e).__name__}: {e}")
         return ""
 
-async def gcal_delete(gcal_id, criado_por_id: Optional[str] = None):
+async def gcal_delete(gcal_id, criado_por_id: Optional[str] = None, org_id: str = "default"):
     if not gcal_id: return
     user_token = get_user_google_token(criado_por_id) if criado_por_id else None
-    calendar_id = "primary" if user_token else get_gcal_id()
+    calendar_id = "primary" if user_token else get_gcal_id(org_id)
     try:
         svc = _build_gcal_service(user_token)
         if not svc: return
@@ -547,10 +566,11 @@ def setup(data: SetupData, request: Request):
 
 class SignupData(BaseModel):
     usuario_id: str; nome: str; pin: str
+    org_nome: Optional[str] = ""
 
 @app.post("/api/signup")
 def signup(data: SignupData, request: Request):
-    """Cadastro público — qualquer pessoa pode criar uma conta própria, sempre com papel 'médico'."""
+    """Cadastro público — cria um NOVO grupo (organização) isolado, e o usuário vira admin desse grupo."""
     uid = data.usuario_id.lower().strip().replace(" ", "")
     nome = data.nome.strip()
     if not uid or not nome or not data.pin or len(data.pin) < 4:
@@ -562,11 +582,17 @@ def signup(data: SignupData, request: Request):
     if fetchone(c):
         conn.close()
         raise HTTPException(400, "Esse ID de acesso já está em uso. Escolha outro.")
-    c.execute(f"INSERT INTO usuarios (id,nome,pin_hash,role,email) VALUES ({Ps(5)})",
-              (uid, nome, hash_pin(data.pin), "medico", ""))
+
+    org_id = f"org_{secrets.token_hex(6)}"
+    org_nome = data.org_nome.strip() if data.org_nome else f"Grupo de {nome}"
+    c.execute(f"INSERT INTO orgs (id,nome) VALUES ({Ps(2)})", (org_id, org_nome))
+    # Cada nova conta criada pelo cadastro público vira ADMIN do seu próprio grupo,
+    # já que ela está fundando uma organização nova e isolada.
+    c.execute(f"INSERT INTO usuarios (id,nome,pin_hash,role,email,org_id) VALUES ({Ps(6)})",
+              (uid, nome, hash_pin(data.pin), "admin", "", org_id))
     conn.commit(); conn.close()
-    db_log("INFO", f"Nova conta criada via cadastro público: {uid}")
-    log.info(f"Cadastro público: usuário {uid} ({nome}) criado como médico")
+    db_log("INFO", f"Novo grupo criado via cadastro público: {org_nome} ({org_id})", usuario=uid, org_id=org_id)
+    log.info(f"Cadastro público: usuário {uid} ({nome}) criou o grupo {org_id}")
     return {"ok": True}
 
 @app.post("/api/login")
@@ -611,7 +637,7 @@ def change_pin(data: ChangePin, user=Depends(auth)):
 def list_usuarios(user=Depends(auth)):
     if user["role"]!="admin": raise HTTPException(403,"Acesso negado.")
     conn = get_db(); c = conn.cursor()
-    c.execute("SELECT id,nome,role,email,medico_id,created_at FROM usuarios ORDER BY nome")
+    c.execute(f"SELECT id,nome,role,email,medico_id,created_at FROM usuarios WHERE org_id={P()} ORDER BY nome", (user.get("org_id","default"),))
     rows = fetchall(c); conn.close(); return rows
 
 @app.post("/api/usuarios")
@@ -619,8 +645,8 @@ def create_usuario(u: Usuario, user=Depends(auth)):
     if user["role"]!="admin": raise HTTPException(403,"Acesso negado.")
     conn = get_db(); c = conn.cursor()
     try:
-        c.execute(f"INSERT INTO usuarios (id,nome,pin_hash,role,email,medico_id) VALUES ({Ps(6)})",
-                  (u.id.lower(), u.nome, hash_pin(u.pin), u.role or "medico", u.email or "", u.medico_id or ""))
+        c.execute(f"INSERT INTO usuarios (id,nome,pin_hash,role,email,medico_id,org_id) VALUES ({Ps(7)})",
+                  (u.id.lower(), u.nome, hash_pin(u.pin), u.role or "medico", u.email or "", u.medico_id or "", user.get("org_id","default")))
         conn.commit()
     except Exception: raise HTTPException(400,"ID já existe.")
     conn.close(); return {"ok": True}
@@ -629,14 +655,19 @@ def create_usuario(u: Usuario, user=Depends(auth)):
 def delete_usuario(uid: str, user=Depends(auth)):
     if user["role"]!="admin": raise HTTPException(403,"Acesso negado.")
     if uid==user["id"]: raise HTTPException(400,"Não pode remover a si mesmo.")
+    org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
-    c.execute(f"DELETE FROM usuarios WHERE id={P()}", (uid,))
+    c.execute(f"SELECT id FROM usuarios WHERE id={P()} AND org_id={P()}", (uid, org_id))
+    if not fetchone(c):
+        conn.close()
+        raise HTTPException(404, "Usuário não encontrado neste grupo.")
+    c.execute(f"DELETE FROM usuarios WHERE id={P()} AND org_id={P()}", (uid, org_id))
     conn.commit(); conn.close(); return {"ok": True}
 
 # ── EVENTOS ────────────────────────────────────────────────
-def find_overlap(c, doc: str, date: str, time: str, duracao_min: int, exclude_id: Optional[int] = None):
+def find_overlap(c, doc: str, date: str, time: str, duracao_min: int, org_id: str, exclude_id: Optional[int] = None):
     """Retorna o evento que sobrepõe o intervalo [time, time+duracao_min) do mesmo médico no mesmo dia, ou None."""
-    c.execute(f"SELECT id,proc,time,duracao_min,paciente FROM eventos WHERE doc={P()} AND date={P()}", (doc, date))
+    c.execute(f"SELECT id,proc,time,duracao_min,paciente FROM eventos WHERE doc={P()} AND date={P()} AND org_id={P()}", (doc, date, org_id))
     existentes = fetchall(c)
     novo_ini = _time_to_min(time)
     novo_fim = novo_ini + max(duracao_min or 60, 1)
@@ -653,13 +684,14 @@ def find_overlap(c, doc: str, date: str, time: str, duracao_min: int, exclude_id
 @app.get("/api/eventos")
 def list_eventos(user=Depends(auth)):
     conn = get_db(); c = conn.cursor()
-    c.execute("SELECT * FROM eventos ORDER BY date, time")
+    c.execute(f"SELECT * FROM eventos WHERE org_id={P()} ORDER BY date, time", (user.get("org_id","default"),))
     rows = fetchall(c); conn.close(); return rows
 
 @app.post("/api/eventos")
 async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=Depends(auth)):
+    org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
-    cf = find_overlap(c, ev.doc, ev.date, ev.time, ev.duracao_min or 60)
+    cf = find_overlap(c, ev.doc, ev.date, ev.time, ev.duracao_min or 60, org_id)
     if cf:
         conn.close()
         cf_ini = cf["time"]
@@ -668,37 +700,37 @@ async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=
         cf_fim = f"{cf_fim_min//60:02d}:{cf_fim_min%60:02d}"
         raise HTTPException(400, f"Conflito: {ev.doc} já tem '{cf['proc']}' das {cf_ini} às {cf_fim} (paciente {cf.get('paciente') or '—'}).")
 
-    # Busca setor e email do médico
-    c.execute(f"SELECT name FROM setores WHERE id={P()}", (ev.setor,))
+    # Busca setor e email do médico (dentro do mesmo grupo)
+    c.execute(f"SELECT name FROM setores WHERE id={P()} AND org_id={P()}", (ev.setor, org_id))
     sr = fetchone(c); sname = sr["name"] if sr else ev.setor
-    c.execute(f"SELECT email FROM medicos WHERE name={P()}", (ev.doc,))
+    c.execute(f"SELECT email FROM medicos WHERE name={P()} AND org_id={P()}", (ev.doc, org_id))
     mr = fetchone(c); med_email = mr["email"] if mr else ""
 
     gcal_id = ""
     # Tenta usar o calendário pessoal do usuário (OAuth) ou cai para a conta de serviço/calendário do grupo
     if get_user_google_token(user["id"]) or GCAL_CREDS:
-        gcal_id = await gcal_create(ev.dict(), sname, criado_por_id=user["id"])
+        gcal_id = await gcal_create(ev.dict(), sname, criado_por_id=user["id"], org_id=org_id)
 
-    c.execute(f"""INSERT INTO eventos (doc,setor,proc,paciente,date,time,obs,ai,criado_por,gcal_event_id,pdf_filename,pdf_data,duracao_min)
-                  VALUES ({Ps(13)})""",
+    c.execute(f"""INSERT INTO eventos (doc,setor,proc,paciente,date,time,obs,ai,criado_por,gcal_event_id,pdf_filename,pdf_data,duracao_min,org_id)
+                  VALUES ({Ps(14)})""",
               (ev.doc, ev.setor, ev.proc, ev.paciente or "", ev.date, ev.time,
                ev.obs or "", int(ev.ai or 1), user["id"], gcal_id,
                (ev.pdf_filename or "")[:200], (ev.pdf_data or "")[:3000000],
-               ev.duracao_min or 60))
+               ev.duracao_min or 60, org_id))
 
     if USE_POSTGRES:
         c.execute("SELECT lastval()"); new_id = c.fetchone()[0]
     else:
         new_id = c.lastrowid
 
-    c.execute(f"""INSERT INTO historico (doc,setor,proc,paciente,date,time,obs,criado_por)
-                  VALUES ({Ps(8)})""",
+    c.execute(f"""INSERT INTO historico (doc,setor,proc,paciente,date,time,obs,criado_por,org_id)
+                  VALUES ({Ps(9)})""",
               (ev.doc, ev.setor, ev.proc, ev.paciente or "",
-               ev.date, ev.time, ev.obs or "", user["id"]))
+               ev.date, ev.time, ev.obs or "", user["id"], org_id))
     conn.commit(); conn.close()
 
     db_log("INFO", f"Agendado: {ev.proc} | {ev.paciente} | {ev.date} {ev.time} | {ev.doc}",
-           usuario=user["id"])
+           usuario=user["id"], org_id=org_id)
 
     if SMTP_HOST and med_email:
         bg.add_task(send_email, med_email,
@@ -709,30 +741,32 @@ async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=
 
 @app.delete("/api/eventos/{ev_id}")
 async def delete_evento(ev_id: int, bg: BackgroundTasks, user=Depends(auth)):
+    org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT * FROM eventos WHERE id={P()}", (ev_id,))
+    c.execute(f"SELECT * FROM eventos WHERE id={P()} AND org_id={P()}", (ev_id, org_id))
     ev = fetchone(c)
     if not ev: conn.close(); raise HTTPException(404,"Não encontrado.")
     gcal_id = ev.get("gcal_event_id","")
     criado_por = ev.get("criado_por","")
-    c.execute(f"DELETE FROM eventos WHERE id={P()}", (ev_id,))
+    c.execute(f"DELETE FROM eventos WHERE id={P()} AND org_id={P()}", (ev_id, org_id))
     conn.commit(); conn.close()
-    db_log("INFO", f"Cancelado: {ev['proc']} | {ev['date']}", usuario=user["id"])
-    if gcal_id: bg.add_task(gcal_delete, gcal_id, criado_por)
+    db_log("INFO", f"Cancelado: {ev['proc']} | {ev['date']}", usuario=user["id"], org_id=org_id)
+    if gcal_id: bg.add_task(gcal_delete, gcal_id, criado_por, org_id)
     return {"ok": True}
 
 @app.get("/api/eventos/{ev_id}")
 def get_evento(ev_id: int, user=Depends(auth)):
     conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT * FROM eventos WHERE id={P()}", (ev_id,))
+    c.execute(f"SELECT * FROM eventos WHERE id={P()} AND org_id={P()}", (ev_id, user.get("org_id","default")))
     ev = fetchone(c); conn.close()
     if not ev: raise HTTPException(404,"Não encontrado.")
     return ev
 
 @app.put("/api/eventos/{ev_id}")
 async def update_evento(ev_id: int, ev: EventoUpdate, bg: BackgroundTasks, user=Depends(auth)):
+    org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT * FROM eventos WHERE id={P()}", (ev_id,))
+    c.execute(f"SELECT * FROM eventos WHERE id={P()} AND org_id={P()}", (ev_id, org_id))
     current = fetchone(c)
     if not current: conn.close(); raise HTTPException(404,"Não encontrado.")
 
@@ -748,7 +782,7 @@ async def update_evento(ev_id: int, ev: EventoUpdate, bg: BackgroundTasks, user=
     }
 
     # Verifica sobreposição (ignorando o próprio evento)
-    cf = find_overlap(c, merged["doc"], merged["date"], merged["time"], merged["duracao_min"], exclude_id=ev_id)
+    cf = find_overlap(c, merged["doc"], merged["date"], merged["time"], merged["duracao_min"], org_id, exclude_id=ev_id)
     if cf:
         conn.close()
         cf_ini = cf["time"]
@@ -757,27 +791,27 @@ async def update_evento(ev_id: int, ev: EventoUpdate, bg: BackgroundTasks, user=
         raise HTTPException(400, f"Conflito: {merged['doc']} já tem '{cf['proc']}' das {cf_ini} às {cf_fim}.")
 
     c.execute(f"""UPDATE eventos SET doc={P()},setor={P()},proc={P()},paciente={P()},
-                  date={P()},time={P()},obs={P()},duracao_min={P()} WHERE id={P()}""",
+                  date={P()},time={P()},obs={P()},duracao_min={P()} WHERE id={P()} AND org_id={P()}""",
               (merged["doc"], merged["setor"], merged["proc"], merged["paciente"] or "",
-               merged["date"], merged["time"], merged["obs"] or "", merged["duracao_min"], ev_id))
+               merged["date"], merged["time"], merged["obs"] or "", merged["duracao_min"], ev_id, org_id))
     conn.commit(); conn.close()
     db_log("INFO", f"Editado: evento #{ev_id} → {merged['proc']} | {merged['date']} {merged['time']}",
-           usuario=user["id"])
+           usuario=user["id"], org_id=org_id)
 
     # Atualiza Google Calendar: remove o antigo e cria novo (mais simples e confiável)
     old_gcal = current.get("gcal_event_id","")
     criado_por = current.get("criado_por","")
     usa_gcal = bool(get_user_google_token(criado_por) or GCAL_CREDS)
     if usa_gcal and old_gcal:
-        bg.add_task(gcal_delete, old_gcal, criado_por)
+        bg.add_task(gcal_delete, old_gcal, criado_por, org_id)
     if usa_gcal:
         conn2 = get_db(); c2 = conn2.cursor()
-        c2.execute(f"SELECT name FROM setores WHERE id={P()}", (merged["setor"],))
+        c2.execute(f"SELECT name FROM setores WHERE id={P()} AND org_id={P()}", (merged["setor"], org_id))
         sr = fetchone(c2); conn2.close()
         sname = sr["name"] if sr else merged["setor"]
-        new_gcal = await gcal_create(merged, sname, criado_por_id=criado_por)
+        new_gcal = await gcal_create(merged, sname, criado_por_id=criado_por, org_id=org_id)
         conn3 = get_db(); c3 = conn3.cursor()
-        c3.execute(f"UPDATE eventos SET gcal_event_id={P()} WHERE id={P()}", (new_gcal, ev_id))
+        c3.execute(f"UPDATE eventos SET gcal_event_id={P()} WHERE id={P()} AND org_id={P()}", (new_gcal, ev_id, org_id))
         conn3.commit(); conn3.close()
 
     return {"id": ev_id, **merged}
@@ -786,14 +820,15 @@ async def update_evento(ev_id: int, ev: EventoUpdate, bg: BackgroundTasks, user=
 @app.get("/api/medicos")
 def list_medicos(user=Depends(auth)):
     conn = get_db(); c = conn.cursor()
-    c.execute("SELECT * FROM medicos ORDER BY name")
+    c.execute(f"SELECT * FROM medicos WHERE org_id={P()} ORDER BY name", (user.get("org_id","default"),))
     rows = fetchall(c); conn.close(); return rows
 
 @app.post("/api/medicos")
 def create_medico(m: Medico, user=Depends(auth)):
+    org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
     try:
-        c.execute(f"INSERT INTO medicos VALUES ({Ps(4)})", (m.id, m.name, m.spec or "", m.email or ""))
+        c.execute(f"INSERT INTO medicos (id,name,spec,email,org_id) VALUES ({Ps(5)})", (m.id, m.name, m.spec or "", m.email or "", org_id))
         conn.commit()
     except: raise HTTPException(400,"ID já existe.")
     conn.close(); return m
@@ -801,28 +836,29 @@ def create_medico(m: Medico, user=Depends(auth)):
 @app.put("/api/medicos/{mid}")
 def update_medico(mid: str, m: Medico, user=Depends(auth)):
     conn = get_db(); c = conn.cursor()
-    c.execute(f"UPDATE medicos SET name={P()},spec={P()},email={P()} WHERE id={P()}",
-              (m.name, m.spec or "", m.email or "", mid))
+    c.execute(f"UPDATE medicos SET name={P()},spec={P()},email={P()} WHERE id={P()} AND org_id={P()}",
+              (m.name, m.spec or "", m.email or "", mid, user.get("org_id","default")))
     conn.commit(); conn.close(); return m
 
 @app.delete("/api/medicos/{mid}")
 def delete_medico(mid: str, user=Depends(auth)):
     conn = get_db(); c = conn.cursor()
-    c.execute(f"DELETE FROM medicos WHERE id={P()}", (mid,))
+    c.execute(f"DELETE FROM medicos WHERE id={P()} AND org_id={P()}", (mid, user.get("org_id","default")))
     conn.commit(); conn.close(); return {"ok": True}
 
 # ── SETORES ────────────────────────────────────────────────
 @app.get("/api/setores")
 def list_setores(user=Depends(auth)):
     conn = get_db(); c = conn.cursor()
-    c.execute("SELECT * FROM setores ORDER BY name")
+    c.execute(f"SELECT * FROM setores WHERE org_id={P()} ORDER BY name", (user.get("org_id","default"),))
     rows = fetchall(c); conn.close(); return rows
 
 @app.post("/api/setores")
 def create_setor(s: Setor, user=Depends(auth)):
+    org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
     try:
-        c.execute(f"INSERT INTO setores VALUES ({Ps(4)})", (s.id, s.name, s.color, s.text_color))
+        c.execute(f"INSERT INTO setores (id,name,color,text_color,org_id) VALUES ({Ps(5)})", (s.id, s.name, s.color, s.text_color, org_id))
         conn.commit()
     except: raise HTTPException(400,"Código já existe.")
     conn.close(); return s
@@ -830,65 +866,68 @@ def create_setor(s: Setor, user=Depends(auth)):
 @app.delete("/api/setores/{sid}")
 def delete_setor(sid: str, user=Depends(auth)):
     conn = get_db(); c = conn.cursor()
-    c.execute(f"DELETE FROM setores WHERE id={P()}", (sid,))
+    c.execute(f"DELETE FROM setores WHERE id={P()} AND org_id={P()}", (sid, user.get("org_id","default")))
     conn.commit(); conn.close(); return {"ok": True}
 
 # ── MEMÓRIAS ───────────────────────────────────────────────
 @app.get("/api/memorias")
 def list_memorias(user=Depends(auth)):
     conn = get_db(); c = conn.cursor()
-    c.execute("SELECT * FROM memorias ORDER BY uso DESC, created_at DESC LIMIT 40")
+    c.execute(f"SELECT * FROM memorias WHERE org_id={P()} ORDER BY uso DESC, created_at DESC LIMIT 40", (user.get("org_id","default"),))
     rows = fetchall(c); conn.close(); return rows
 
 @app.post("/api/memorias")
 def create_memoria(m: Memoria, user=Depends(auth)):
+    org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
-    try:
-        c.execute(f"INSERT INTO memorias (id,texto,icone,tipo) VALUES ({Ps(4)})",
-                  (m.id, m.texto, m.icone or "ti-brain", m.tipo or "aprendido"))
-        conn.commit()
-    except:
-        c.execute(f"UPDATE memorias SET uso=uso+1 WHERE texto={P()}", (m.texto,))
-        conn.commit()
+    c.execute(f"SELECT id FROM memorias WHERE texto={P()} AND org_id={P()}", (m.texto, org_id))
+    existing = fetchone(c)
+    if existing:
+        c.execute(f"UPDATE memorias SET uso=uso+1 WHERE id={P()}", (existing["id"],))
+    else:
+        c.execute(f"INSERT INTO memorias (id,texto,icone,tipo,org_id) VALUES ({Ps(5)})",
+                  (m.id, m.texto, m.icone or "ti-brain", m.tipo or "aprendido", org_id))
+    conn.commit()
     conn.close(); return m
 
 @app.delete("/api/memorias/{mid}")
 def delete_memoria(mid: str, user=Depends(auth)):
     conn = get_db(); c = conn.cursor()
-    c.execute(f"DELETE FROM memorias WHERE id={P()}", (mid,))
+    c.execute(f"DELETE FROM memorias WHERE id={P()} AND org_id={P()}", (mid, user.get("org_id","default")))
     conn.commit(); conn.close(); return {"ok": True}
 
 @app.delete("/api/memorias")
 def clear_memorias(user=Depends(auth)):
     if user["role"]!="admin": raise HTTPException(403,"Acesso negado.")
     conn = get_db(); c = conn.cursor()
-    c.execute(f"DELETE FROM memorias WHERE tipo != {P()}", ("padrao",))
+    c.execute(f"DELETE FROM memorias WHERE tipo != {P()} AND org_id={P()}", ("padrao", user.get("org_id","default")))
     conn.commit(); conn.close(); return {"ok": True}
 
 # ── CORREÇÕES (aprendizado a partir de erros) ───────────────
 @app.post("/api/correcoes")
 def create_correcao(c_in: Correcao, user=Depends(auth)):
+    org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
-    c.execute(f"""INSERT INTO correcoes (contexto,campo,valor_errado,valor_certo,usuario)
-                  VALUES ({Ps(5)})""",
+    c.execute(f"""INSERT INTO correcoes (contexto,campo,valor_errado,valor_certo,usuario,org_id)
+                  VALUES ({Ps(6)})""",
               (c_in.contexto[:300], c_in.campo[:50], (c_in.valor_errado or "")[:200],
-               c_in.valor_certo[:200], user["id"]))
+               c_in.valor_certo[:200], user["id"], org_id))
     conn.commit(); conn.close()
-    db_log("INFO", f"Correção registrada: {c_in.campo} → {c_in.valor_certo}", usuario=user["id"])
+    db_log("INFO", f"Correção registrada: {c_in.campo} → {c_in.valor_certo}", usuario=user["id"], org_id=org_id)
     return {"ok": True}
 
 @app.get("/api/correcoes")
 def list_correcoes(user=Depends(auth)):
     conn = get_db(); c = conn.cursor()
-    c.execute("SELECT * FROM correcoes ORDER BY created_at DESC LIMIT 30")
+    c.execute(f"SELECT * FROM correcoes WHERE org_id={P()} ORDER BY created_at DESC LIMIT 30", (user.get("org_id","default"),))
     rows = fetchall(c); conn.close(); return rows
 
 # ── CONTEXTO IA ────────────────────────────────────────────
-def _calc_preferencias_medicos(c) -> dict:
+def _calc_preferencias_medicos(c, org_id: str) -> dict:
     """Analisa o histórico e extrai padrões por médico: setor mais comum,
     horário mais comum, duração média — para a IA usar como sugestão default."""
-    c.execute("""SELECT doc, setor, time, duracao_min FROM eventos
-                 ORDER BY created_at DESC LIMIT 300""")
+    c.execute(f"""SELECT doc, setor, time, duracao_min FROM eventos
+                 WHERE org_id={P()} ORDER BY created_at DESC LIMIT 300""", (org_id,))
     rows = fetchall(c)
     por_medico = {}
     for r in rows:
@@ -920,21 +959,22 @@ def _calc_preferencias_medicos(c) -> dict:
 
 @app.get("/api/contexto-ia")
 def get_contexto(user=Depends(auth)):
+    org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
     desde = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
     c.execute(f"""SELECT id,doc,setor,proc,paciente,date,time,obs,duracao_min FROM eventos
-                  WHERE date >= {P()} ORDER BY date,time LIMIT 80""", (desde,))
+                  WHERE date >= {P()} AND org_id={P()} ORDER BY date,time LIMIT 80""", (desde, org_id))
     eventos = fetchall(c)
-    c.execute("SELECT texto FROM memorias ORDER BY uso DESC LIMIT 25")
+    c.execute(f"SELECT texto FROM memorias WHERE org_id={P()} ORDER BY uso DESC LIMIT 25", (org_id,))
     memorias = [r["texto"] for r in fetchall(c)]
-    c.execute("SELECT doc,setor,proc,paciente,date,time FROM historico ORDER BY created_at DESC LIMIT 15")
+    c.execute(f"SELECT doc,setor,proc,paciente,date,time FROM historico WHERE org_id={P()} ORDER BY created_at DESC LIMIT 15", (org_id,))
     historico = fetchall(c)
-    c.execute("SELECT name FROM medicos ORDER BY name")
+    c.execute(f"SELECT name FROM medicos WHERE org_id={P()} ORDER BY name", (org_id,))
     medicos = [r["name"] for r in fetchall(c)]
-    c.execute("SELECT id,name FROM setores")
+    c.execute(f"SELECT id,name FROM setores WHERE org_id={P()}", (org_id,))
     setores = {r["id"]:r["name"] for r in fetchall(c)}
-    preferencias_medicos = _calc_preferencias_medicos(c)
-    c.execute("SELECT campo,valor_errado,valor_certo FROM correcoes ORDER BY created_at DESC LIMIT 15")
+    preferencias_medicos = _calc_preferencias_medicos(c, org_id)
+    c.execute(f"SELECT campo,valor_errado,valor_certo FROM correcoes WHERE org_id={P()} ORDER BY created_at DESC LIMIT 15", (org_id,))
     correcoes = fetchall(c)
     conn.close()
     return {"eventos":eventos,"memorias":memorias,"historico":historico,
@@ -945,39 +985,40 @@ def get_contexto(user=Depends(auth)):
 # ── RELATÓRIOS ─────────────────────────────────────────────
 @app.get("/api/relatorios/resumo")
 def relatorio_resumo(user=Depends(auth)):
+    org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
     hoje = datetime.now().strftime("%Y-%m-%d")
     mes_ini = datetime.now().strftime("%Y-%m-01")
 
-    c.execute("SELECT COUNT(*) FROM eventos"); total = c.fetchone()[0]
-    c.execute(f"SELECT COUNT(*) FROM eventos WHERE date={P()}", (hoje,)); hoje_n = c.fetchone()[0]
-    c.execute(f"SELECT COUNT(*) FROM eventos WHERE date>={P()}", (hoje,)); futuros = c.fetchone()[0]
-    c.execute(f"SELECT COUNT(*) FROM eventos WHERE date>={P()}", (mes_ini,)); mes_n = c.fetchone()[0]
+    c.execute(f"SELECT COUNT(*) FROM eventos WHERE org_id={P()}", (org_id,)); total = c.fetchone()[0]
+    c.execute(f"SELECT COUNT(*) FROM eventos WHERE date={P()} AND org_id={P()}", (hoje, org_id)); hoje_n = c.fetchone()[0]
+    c.execute(f"SELECT COUNT(*) FROM eventos WHERE date>={P()} AND org_id={P()}", (hoje, org_id)); futuros = c.fetchone()[0]
+    c.execute(f"SELECT COUNT(*) FROM eventos WHERE date>={P()} AND org_id={P()}", (mes_ini, org_id)); mes_n = c.fetchone()[0]
 
-    c.execute("SELECT doc, COUNT(*) as total FROM eventos GROUP BY doc ORDER BY total DESC")
+    c.execute(f"SELECT doc, COUNT(*) as total FROM eventos WHERE org_id={P()} GROUP BY doc ORDER BY total DESC", (org_id,))
     por_medico = fetchall(c)
 
-    c.execute("SELECT setor, COUNT(*) as total FROM eventos GROUP BY setor ORDER BY total DESC")
+    c.execute(f"SELECT setor, COUNT(*) as total FROM eventos WHERE org_id={P()} GROUP BY setor ORDER BY total DESC", (org_id,))
     por_setor = fetchall(c)
 
     if USE_POSTGRES:
-        c.execute("""SELECT EXTRACT(DOW FROM date::date)::int as dow, COUNT(*) as total
-                     FROM eventos WHERE date >= NOW()::date - 90
-                     GROUP BY dow ORDER BY dow""")
+        c.execute(f"""SELECT EXTRACT(DOW FROM date::date)::int as dow, COUNT(*) as total
+                     FROM eventos WHERE date >= NOW()::date - 90 AND org_id={P()}
+                     GROUP BY dow ORDER BY dow""", (org_id,))
     else:
-        c.execute("""SELECT CAST(strftime('%w', date) AS INTEGER) as dow, COUNT(*) as total
-                     FROM eventos WHERE date >= date('now','-90 days')
-                     GROUP BY dow ORDER BY dow""")
+        c.execute(f"""SELECT CAST(strftime('%w', date) AS INTEGER) as dow, COUNT(*) as total
+                     FROM eventos WHERE date >= date('now','-90 days') AND org_id={P()}
+                     GROUP BY dow ORDER BY dow""", (org_id,))
     por_dia = fetchall(c)
 
     if USE_POSTGRES:
-        c.execute("""SELECT TO_CHAR(date::date,'YYYY-MM') as mes, COUNT(*) as total
-                     FROM eventos WHERE date >= NOW()::date - 365
-                     GROUP BY mes ORDER BY mes""")
+        c.execute(f"""SELECT TO_CHAR(date::date,'YYYY-MM') as mes, COUNT(*) as total
+                     FROM eventos WHERE date >= NOW()::date - 365 AND org_id={P()}
+                     GROUP BY mes ORDER BY mes""", (org_id,))
     else:
-        c.execute("""SELECT strftime('%Y-%m', date) as mes, COUNT(*) as total
-                     FROM eventos WHERE date >= date('now','-365 days')
-                     GROUP BY mes ORDER BY mes""")
+        c.execute(f"""SELECT strftime('%Y-%m', date) as mes, COUNT(*) as total
+                     FROM eventos WHERE date >= date('now','-365 days') AND org_id={P()}
+                     GROUP BY mes ORDER BY mes""", (org_id,))
     por_mes = fetchall(c)
     conn.close()
 
@@ -989,14 +1030,14 @@ def relatorio_resumo(user=Depends(auth)):
 @app.get("/api/historico")
 def list_historico(user=Depends(auth)):
     conn = get_db(); c = conn.cursor()
-    c.execute("SELECT * FROM historico ORDER BY created_at DESC LIMIT 100")
+    c.execute(f"SELECT * FROM historico WHERE org_id={P()} ORDER BY created_at DESC LIMIT 100", (user.get("org_id","default"),))
     rows = fetchall(c); conn.close(); return rows
 
 @app.get("/api/logs")
 def list_logs(user=Depends(auth)):
     if user["role"]!="admin": raise HTTPException(403,"Acesso negado.")
     conn = get_db(); c = conn.cursor()
-    c.execute("SELECT * FROM logs ORDER BY created_at DESC LIMIT 300")
+    c.execute(f"SELECT * FROM logs WHERE org_id={P()} ORDER BY created_at DESC LIMIT 300", (user.get("org_id","default"),))
     rows = fetchall(c); conn.close(); return rows
 
 # ── LEMBRETE DIÁRIO ──────────────────────────────────────────
@@ -1027,38 +1068,54 @@ def reminder_email_html(eventos_dia, data_str):
         <p style="font-size:10px;color:#aaa;margin-top:14px">Ana · Secretária Virtual — lembrete automático</p>
       </div></div>"""
 
-async def run_daily_reminder():
-    """Envia email de resumo do dia seguinte para cada médico com email cadastrado."""
+async def run_daily_reminder(org_id: Optional[str] = None):
+    """Envia email de resumo do dia seguinte para cada médico com email cadastrado.
+    Se org_id for None, roda para TODAS as organizações (usado pelo scheduler automático)."""
     if not SMTP_HOST:
         return {"sent": 0, "reason": "SMTP não configurado"}
+
     conn = get_db(); c = conn.cursor()
-    amanha = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-    amanha_str = (datetime.now() + timedelta(days=1)).strftime("%d/%m/%Y")
-    c.execute(f"SELECT e.*, s.name as setor_nome FROM eventos e LEFT JOIN setores s ON e.setor=s.id WHERE e.date={P()} ORDER BY e.time", (amanha,))
-    eventos_amanha = fetchall(c)
-    for ev in eventos_amanha:
-        ev["setor"] = ev.get("setor_nome") or ev.get("setor")
-    c.execute("SELECT name, email FROM medicos WHERE email != ''")
-    medicos_com_email = fetchall(c)
+    if org_id:
+        orgs_alvo = [org_id]
+    else:
+        c.execute("SELECT id FROM orgs")
+        orgs_alvo = [r["id"] for r in fetchall(c)]
     conn.close()
 
-    sent = 0
-    for m in medicos_com_email:
-        evs_medico = [e for e in eventos_amanha if e["doc"] == m["name"]]
-        if not evs_medico:
-            continue
-        await send_email(m["email"], f"Ana · Sua agenda de {amanha_str}",
-                         reminder_email_html(evs_medico, amanha_str))
-        sent += 1
-    db_log("INFO", f"Lembrete diário enviado para {sent} médico(s) — {amanha_str}")
-    return {"sent": sent, "date": amanha}
+    amanha = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+    amanha_str = (datetime.now() + timedelta(days=1)).strftime("%d/%m/%Y")
+    total_sent = 0
+
+    for oid in orgs_alvo:
+        conn = get_db(); c = conn.cursor()
+        c.execute(f"SELECT e.*, s.name as setor_nome FROM eventos e LEFT JOIN setores s ON e.setor=s.id AND s.org_id={P()} WHERE e.date={P()} AND e.org_id={P()} ORDER BY e.time", (oid, amanha, oid))
+        eventos_amanha = fetchall(c)
+        for ev in eventos_amanha:
+            ev["setor"] = ev.get("setor_nome") or ev.get("setor")
+        c.execute(f"SELECT name, email FROM medicos WHERE email != '' AND org_id={P()}", (oid,))
+        medicos_com_email = fetchall(c)
+        conn.close()
+
+        sent = 0
+        for m in medicos_com_email:
+            evs_medico = [e for e in eventos_amanha if e["doc"] == m["name"]]
+            if not evs_medico:
+                continue
+            await send_email(m["email"], f"Ana · Sua agenda de {amanha_str}",
+                             reminder_email_html(evs_medico, amanha_str))
+            sent += 1
+        if sent:
+            db_log("INFO", f"Lembrete diário enviado para {sent} médico(s) — {amanha_str}", org_id=oid)
+        total_sent += sent
+
+    return {"sent": total_sent, "date": amanha}
 
 @app.post("/api/lembrete-diario")
 async def trigger_daily_reminder(user=Depends(auth)):
-    """Dispara manualmente o envio do lembrete do dia seguinte (admin)."""
+    """Dispara manualmente o envio do lembrete do dia seguinte (admin) — só para o grupo do usuário."""
     if user["role"] != "admin":
         raise HTTPException(403, "Acesso negado.")
-    result = await run_daily_reminder()
+    result = await run_daily_reminder(org_id=user.get("org_id","default"))
     return result
 
 @app.on_event("startup")
@@ -1180,14 +1237,16 @@ class GCalConfig(BaseModel):
 
 @app.get("/api/config/gcal")
 def get_gcal_config(user=Depends(auth)):
-    return {"calendar_id": get_gcal_id(), "configurado_via": "app" if get_config("gcal_calendar_id") else "env_var_ou_padrao"}
+    org_id = user.get("org_id","default")
+    return {"calendar_id": get_gcal_id(org_id), "configurado_via": "app" if get_config("gcal_calendar_id", org_id=org_id) else "env_var_ou_padrao"}
 
 @app.post("/api/config/gcal")
 def set_gcal_config(cfg: GCalConfig, user=Depends(auth)):
     if user["role"] != "admin":
         raise HTTPException(403, "Apenas administradores podem alterar essa configuração.")
-    set_config("gcal_calendar_id", cfg.calendar_id.strip())
-    db_log("INFO", f"Google Calendar ID alterado para: {cfg.calendar_id}", usuario=user["id"])
+    org_id = user.get("org_id","default")
+    set_config("gcal_calendar_id", cfg.calendar_id.strip(), org_id=org_id)
+    db_log("INFO", f"Google Calendar ID alterado para: {cfg.calendar_id}", usuario=user["id"], org_id=org_id)
     return {"ok": True, "calendar_id": cfg.calendar_id.strip()}
 
 @app.get("/api/config/gcal/list")

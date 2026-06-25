@@ -1407,7 +1407,47 @@ Seja preciso e inclua todos os pacientes listados. Não omita nenhum dado."""
         log.error(f"Gemini PDF extraction erro: {e}")
         return ""
 
-def _extract_pdf_text(pdf_b64: str, max_chars: int = 4000) -> str:
+def _extract_image_gemini(image_b64: str, mime_type: str = "image/jpeg") -> str:
+    """Usa o Gemini Flash para extrair informações de agenda de uma imagem (screenshot, foto de tela, etc)."""
+    if not GEMINI_API_KEY:
+        return ""
+    try:
+        prompt = """Você é um assistente de extração de dados médicos. Analise esta imagem de agenda médica e extraia TODAS as informações relevantes de forma estruturada.
+
+Retorne um texto claro com:
+- Data da agenda (se visível)
+- Para cada paciente: nome completo, data/hora do procedimento, procedimento exato, se é COM ANESTESIA ou SEM ANESTESIA, convênio, observações relevantes
+- Destaque claramente quais procedimentos requerem anestesia
+
+Seja preciso e inclua todos os pacientes listados. Não omita nenhum dado."""
+
+        payload = json.dumps({
+            "contents": [{
+                "parts": [
+                    {"inline_data": {"mime_type": mime_type, "data": image_b64}},
+                    {"text": prompt}
+                ]
+            }],
+            "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2000}
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = json.loads(r.read())
+
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        log.info(f"Gemini image extraction: {len(text)} chars extraídos")
+        return text
+    except Exception as e:
+        log.error(f"Gemini image extraction erro: {e}")
+        return ""
+
+
     """Extrai texto de um PDF em base64 via pypdf (fallback quando sem Gemini API key)."""
     if not PDF_SUPPORT or not pdf_b64:
         return ""
@@ -1467,6 +1507,18 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
                     else:
                         text_parts.append("[Aviso: não foi possível ler o conteúdo do PDF anexado. "
                                           "Peça ao usuário para descrever o pedido médico em texto.]")
+                elif part.get("type") == "image":
+                    src = part.get("source", {})
+                    img_b64 = src.get("data", "")
+                    mime = src.get("media_type", "image/jpeg")
+                    if img_b64 and GEMINI_API_KEY:
+                        extracted = _extract_image_gemini(img_b64, mime)
+                        if extracted:
+                            text_parts.append(f"[Conteúdo extraído da imagem anexada]\n{extracted}")
+                        else:
+                            text_parts.append("[Aviso: não foi possível extrair informações da imagem. Descreva o conteúdo em texto.]")
+                    else:
+                        text_parts.append("[Imagem recebida mas GEMINI_API_KEY não configurada — não foi possível extrair o conteúdo. Configure GEMINI_API_KEY no Railway.]")
             text = "\n".join(text_parts)
         else:
             text = str(content)

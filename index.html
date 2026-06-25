@@ -501,7 +501,6 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <div class="fl"><label>Data</label><input type="date" id="edate"></div>
     <div class="fl"><label>Horário</label><input type="time" id="etime"></div>
   </div>
-  <div class="fl" style="margin-bottom:8px"><label>Duração (minutos)</label><input type="number" id="edur" min="5" step="5" value="60"></div>
   <div class="fl" style="margin-bottom:8px"><label>Paciente</label><input id="epaciente"></div>
   <div class="fl" style="margin-bottom:8px"><label>Observação</label><input id="eobs"></div>
   <div class="login-err" id="edit-err" style="display:none"></div>
@@ -851,9 +850,9 @@ HISTÓRICO: ${ctx.historico.slice(0,10).map(h=>`${h.date} ${h.time} ${h.setor} $
 PADRÕES POR MÉDICO (use como sugestão quando o usuário não especificar setor/horário/duração): ${prefsTxt||'nenhum padrão suficiente ainda'}
 CORREÇÕES APRENDIDAS (erros já cometidos antes — não repita): ${correcoesTxt||'nenhuma correção registrada ainda'}
 DESLOCAMENTOS ENTRE SETORES (tempo mínimo de folga ao mudar de local): ${deslocTxt}
-REGRAS: interprete linguagem natural e abreviações (CC=Centro Cirúrgico, raqui=raquianestesia, AG=anestesia geral). Use memórias/histórico/padrões por médico para preencher campos omitidos. Estime "duracao_min" com base no tipo de procedimento (padrão 60; cirurgias maiores 90-180; procedimentos rápidos como sedação 30). Respeite SEMPRE as correções aprendidas. OTIMIZAÇÃO DE SEQUÊNCIA: use DESLOCAMENTOS para calcular folga mínima entre setores diferentes do mesmo médico. PDF COM MÚLTIPLOS PACIENTES: quando o PDF tiver 2 ou mais procedimentos para agendar, use OBRIGATORIAMENTE a ação AGENDAR_MULTIPLOS com todos os eventos na lista "eventos" — NUNCA use AGENDAR para PDFs com múltiplos pacientes. AGENDAR_MULTIPLOS deve incluir TODOS os pacientes do PDF, sem exceção. novas_memorias: máx 2. suggests: 2 ações. Seja breve.
+REGRAS: interprete linguagem natural e abreviações (CC=Centro Cirúrgico, raqui=raquianestesia, AG=anestesia geral). Use memórias/histórico/padrões por médico para preencher campos omitidos. Conflito de horário ocorre SOMENTE quando o mesmo médico tiver dois procedimentos no exato mesmo horário — o servidor vai sinalizar mas agendará normalmente. OTIMIZAÇÃO DE SEQUÊNCIA: use DESLOCAMENTOS para calcular folga mínima entre setores diferentes do mesmo médico. PDF COM MÚLTIPLOS PACIENTES: quando o PDF tiver 2 ou mais procedimentos para agendar, use OBRIGATORIAMENTE a ação AGENDAR_MULTIPLOS com todos os eventos na lista "eventos" — NUNCA use AGENDAR para PDFs com múltiplos pacientes. AGENDAR_MULTIPLOS deve incluir TODOS os pacientes do PDF, sem exceção. novas_memorias: máx 2. suggests: 2 ações. Seja breve.
 RETORNE APENAS JSON sem markdown:
-{"acao":"AGENDAR"|"AGENDAR_MULTIPLOS"|"CANCELAR"|"RELATORIO"|"CONSULTAR"|"CORRECAO"|"DUVIDA","resposta":"HTML","evento":{"id":N,"doc":"","setor":"","proc":"","paciente":"","date":"YYYY-MM-DD","time":"HH:MM","duracao_min":60,"obs":""},"eventos":[{"doc":"","setor":"","proc":"","paciente":"","date":"YYYY-MM-DD","time":"HH:MM","duracao_min":60,"obs":""}],"cancelar_id":N|null,"tabela":[{"data":"","hora":"","setor":"","proc":"","paciente":"","medico":"","obs":""}],"novas_memorias":[{"texto":"","icone":""}],"suggests":["",""]}`;
+{"acao":"AGENDAR"|"AGENDAR_MULTIPLOS"|"CANCELAR"|"RELATORIO"|"CONSULTAR"|"CORRECAO"|"DUVIDA","resposta":"HTML","evento":{"id":N,"doc":"","setor":"","proc":"","paciente":"","date":"YYYY-MM-DD","time":"HH:MM","obs":""},"eventos":[{"doc":"","setor":"","proc":"","paciente":"","date":"YYYY-MM-DD","time":"HH:MM","obs":""}],"cancelar_id":N|null,"tabela":[{"data":"","hora":"","setor":"","proc":"","paciente":"","medico":"","obs":""}],"novas_memorias":[{"texto":"","icone":""}],"suggests":["",""]}`;
 
   const mc=pdf?[{type:'document',source:{type:'base64',media_type:'application/pdf',data:pdf.b64}},{type:'text',text:txt}]:txt;
   // Quando há PDF, reduz o contexto para não estourar o limite de tokens da Groq
@@ -890,22 +889,18 @@ RETORNE APENAS JSON sem markdown:
 
     if(p.acao==='AGENDAR'&&p.evento?.proc&&p.evento?.date){
       const ev=p.evento;
-      const cf=eventos.find(e=>e.doc===ev.doc&&e.date===ev.date&&e.time===ev.time);
-      if(cf){addMsg(`⚠️ <b>Conflito:</b> ${ev.doc} já tem <b>${cf.proc}</b> às ${ev.time}.<br>${p.resposta||''}`, 'bot',{sug});}
-      else{
-        try{
-          const payload={...ev,ai:true};
-          if(pdf){payload.pdf_filename=pdf.name;payload.pdf_data=pdf.b64;}
-          const saved=await api('POST','/api/eventos',payload);eventos.push(saved);
-          const s=getS(ev.setor);const bc=BADGE[ev.setor]||'';
-          let html=pdf?'📄 <b>PDF lido!</b><br>':'✅ <b>Agendado!</b><br>';
-          const durTxt=(ev.duracao_min&&ev.duracao_min!==60)?` <span style="font-size:11px;color:var(--hint)">(${ev.duracao_min} min)</span>`:'';
-          html+=`<div class="ev-card"><div class="ev-row"><i class="ti ti-calendar"></i><b>${fmtD(ev.date)}</b> às <b>${ev.time}</b>${durTxt}</div><div class="ev-row"><i class="ti ti-building-hospital"></i><span class="ev-tag ${bc}">${s.name}</span></div><div class="ev-row"><i class="ti ti-clipboard-list"></i>${ev.proc}</div><div class="ev-row"><i class="ti ti-user"></i>${ev.paciente||'—'}</div><div class="ev-row"><i class="ti ti-stethoscope"></i>${ev.doc}</div>${ev.obs?`<div class="ev-row"><i class="ti ti-notes"></i><span style="font-size:11px">${ev.obs}</span></div>`:''}${pdf?`<div class="ev-row"><i class="ti ti-paperclip"></i><span style="font-size:11px">${pdf.name} anexado</span></div>`:''}</div>`;
-          addMsg(html,'bot',{feedback:true,sug,eventoContext:saved,origTxt:txt});
-          const same=eventos.filter(e=>e.setor===ev.setor&&e.proc?.split(' ')[0]===ev.proc?.split(' ')[0]);
-          if(same.length>=3)addMem(`"${ev.proc.split('—')[0].trim()}" frequente no ${s.name}`,'ti-star');
-        }catch(e){addMsg(`⚠️ ${e.message}`,'bot',{sug});}
-      }
+      try{
+        const payload={...ev,ai:true};
+        if(pdf){payload.pdf_filename=pdf.name;payload.pdf_data=pdf.b64;}
+        const saved=await api('POST','/api/eventos',payload);eventos.push(saved);
+        const s=getS(ev.setor);const bc=BADGE[ev.setor]||'';
+        let html=pdf?'📄 <b>PDF lido!</b><br>':'✅ <b>Agendado!</b><br>';
+        if(saved.aviso)html+=`<div style="background:#fff3cd;color:#856404;border-radius:6px;padding:6px 10px;margin-bottom:6px;font-size:12px">${saved.aviso}</div>`;
+        html+=`<div class="ev-card"><div class="ev-row"><i class="ti ti-calendar"></i><b>${fmtD(ev.date)}</b> às <b>${ev.time}</b></div><div class="ev-row"><i class="ti ti-building-hospital"></i><span class="ev-tag ${bc}">${s.name}</span></div><div class="ev-row"><i class="ti ti-clipboard-list"></i>${ev.proc}</div><div class="ev-row"><i class="ti ti-user"></i>${ev.paciente||'—'}</div><div class="ev-row"><i class="ti ti-stethoscope"></i>${ev.doc}</div>${ev.obs?`<div class="ev-row"><i class="ti ti-notes"></i><span style="font-size:11px">${ev.obs}</span></div>`:''}${pdf?`<div class="ev-row"><i class="ti ti-paperclip"></i><span style="font-size:11px">${pdf.name} anexado</span></div>`:''}</div>`;
+        addMsg(html,'bot',{feedback:true,sug,eventoContext:saved,origTxt:txt});
+        const same=eventos.filter(e=>e.setor===ev.setor&&e.proc?.split(' ')[0]===ev.proc?.split(' ')[0]);
+        if(same.length>=3)addMem(`"${ev.proc.split('—')[0].trim()}" frequente no ${s.name}`,'ti-star');
+      }catch(e){addMsg(`⚠️ ${e.message}`,'bot',{sug});}
     } else if(p.acao==='AGENDAR_MULTIPLOS'&&Array.isArray(p.eventos)&&p.eventos.length){
       // Agenda múltiplos eventos em sequência (ex: vários pacientes de um PDF)
       const lista=p.eventos;
@@ -928,8 +923,8 @@ RETORNE APENAS JSON sem markdown:
         html+='<div style="margin-top:6px;display:flex;flex-direction:column;gap:6px">';
         agendados.forEach(ev=>{
           const s=getS(ev.setor);const bc=BADGE[ev.setor]||'';
-          const durTxt=(ev.duracao_min&&ev.duracao_min!==60)?` <span style="font-size:10px;color:var(--hint)">(${ev.duracao_min}min)</span>`:'';
-          html+=`<div class="ev-card" style="padding:8px 10px"><div class="ev-row"><i class="ti ti-clock"></i><b>${ev.time}</b>${durTxt} · <span class="ev-tag ${bc}">${s.name}</span></div><div class="ev-row"><i class="ti ti-clipboard-list"></i>${ev.proc}</div><div class="ev-row"><i class="ti ti-user"></i>${ev.paciente||'—'} · <span style="font-size:10px;color:var(--muted)">${ev.doc}</span></div>${ev.obs?`<div class="ev-row"><i class="ti ti-notes"></i><span style="font-size:10px">${ev.obs}</span></div>`:''}</div>`;
+          const avisoEv=ev.aviso?`<div style="background:#fff3cd;color:#856404;border-radius:4px;padding:4px 8px;font-size:10px;margin-top:4px">${ev.aviso}</div>`:'';
+          html+=`<div class="ev-card" style="padding:8px 10px"><div class="ev-row"><i class="ti ti-clock"></i><b>${ev.time}</b> · <span class="ev-tag ${bc}">${s.name}</span></div><div class="ev-row"><i class="ti ti-clipboard-list"></i>${ev.proc}</div><div class="ev-row"><i class="ti ti-user"></i>${ev.paciente||'—'} · <span style="font-size:10px;color:var(--muted)">${ev.doc}</span></div>${ev.obs?`<div class="ev-row"><i class="ti ti-notes"></i><span style="font-size:10px">${ev.obs}</span></div>`:''}${avisoEv}</div>`;
         });
         html+='</div>';
       }
@@ -1011,8 +1006,7 @@ function renderAgenda(){
   let html=`<tr><th>Data</th><th>Hora</th><th>Setor</th><th>Procedimento</th><th>Paciente</th><th>Médico</th><th></th><th></th></tr>`;
   sorted.forEach(e=>{const s=getS(e.setor);const bc=BADGE[e.setor]||'';const past=e.date<hoje;
     const pdfIcon=e.pdf_filename?`<i class="ti ti-file-text" style="color:var(--accent);font-size:13px" title="${e.pdf_filename}"></i>`:'';
-    const dur=e.duracao_min&&e.duracao_min!==60?` <span style="font-size:9px;color:var(--hint)">(${e.duracao_min}min)</span>`:'';
-    html+=`<tr style="${past?'opacity:.5':''}"><td style="white-space:nowrap">${fmtD(e.date)}</td><td>${e.time}${dur}</td><td><span class="ev-tag ${bc}">${s.name}</span></td><td>${e.proc} ${pdfIcon}</td><td>${e.paciente||'—'}</td><td style="font-size:11px;color:var(--muted)">${e.doc}</td><td><button class="btn sm" onclick="openEditModal(${e.id})" title="Editar"><i class="ti ti-pencil"></i></button></td><td><button class="btn danger sm" onclick="delEvt(${e.id})" title="Excluir"><i class="ti ti-trash"></i></button></td></tr>`;
+    html+=`<tr style="${past?'opacity:.5':''}"><td style="white-space:nowrap">${fmtD(e.date)}</td><td>${e.time}</td><td><span class="ev-tag ${bc}">${s.name}</span></td><td>${e.proc} ${pdfIcon}</td><td>${e.paciente||'—'}</td><td style="font-size:11px;color:var(--muted)">${e.doc}</td><td><button class="btn sm" onclick="openEditModal(${e.id})" title="Editar"><i class="ti ti-pencil"></i></button></td><td><button class="btn danger sm" onclick="delEvt(${e.id})" title="Excluir"><i class="ti ti-trash"></i></button></td></tr>`;
   });
   document.getElementById('agtbl').innerHTML=html;
 }
@@ -1046,7 +1040,6 @@ function openEditModal(id){
   document.getElementById('epaciente').value=ev.paciente||'';
   document.getElementById('edate').value=ev.date;
   document.getElementById('etime').value=ev.time;
-  document.getElementById('edur').value=ev.duracao_min||60;
   document.getElementById('eobs').value=ev.obs||'';
   document.getElementById('edit-err').style.display='none';
   document.getElementById('modal-edit').classList.add('open');
@@ -1067,7 +1060,6 @@ async function saveEdit(){
     paciente:document.getElementById('epaciente').value.trim(),
     date:document.getElementById('edate').value,
     time:document.getElementById('etime').value,
-    duracao_min:parseInt(document.getElementById('edur').value)||60,
     obs:document.getElementById('eobs').value.trim(),
   };
   if(!body.proc||!body.date||!body.time){toast('Preencha procedimento, data e hora.','warn');return;}
@@ -1075,7 +1067,9 @@ async function saveEdit(){
     const updated=await api('PUT',`/api/eventos/${editingId}`,body);
     const idx=eventos.findIndex(e=>e.id===editingId);
     if(idx>=0)eventos[idx]={...eventos[idx],...updated};
-    closeEditModal();renderAgenda();toast('Agendamento atualizado!');
+    closeEditModal();renderAgenda();
+    if(updated.aviso)toast(updated.aviso,'warn');
+    else toast('Agendamento atualizado!');
   }catch(e){
     document.getElementById('edit-err').textContent=e.message;
     document.getElementById('edit-err').style.display='block';
@@ -1113,8 +1107,7 @@ async function gerarMapaCirurgico(){
     }
     let salasHtml=m.salas.map(s=>{
       const rows=s.procedimentos.map(p=>{
-        const fimMin=(()=>{const[h,mi]=p.time.split(':').map(Number);const t=h*60+mi+(p.duracao_min||60);return `${String(Math.floor(t/60)%24).padStart(2,'0')}:${String(t%60).padStart(2,'0')}`;})();
-        return `<tr><td class="hcell">${p.time}–${fimMin}</td><td>${p.proc}</td><td>${p.paciente||'—'}</td><td>${p.doc}</td><td>${p.obs||'—'}</td></tr>`;
+        return `<tr><td class="hcell">${p.time}</td><td>${p.proc}</td><td>${p.paciente||'—'}</td><td>${p.doc}</td><td>${p.obs||'—'}</td></tr>`;
       }).join('');
       return `<div class="sala-block">
         <div class="sala-hdr" style="background:${s.color};color:${s.text_color}"><i class="ti ti-door"></i> ${s.setor_nome} <span class="sala-count">${s.procedimentos.length} procedimento${s.procedimentos.length!==1?'s':''}</span></div>

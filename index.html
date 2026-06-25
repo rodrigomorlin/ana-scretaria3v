@@ -132,7 +132,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 .hint-txt{font-size:9px;color:var(--hint);margin-top:5px;padding:0 4px}
 
 /* ── PANELS ─────────────────────────────────────────────── */
-.panel{display:none;flex:1;overflow-y:auto;padding:1.4rem}
+.panel{display:none;position:absolute;inset:0;overflow-y:auto;padding:1.4rem;background:var(--bg)}
 .panel.on{display:block}
 .panel-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:1.2rem;flex-wrap:wrap;gap:8px}
 .panel-title{font-size:16px;font-weight:700;color:var(--text);letter-spacing:-.4px}
@@ -380,9 +380,13 @@ html,body{height:100%;background:var(--bg);color:var(--text);
       <input class="msg-inp" id="minp" placeholder="Fale com a Ana..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}">
       <button class="snd-btn" id="sbtn" onclick="send()" aria-label="Enviar"><i class="ti ti-send"></i></button>
     </div>
-    <div class="hint-txt">📎 PDF · arraste · "novo CC terça 08h — raqui cesárea Maria, Dra. Ana" · "relatório semana"</div>
+    <div class="hint-txt">📎 PDF · imagem · "novo CC terça 08h — raqui cesárea Maria, Dra. Ana"</div>
   </div>
 </div>
+</div><!-- /chat-col -->
+
+<!-- PANELS (irmãos do chat-col dentro de content-area) -->
+<div style="flex:1;overflow:hidden;position:relative;display:flex">
 
 <!-- AGENDA -->
 <div id="pagenda" class="panel">
@@ -536,6 +540,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
   </div>
 </div>
 
+</div><!-- /panels-wrapper -->
 </div><!-- /content-area -->
 </div><!-- /main -->
 </div><!-- /app -->
@@ -766,9 +771,12 @@ function tab(n){
     const el=document.getElementById('snav-'+name);
     if(el)el.classList.toggle('on',name===n);
   });
-  // Chat column visibility
+  // Chat column: visível só na aba chat
   const chatCol=document.getElementById('chat-col');
   if(chatCol)chatCol.style.display=n==='chat'?'flex':'none';
+  // Panels wrapper: visível só quando não está no chat
+  const panelsWrap=document.querySelector('[id="pagenda"]')?.parentElement;
+  if(panelsWrap)panelsWrap.style.display=n!=='chat'?'flex':'none';
   // Panels
   ['agenda','relatorios','config','logs'].forEach(p=>{
     const el=document.getElementById('p'+p);if(el)el.classList.toggle('on',p===n);
@@ -783,15 +791,10 @@ function tab(n){
   if(ts)ts.textContent=subs[n]||'';
   if(ta){
     if(n==='agenda'){
-      ta.innerHTML=`<div id="minha-toggle-wrap2" style="display:none"><button class="btn sm" id="minha-toggle2" onclick="toggleMinhaAgenda()"><i class="ti ti-user-circle"></i> Minha agenda</button></div><button class="btn sm" onclick="exportPDF()"><i class="ti ti-file-export"></i> Exportar</button><button class="btn primary sm" onclick="tab('chat');document.getElementById('minp').focus()"><i class="ti ti-plus"></i> Novo</button>`;
-      // Sync minha-toggle visibility
-      const mt=document.getElementById('minha-toggle-wrap');
-      if(mt&&mt.style.display!=='none')document.getElementById('minha-toggle-wrap2').style.display='block';
+      ta.innerHTML=`<button class="btn sm" onclick="exportPDF()"><i class="ti ti-file-export"></i> Exportar</button><button class="btn primary sm" onclick="tab('chat');document.getElementById('minp').focus()"><i class="ti ti-plus"></i> Novo</button>`;
     }else if(n==='relatorios'){
       ta.innerHTML=`<button class="btn sm" onclick="loadRelatorios()"><i class="ti ti-refresh"></i> Atualizar</button>`;
-    }else{
-      ta.innerHTML='';
-    }
+    }else{ta.innerHTML='';}
   }
   if(n==='agenda')renderAgenda();
   if(n==='relatorios')loadRelatorios();

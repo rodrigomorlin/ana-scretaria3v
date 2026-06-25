@@ -856,12 +856,22 @@ RETORNE APENAS JSON sem markdown:
 {"acao":"AGENDAR"|"CANCELAR"|"RELATORIO"|"CONSULTAR"|"CORRECAO"|"DUVIDA","resposta":"HTML","evento":{"id":N,"doc":"","setor":"","proc":"","paciente":"","date":"YYYY-MM-DD","time":"HH:MM","duracao_min":60,"obs":""},"cancelar_id":N|null,"tabela":[{"data":"","hora":"","setor":"","proc":"","paciente":"","medico":"","obs":""}],"novas_memorias":[{"texto":"","icone":""}],"suggests":["",""]}`;
 
   const mc=pdf?[{type:'document',source:{type:'base64',media_type:'application/pdf',data:pdf.b64}},{type:'text',text:txt}]:txt;
+  // Quando há PDF, reduz o contexto para não estourar o limite de tokens da Groq
+  const systemFinal = pdf
+    ? system.replace(/AGENDA: \[.*?\](\n|$)/s, 'AGENDA: [omitido para economizar tokens — priorize o PDF]\n')
+           .replace(/HISTÓRICO: .*?(\n|$)/s, '')
+    : system;
   try{
     const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json','X-Token':token},
-      body:JSON.stringify({system,messages:[{role:'user',content:mc}],max_tokens:1500})});
+      body:JSON.stringify({system:systemFinal,messages:[{role:'user',content:mc}],max_tokens:1500})});
     if(!res.ok){
-      const err=await res.json().catch(()=>({detail:'Erro desconhecido'}));
-      throw new Error(err.detail||`Erro ${res.status}`);
+      let errMsg=`Erro ${res.status}`;
+      try{
+        const errBody=await res.text();
+        const errJson=JSON.parse(errBody);
+        errMsg=errJson.detail||errMsg;
+      }catch{}
+      throw new Error(errMsg);
     }
     const data=await res.json();
     let raw=data.content.map(i=>i.text||'').join('').trim();

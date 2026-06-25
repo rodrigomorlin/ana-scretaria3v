@@ -36,7 +36,8 @@ GCAL_CREDS     = os.environ.get("GCAL_CREDENTIALS", "")
 GCAL_ID        = os.environ.get("GCAL_CALENDAR_ID", "primary")
 GOOGLE_CLIENT_ID     = os.environ.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
-APP_BASE_URL         = os.environ.get("APP_BASE_URL", "")  # ex: https://web-production-468a2.up.railway.app
+APP_BASE_URL         = os.environ.get("APP_BASE_URL", "")
+GOOGLE_ROUTES_API_KEY = os.environ.get("GOOGLE_ROUTES_API_KEY", "")
 
 USE_POSTGRES = bool(DATABASE_URL and DATABASE_URL.startswith("postgres"))
 
@@ -169,7 +170,16 @@ CREATE TABLE IF NOT EXISTS medicos (
 CREATE TABLE IF NOT EXISTS setores (
     id TEXT PRIMARY KEY, name TEXT NOT NULL,
     color TEXT DEFAULT '#CECBF6', text_color TEXT DEFAULT '#3C3489',
-    org_id TEXT DEFAULT 'default');
+    org_id TEXT DEFAULT 'default',
+    endereco TEXT DEFAULT '',
+    tempo_manual INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS deslocamentos (
+    id TEXT PRIMARY KEY,
+    setor_origem TEXT NOT NULL, setor_destino TEXT NOT NULL,
+    org_id TEXT DEFAULT 'default',
+    minutos INTEGER NOT NULL,
+    fonte TEXT DEFAULT 'manual',
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS memorias (
     id TEXT PRIMARY KEY, texto TEXT NOT NULL,
     icone TEXT DEFAULT 'ti-brain', tipo TEXT DEFAULT 'aprendido',
@@ -225,6 +235,12 @@ CREATE TABLE IF NOT EXISTS config (
         "ALTER TABLE eventos ADD COLUMN org_id TEXT DEFAULT 'default'",
         "ALTER TABLE medicos ADD COLUMN org_id TEXT DEFAULT 'default'",
         "ALTER TABLE setores ADD COLUMN org_id TEXT DEFAULT 'default'",
+        "ALTER TABLE setores ADD COLUMN endereco TEXT DEFAULT ''",
+        "ALTER TABLE setores ADD COLUMN tempo_manual INTEGER DEFAULT 0",
+        """CREATE TABLE IF NOT EXISTS deslocamentos (
+            id TEXT PRIMARY KEY, setor_origem TEXT NOT NULL, setor_destino TEXT NOT NULL,
+            org_id TEXT DEFAULT 'default', minutos INTEGER NOT NULL,
+            fonte TEXT DEFAULT 'manual', updated_at TEXT DEFAULT CURRENT_TIMESTAMP)""",
         "ALTER TABLE memorias ADD COLUMN org_id TEXT DEFAULT 'default'",
         "ALTER TABLE historico ADD COLUMN org_id TEXT DEFAULT 'default'",
         "ALTER TABLE logs ADD COLUMN org_id TEXT DEFAULT 'default'",
@@ -346,6 +362,152 @@ def _time_to_min(t: str) -> int:
         return int(h) * 60 + int(m)
     except Exception:
         return 0
+
+# ── DESLOCAMENTO ENTRE SETORES (HERE API + cache) ──────────
+def _cache_key(setor_a: str, setor_b: str, org_id: str) -> str:
+    return f"{org_id}:{setor_a}:{setor_b}"
+
+def get_deslocamento(setor_a: str, setor_b: str, org_id: str) -> Optional[int]:
+    """Retorna minutos de deslocamento entre dois setores (cache → HERE API → tempo_manual → None).
+    Retorna 0 se forem o mesmo setor."""
+    if setor_a == setor_b:
+        return 0
+    conn = get_db(); c = conn.cursor()
+    # 1. Tenta cache bilateral (a→b ou b→a, pois o tempo de deslocamento é simétrico)
+    cid1 = _cache_key(setor_a, setor_b, org_id)
+    cid2 = _cache_key(setor_b, setor_a, org_id)
+    c.execute(f"SELECT minutos FROM deslocamentos WHERE id IN ({P()},{P()})", (cid1, cid2))
+    cached = c.fetchone()
+    if cached:
+        conn.close()
+        return cached[0]
+    # 2. Busca endereços e tempo manual dos setores
+    c.execute(f"SELECT id,endereco,tempo_manual FROM setores WHERE id IN ({P()},{P()}) AND org_id={P()}",
+              (setor_a, setor_b, org_id))
+    rows = {r[0]: {"endereco": r[1], "tempo_manual": r[2]} for r in c.fetchall()}
+    conn.close()
+    sa = rows.get(setor_a, {})
+    sb = rows.get(setor_b, {})
+    end_a = (sa.get("endereco") or "").strip()
+    end_b = (sb.get("endereco") or "").strip()
+    # 3. Se ambos têm endereço, tenta Google Routes API
+    if end_a and end_b and GOOGLE_ROUTES_API_KEY:
+        minutos = _google_routes_duration(end_a, end_b)
+        if minutos is not None:
+            _save_deslocamento(setor_a, setor_b, org_id, minutos, "google_routes")
+            return minutos
+    # 4. Fallback: tempo manual (máximo dos dois setores envolvidos)
+    tm_a = sa.get("tempo_manual") or 0
+    tm_b = sb.get("tempo_manual") or 0
+    manual = max(tm_a, tm_b)
+    if manual > 0:
+        _save_deslocamento(setor_a, setor_b, org_id, manual, "manual")
+        return manual
+    return None
+
+def _google_routes_duration(origem: str, destino: str) -> Optional[int]:
+    """Chama a Google Routes API v2 e retorna tempo em minutos com trânsito histórico.
+    Usa TRAFFIC_AWARE_OPTIMAL para considerar padrões históricos de tráfego."""
+    try:
+        # Google Routes API v2 — endpoint único, sem necessidade de geocodificação prévia
+        # aceita endereços diretamente no campo address
+        payload = json.dumps({
+            "origin": {"address": origem},
+            "destination": {"address": destino},
+            "travelMode": "DRIVE",
+            "routingPreference": "TRAFFIC_AWARE_OPTIMAL",
+            "departureTime": datetime.now().strftime("%Y-%m-%dT08:00:00Z"),
+            "computeAlternativeRoutes": False,
+            "routeModifiers": {"avoidTolls": False, "avoidHighways": False},
+            "languageCode": "pt-BR",
+            "units": "METRIC"
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            "https://routes.googleapis.com/directions/v2:computeRoutes",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Goog-Api-Key": GOOGLE_ROUTES_API_KEY,
+                "X-Goog-FieldMask": "routes.duration,routes.distanceMeters,routes.staticDuration",
+            },
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = json.loads(r.read())
+
+        routes = data.get("routes", [])
+        if not routes:
+            log.warning(f"Google Routes: nenhuma rota encontrada de '{origem}' para '{destino}'")
+            return None
+
+        # duration considera trânsito; staticDuration ignora — usamos duration
+        duration_str = routes[0].get("duration", "")
+        if not duration_str:
+            return None
+        # formato "NNNs" (segundos) ex: "1234s"
+        segundos = int(duration_str.rstrip("s"))
+        minutos = max(1, round(segundos / 60))
+        dist_km = routes[0].get("distanceMeters", 0) / 1000
+        log.info(f"Google Routes: {origem} → {destino} = {minutos} min / {dist_km:.1f}km (com trânsito)")
+        return minutos
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="ignore")
+        log.error(f"Google Routes API erro {e.code}: {body[:300]}")
+        return None
+    except Exception as e:
+        log.error(f"Google Routes API erro: {e}")
+        return None
+
+def _save_deslocamento(setor_a: str, setor_b: str, org_id: str, minutos: int, fonte: str):
+    try:
+        conn = get_db(); c = conn.cursor()
+        cid = _cache_key(setor_a, setor_b, org_id)
+        now = datetime.now().isoformat()
+        c.execute(f"SELECT id FROM deslocamentos WHERE id={P()}", (cid,))
+        if c.fetchone():
+            c.execute(f"UPDATE deslocamentos SET minutos={P()},fonte={P()},updated_at={P()} WHERE id={P()}",
+                      (minutos, fonte, now, cid))
+        else:
+            c.execute(f"INSERT INTO deslocamentos (id,setor_origem,setor_destino,org_id,minutos,fonte,updated_at) VALUES ({Ps(7)})",
+                      (cid, setor_a, setor_b, org_id, minutos, fonte, now))
+        conn.commit(); conn.close()
+    except Exception as e:
+        log.error(f"Erro ao salvar cache de deslocamento: {e}")
+
+def _build_matrix_deslocamento(setores_ids: list, org_id: str) -> dict:
+    """Constrói a matrix completa de deslocamentos entre todos os pares de setores.
+    Retorna dict {(a,b): minutos} para todos os pares com deslocamento conhecido."""
+    matrix = {}
+    for i, a in enumerate(setores_ids):
+        for b in setores_ids[i+1:]:
+            minutos = get_deslocamento(a, b, org_id)
+            if minutos is not None:
+                matrix[(a, b)] = minutos
+                matrix[(b, a)] = minutos
+    return matrix
+
+# ── ROTAS DE DESLOCAMENTO ───────────────────────────────────
+@app.get("/api/deslocamentos")
+def list_deslocamentos(user=Depends(auth)):
+    org_id = user.get("org_id","default")
+    conn = get_db(); c = conn.cursor()
+    c.execute(f"SELECT * FROM deslocamentos WHERE org_id={P()} ORDER BY setor_origem,setor_destino", (org_id,))
+    rows = fetchall(c); conn.close(); return rows
+
+@app.post("/api/deslocamentos/recalcular")
+def recalcular_deslocamentos(user=Depends(auth)):
+    """Limpa o cache e recalcula todos os pares de setores (admin apenas)."""
+    if user["role"] != "admin":
+        raise HTTPException(403, "Acesso negado.")
+    org_id = user.get("org_id","default")
+    conn = get_db(); c = conn.cursor()
+    c.execute(f"DELETE FROM deslocamentos WHERE org_id={P()}", (org_id,))
+    conn.commit()
+    c.execute(f"SELECT id FROM setores WHERE org_id={P()}", (org_id,))
+    ids = [r[0] for r in c.fetchall()]; conn.close()
+    matrix = _build_matrix_deslocamento(ids, org_id)
+    return {"ok": True, "pares_calculados": len(matrix) // 2}
 
 # ── GOOGLE CALENDAR ────────────────────────────────────────
 GOOGLE_OAUTH_SCOPES = "https://www.googleapis.com/auth/calendar email"
@@ -503,6 +665,8 @@ class Medico(BaseModel):
 class Setor(BaseModel):
     id: str; name: str
     color: Optional[str]="#CECBF6"; text_color: Optional[str]="#3C3489"
+    endereco: Optional[str]=""
+    tempo_manual: Optional[int]=0
 
 class Memoria(BaseModel):
     id: str; texto: str
@@ -858,15 +1022,30 @@ def create_setor(s: Setor, user=Depends(auth)):
     org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
     try:
-        c.execute(f"INSERT INTO setores (id,name,color,text_color,org_id) VALUES ({Ps(5)})", (s.id, s.name, s.color, s.text_color, org_id))
+        c.execute(f"INSERT INTO setores (id,name,color,text_color,org_id,endereco,tempo_manual) VALUES ({Ps(7)})",
+                  (s.id, s.name, s.color, s.text_color, org_id, s.endereco or "", s.tempo_manual or 0))
         conn.commit()
     except: raise HTTPException(400,"Código já existe.")
     conn.close(); return s
 
+@app.put("/api/setores/{sid}")
+def update_setor(sid: str, s: Setor, user=Depends(auth)):
+    org_id = user.get("org_id","default")
+    conn = get_db(); c = conn.cursor()
+    c.execute(f"UPDATE setores SET name={P()},color={P()},text_color={P()},endereco={P()},tempo_manual={P()} WHERE id={P()} AND org_id={P()}",
+              (s.name, s.color, s.text_color, s.endereco or "", s.tempo_manual or 0, sid, org_id))
+    # Invalida cache de deslocamentos do setor alterado
+    c.execute(f"DELETE FROM deslocamentos WHERE (setor_origem={P()} OR setor_destino={P()}) AND org_id={P()}",
+              (sid, sid, org_id))
+    conn.commit(); conn.close(); return s
+
 @app.delete("/api/setores/{sid}")
 def delete_setor(sid: str, user=Depends(auth)):
+    org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
-    c.execute(f"DELETE FROM setores WHERE id={P()} AND org_id={P()}", (sid, user.get("org_id","default")))
+    c.execute(f"DELETE FROM setores WHERE id={P()} AND org_id={P()}", (sid, org_id))
+    c.execute(f"DELETE FROM deslocamentos WHERE (setor_origem={P()} OR setor_destino={P()}) AND org_id={P()}",
+              (sid, sid, org_id))
     conn.commit(); conn.close(); return {"ok": True}
 
 # ── MEMÓRIAS ───────────────────────────────────────────────
@@ -976,11 +1155,21 @@ def get_contexto(user=Depends(auth)):
     preferencias_medicos = _calc_preferencias_medicos(c, org_id)
     c.execute(f"SELECT campo,valor_errado,valor_certo FROM correcoes WHERE org_id={P()} ORDER BY created_at DESC LIMIT 15", (org_id,))
     correcoes = fetchall(c)
+    # Matrix de deslocamentos entre setores
+    setores_ids = list(setores.keys())
     conn.close()
+    matrix_raw = _build_matrix_deslocamento(setores_ids, org_id)
+    # Converte chaves tuple para string serializable e adiciona nomes legíveis
+    matrix = {}
+    for (a, b), mins in matrix_raw.items():
+        nome_a = setores.get(a, a)
+        nome_b = setores.get(b, b)
+        matrix[f"{nome_a} → {nome_b}"] = f"{mins} min"
     return {"eventos":eventos,"memorias":memorias,"historico":historico,
             "medicos":medicos,"setores":setores,
             "preferencias_medicos":preferencias_medicos,
-            "correcoes":correcoes}
+            "correcoes":correcoes,
+            "deslocamentos":matrix}
 
 # ── RELATÓRIOS ─────────────────────────────────────────────
 @app.get("/api/relatorios/resumo")
@@ -1415,6 +1604,7 @@ def health():
             "email":bool(SMTP_HOST),"gcal":bool(GCAL_CREDS),
             "ai":bool(GROQ_KEY),
             "oauth_google":bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and APP_BASE_URL),
+            "google_routes":bool(GOOGLE_ROUTES_API_KEY),
             "timestamp":datetime.now().isoformat()}
 
 # ── PÁGINAS PÚBLICAS (política de privacidade / termos) ────

@@ -322,11 +322,11 @@ html,body{height:100%;background:var(--bg);color:var(--text);
   <div class="msgs" id="msgs"><div class="typing" id="typ"><span></span><span></span><span></span></div></div>
   <div class="inp-area">
     <div id="pdfwrap" style="display:none">
-      <div class="pdf-prev"><i class="ti ti-file-text" style="font-size:14px;flex-shrink:0"></i><span id="pdfname" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span><span style="cursor:pointer;color:var(--accent);margin-left:auto" onclick="rmPDF()"><i class="ti ti-x"></i></span></div>
+      <div class="pdf-prev"><i id="pfi-icon" class="ti ti-file-text" style="font-size:14px;flex-shrink:0"></i><span id="pdfname" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span><span style="cursor:pointer;color:var(--accent);margin-left:auto" onclick="rmPDF()"><i class="ti ti-x"></i></span></div>
     </div>
     <div class="inp-row">
-      <button class="att-btn" onclick="document.getElementById('pfi').click()" aria-label="PDF"><i class="ti ti-paperclip"></i></button>
-      <input type="file" id="pfi" accept=".pdf" style="display:none" onchange="attachPDF(this.files[0])">
+      <button class="att-btn" onclick="document.getElementById('pfi').click()" aria-label="Anexar arquivo" title="Anexar PDF ou imagem"><i class="ti ti-paperclip"></i></button>
+      <input type="file" id="pfi" accept=".pdf,image/jpeg,image/png,image/webp" style="display:none" onchange="attachFile(this.files[0])">
       <input class="msg-inp" id="minp" placeholder="Fale com a Ana..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}">
       <button class="snd-btn" id="sbtn" onclick="send()" aria-label="Enviar"><i class="ti ti-send"></i></button>
     </div>
@@ -412,7 +412,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
         <div class="fl"><label>Código</label><input id="nscode" placeholder="hd" maxlength="3"></div>
         <div class="fl"><label>Cor</label><input type="color" id="nscolor" value="#CECBF6" style="width:100%;height:36px;padding:2px;border-radius:6px;border:0.5px solid var(--border);cursor:pointer"></div>
       </div>
-      <div class="fl" style="margin-bottom:8px"><label>Endereço (para cálculo de deslocamento via HERE API)</label><input id="nsendereco" placeholder="ex: Rua Coronel Genuíno 290, Porto Alegre, RS"></div>
+      <div class="fl" style="margin-bottom:8px"><label>Endereço (para cálculo de deslocamento via Google Routes API)</label><input id="nsendereco" placeholder="ex: Rua Ramiro Barcelos 910, Porto Alegre, RS"></div>
       <div class="fl" style="margin-bottom:8px"><label>Tempo manual de deslocamento (min) — usado quando sem endereço ou dentro do mesmo prédio</label><input type="number" id="nstempo" min="0" step="5" value="0" style="max-width:100px"></div>
       <button class="btn primary" onclick="addSetor()"><i class="ti ti-plus"></i> Adicionar</button>
     </div>
@@ -731,10 +731,22 @@ document.body.addEventListener('drop',e=>{
   e.preventDefault();document.getElementById('dov').classList.remove('on');
   const f=e.dataTransfer.files[0];if(f&&f.type==='application/pdf')attachPDF(f);else if(f)addMsg('Só aceito PDFs.','bot');
 });
-function attachPDF(file){
+function attachFile(file){
   if(!file)return;
+  const isImage=file.type.startsWith('image/');
+  const isPDF=file.type==='application/pdf'||file.name.endsWith('.pdf');
+  if(!isImage&&!isPDF){toast('Formato não suportado. Use PDF, JPG ou PNG.','warn');return;}
   const r=new FileReader();
-  r.onload=()=>{pdfData={name:file.name,b64:r.result.split(',')[1]};document.getElementById('pdfname').textContent=file.name;document.getElementById('pdfwrap').style.display='block';document.getElementById('minp').placeholder='Instrução adicional (opcional)...';document.getElementById('minp').focus();};
+  r.onload=()=>{
+    pdfData={name:file.name,b64:r.result.split(',')[1],mime:file.type,isImage};
+    const icon=document.getElementById('pfi-icon');
+    icon.className=isImage?'ti ti-photo':'ti ti-file-text';
+    icon.style.color='var(--accent)';
+    document.getElementById('pdfname').textContent=file.name;
+    document.getElementById('pdfwrap').style.display='block';
+    document.getElementById('minp').placeholder=isImage?'Instrução (ex: agende os com anestesia)...':'Instrução adicional (opcional)...';
+    document.getElementById('minp').focus();
+  };
   r.readAsDataURL(file);
 }
 function rmPDF(){pdfData=null;document.getElementById('pdfwrap').style.display='none';document.getElementById('pfi').value='';document.getElementById('minp').placeholder='Fale com a Ana...';}
@@ -809,7 +821,7 @@ RETORNE APENAS JSON sem markdown: {"campo":"nome_do_campo","valor_errado":"valor
 }
 
 async function processInput(txt,pdf=null){
-  if(pdf)addMsg(`<i class="ti ti-file-text" style="color:var(--accent);margin-right:5px"></i><b>${pdf.name}</b>${txt&&txt!=='Analise este pedido médico.'?`<br><span style="font-size:11px;opacity:.8">${txt}</span>`:''}`, 'user');
+  if(pdf)addMsg(`<i class="${pdf.isImage?'ti ti-photo':'ti ti-file-text'}" style="color:var(--accent);margin-right:5px"></i><b>${pdf.name}</b>${txt?`<br><span style="font-size:11px;opacity:.8">${txt}</span>`:''}`, 'user');
   else addMsg(txt,'user');
   document.getElementById('sbtn').disabled=true;showTyp();
   await new Promise(r=>setTimeout(r,400));
@@ -850,14 +862,22 @@ HISTÓRICO: ${ctx.historico.slice(0,10).map(h=>`${h.date} ${h.time} ${h.setor} $
 PADRÕES POR MÉDICO (use como sugestão quando o usuário não especificar setor/horário/duração): ${prefsTxt||'nenhum padrão suficiente ainda'}
 CORREÇÕES APRENDIDAS (erros já cometidos antes — não repita): ${correcoesTxt||'nenhuma correção registrada ainda'}
 DESLOCAMENTOS ENTRE SETORES (tempo mínimo de folga ao mudar de local): ${deslocTxt}
-REGRAS: interprete linguagem natural e abreviações (CC=Centro Cirúrgico, raqui=raquianestesia, AG=anestesia geral). Use memórias/histórico/padrões por médico para preencher campos omitidos. Conflito de horário ocorre SOMENTE quando o mesmo médico tiver dois procedimentos no exato mesmo horário — o servidor vai sinalizar mas agendará normalmente. OTIMIZAÇÃO DE SEQUÊNCIA: use DESLOCAMENTOS para calcular folga mínima entre setores diferentes do mesmo médico. PDF COM MÚLTIPLOS PACIENTES: quando o PDF tiver 2 ou mais procedimentos para agendar, use OBRIGATORIAMENTE a ação AGENDAR_MULTIPLOS com todos os eventos na lista "eventos" — NUNCA use AGENDAR para PDFs com múltiplos pacientes. AGENDAR_MULTIPLOS deve incluir TODOS os pacientes do PDF, sem exceção. novas_memorias: máx 2. suggests: 2 ações. Seja breve.
+REGRAS: interprete linguagem natural e abreviações (CC=Centro Cirúrgico, raqui=raquianestesia, AG=anestesia geral). Use memórias/histórico/padrões por médico para preencher campos omitidos. Conflito de horário ocorre SOMENTE quando o mesmo médico tiver dois procedimentos no exato mesmo horário — o servidor vai sinalizar mas agendará normalmente. OTIMIZAÇÃO DE SEQUÊNCIA: use DESLOCAMENTOS para calcular folga mínima entre setores diferentes do mesmo médico. PDF OU IMAGEM COM MÚLTIPLOS PACIENTES: quando o PDF ou imagem tiver 2 ou mais procedimentos para agendar, use OBRIGATORIAMENTE a ação AGENDAR_MULTIPLOS com todos os eventos na lista "eventos" — NUNCA use AGENDAR para múltiplos pacientes. AGENDAR_MULTIPLOS deve incluir TODOS os pacientes, sem exceção. novas_memorias: máx 2. suggests: 2 ações. Seja breve.
 RETORNE APENAS JSON sem markdown:
 {"acao":"AGENDAR"|"AGENDAR_MULTIPLOS"|"CANCELAR"|"RELATORIO"|"CONSULTAR"|"CORRECAO"|"DUVIDA","resposta":"HTML","evento":{"id":N,"doc":"","setor":"","proc":"","paciente":"","date":"YYYY-MM-DD","time":"HH:MM","obs":""},"eventos":[{"doc":"","setor":"","proc":"","paciente":"","date":"YYYY-MM-DD","time":"HH:MM","obs":""}],"cancelar_id":N|null,"tabela":[{"data":"","hora":"","setor":"","proc":"","paciente":"","medico":"","obs":""}],"novas_memorias":[{"texto":"","icone":""}],"suggests":["",""]}`;
 
-  const mc=pdf?[{type:'document',source:{type:'base64',media_type:'application/pdf',data:pdf.b64}},{type:'text',text:txt}]:txt;
-  // Quando há PDF, reduz o contexto para não estourar o limite de tokens da Groq
+  // Monta o conteúdo: imagem, PDF ou texto puro
+  let mc;
+  if(pdf&&pdf.isImage){
+    mc=[{type:'image',source:{type:'base64',media_type:pdf.mime||'image/jpeg',data:pdf.b64}},{type:'text',text:txt||'Extraia as informações de agenda desta imagem.'}];
+  }else if(pdf){
+    mc=[{type:'document',source:{type:'base64',media_type:'application/pdf',data:pdf.b64}},{type:'text',text:txt}];
+  }else{
+    mc=txt;
+  }
+  // Quando há arquivo (PDF ou imagem), reduz o contexto para não estourar o limite de tokens da Groq
   const systemFinal = pdf
-    ? system.replace(/AGENDA: \[.*?\](\n|$)/s, 'AGENDA: [omitido para economizar tokens — priorize o PDF]\n')
+    ? system.replace(/AGENDA: \[.*?\](\n|$)/s, `AGENDA: [omitido para economizar tokens — priorize o ${pdf.isImage?'imagem':'PDF'}]\n`)
            .replace(/HISTÓRICO: .*?(\n|$)/s, '')
     : system;
   try{

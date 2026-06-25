@@ -851,9 +851,9 @@ HISTÓRICO: ${ctx.historico.slice(0,10).map(h=>`${h.date} ${h.time} ${h.setor} $
 PADRÕES POR MÉDICO (use como sugestão quando o usuário não especificar setor/horário/duração): ${prefsTxt||'nenhum padrão suficiente ainda'}
 CORREÇÕES APRENDIDAS (erros já cometidos antes — não repita): ${correcoesTxt||'nenhuma correção registrada ainda'}
 DESLOCAMENTOS ENTRE SETORES (tempo mínimo de folga ao mudar de local): ${deslocTxt}
-REGRAS: interprete linguagem natural e abreviações (CC=Centro Cirúrgico, raqui=raquianestesia, AG=anestesia geral). Use memórias/histórico/padrões por médico para preencher campos omitidos — por exemplo, se o usuário disser apenas "agenda uma raqui pro Dr. Carlos quinta" sem hora, use o horário habitual dele. Estime "duracao_min" com base no tipo de procedimento e na duração média do médico se disponível (padrão 60; cirurgias maiores podem ser 90-180; procedimentos rápidos como sedação podem ser 30). Respeite SEMPRE as correções aprendidas. Detecte conflito considerando que o evento ocupa [time, time+duracao_min) — a checagem real é feita pelo servidor, mas avise no texto se notar sobreposição óbvia. OTIMIZAÇÃO DE SEQUÊNCIA: quando o usuário enviar múltiplos procedimentos para organizar no dia, use os tempos de DESLOCAMENTOS para calcular a folga mínima necessária entre procedimentos do mesmo médico em setores diferentes. Agrupe procedimentos do mesmo médico em setores próximos (menor deslocamento) sempre que possível. Ao sugerir horários, some: duração do procedimento anterior + tempo de deslocamento entre os setores + margem de preparo (adicione 5min extra). Explique brevemente a lógica de sequência no campo "resposta". Para PDFs: extraia tudo e sugira anestesista. novas_memorias: máx 2. suggests: 2 ações. Seja breve.
+REGRAS: interprete linguagem natural e abreviações (CC=Centro Cirúrgico, raqui=raquianestesia, AG=anestesia geral). Use memórias/histórico/padrões por médico para preencher campos omitidos. Estime "duracao_min" com base no tipo de procedimento (padrão 60; cirurgias maiores 90-180; procedimentos rápidos como sedação 30). Respeite SEMPRE as correções aprendidas. OTIMIZAÇÃO DE SEQUÊNCIA: use DESLOCAMENTOS para calcular folga mínima entre setores diferentes do mesmo médico. PDF COM MÚLTIPLOS PACIENTES: quando o PDF tiver 2 ou mais procedimentos para agendar, use OBRIGATORIAMENTE a ação AGENDAR_MULTIPLOS com todos os eventos na lista "eventos" — NUNCA use AGENDAR para PDFs com múltiplos pacientes. AGENDAR_MULTIPLOS deve incluir TODOS os pacientes do PDF, sem exceção. novas_memorias: máx 2. suggests: 2 ações. Seja breve.
 RETORNE APENAS JSON sem markdown:
-{"acao":"AGENDAR"|"CANCELAR"|"RELATORIO"|"CONSULTAR"|"CORRECAO"|"DUVIDA","resposta":"HTML","evento":{"id":N,"doc":"","setor":"","proc":"","paciente":"","date":"YYYY-MM-DD","time":"HH:MM","duracao_min":60,"obs":""},"cancelar_id":N|null,"tabela":[{"data":"","hora":"","setor":"","proc":"","paciente":"","medico":"","obs":""}],"novas_memorias":[{"texto":"","icone":""}],"suggests":["",""]}`;
+{"acao":"AGENDAR"|"AGENDAR_MULTIPLOS"|"CANCELAR"|"RELATORIO"|"CONSULTAR"|"CORRECAO"|"DUVIDA","resposta":"HTML","evento":{"id":N,"doc":"","setor":"","proc":"","paciente":"","date":"YYYY-MM-DD","time":"HH:MM","duracao_min":60,"obs":""},"eventos":[{"doc":"","setor":"","proc":"","paciente":"","date":"YYYY-MM-DD","time":"HH:MM","duracao_min":60,"obs":""}],"cancelar_id":N|null,"tabela":[{"data":"","hora":"","setor":"","proc":"","paciente":"","medico":"","obs":""}],"novas_memorias":[{"texto":"","icone":""}],"suggests":["",""]}`;
 
   const mc=pdf?[{type:'document',source:{type:'base64',media_type:'application/pdf',data:pdf.b64}},{type:'text',text:txt}]:txt;
   // Quando há PDF, reduz o contexto para não estourar o limite de tokens da Groq
@@ -906,6 +906,37 @@ RETORNE APENAS JSON sem markdown:
           if(same.length>=3)addMem(`"${ev.proc.split('—')[0].trim()}" frequente no ${s.name}`,'ti-star');
         }catch(e){addMsg(`⚠️ ${e.message}`,'bot',{sug});}
       }
+    } else if(p.acao==='AGENDAR_MULTIPLOS'&&Array.isArray(p.eventos)&&p.eventos.length){
+      // Agenda múltiplos eventos em sequência (ex: vários pacientes de um PDF)
+      const lista=p.eventos;
+      let agendados=[];let conflitos=[];let erros=[];
+      for(const ev of lista){
+        if(!ev.proc||!ev.date){erros.push(ev.paciente||'?');continue;}
+        const cf=eventos.find(e=>e.doc===ev.doc&&e.date===ev.date&&e.time===ev.time);
+        if(cf){conflitos.push(`${ev.paciente||ev.proc} (${ev.time} - conflito com ${cf.proc})`);continue;}
+        try{
+          const payload={...ev,ai:true};
+          if(pdf&&agendados.length===0){payload.pdf_filename=pdf.name;payload.pdf_data=pdf.b64;}
+          const saved=await api('POST','/api/eventos',payload);
+          eventos.push(saved);agendados.push(saved);
+        }catch(e){erros.push(`${ev.paciente||ev.proc}: ${e.message}`);}
+      }
+      // Monta resumo visual
+      let html=p.resposta?`${p.resposta}<br><br>`:'';
+      if(agendados.length){
+        html+=`📄 <b>${agendados.length} procedimento${agendados.length!==1?'s':''} agendado${agendados.length!==1?'s':''}:</b><br>`;
+        html+='<div style="margin-top:6px;display:flex;flex-direction:column;gap:6px">';
+        agendados.forEach(ev=>{
+          const s=getS(ev.setor);const bc=BADGE[ev.setor]||'';
+          const durTxt=(ev.duracao_min&&ev.duracao_min!==60)?` <span style="font-size:10px;color:var(--hint)">(${ev.duracao_min}min)</span>`:'';
+          html+=`<div class="ev-card" style="padding:8px 10px"><div class="ev-row"><i class="ti ti-clock"></i><b>${ev.time}</b>${durTxt} · <span class="ev-tag ${bc}">${s.name}</span></div><div class="ev-row"><i class="ti ti-clipboard-list"></i>${ev.proc}</div><div class="ev-row"><i class="ti ti-user"></i>${ev.paciente||'—'} · <span style="font-size:10px;color:var(--muted)">${ev.doc}</span></div>${ev.obs?`<div class="ev-row"><i class="ti ti-notes"></i><span style="font-size:10px">${ev.obs}</span></div>`:''}</div>`;
+        });
+        html+='</div>';
+      }
+      if(conflitos.length)html+=`<br>⚠️ <b>Conflitos não agendados:</b><br>${conflitos.map(c=>`• ${c}`).join('<br>')}`;
+      if(erros.length)html+=`<br>❌ <b>Erros:</b><br>${erros.map(e=>`• ${e}`).join('<br>')}`;
+      addMsg(html,'bot',{sug});
+      if(pdf)rmPDF();
     } else if(p.acao==='CANCELAR'&&p.cancelar_id!=null){
       const idx=eventos.findIndex(e=>e.id===p.cancelar_id);
       if(idx>=0){const ev=eventos[idx];try{await api('DELETE',`/api/eventos/${p.cancelar_id}`);eventos.splice(idx,1);addMsg(`🗑️ Cancelado: <b>${ev.proc}</b> — ${ev.paciente||'—'} — ${fmtD(ev.date)} às ${ev.time}.`,'bot',{sug});}catch(e){addMsg(`⚠️ ${e.message}`,'bot',{sug});}}

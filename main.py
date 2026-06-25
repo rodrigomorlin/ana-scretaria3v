@@ -1364,7 +1364,7 @@ async def start_scheduler():
     asyncio.create_task(scheduler_loop())
 
 # ── CHAT PROXY (Groq — gratuito, evita CORS) ──────────────
-def _extract_pdf_text(pdf_b64: str, max_chars: int = 6000) -> str:
+def _extract_pdf_text(pdf_b64: str, max_chars: int = 4000) -> str:
     """Extrai texto de um PDF em base64. Retorna string vazia se falhar."""
     if not PDF_SUPPORT or not pdf_b64:
         return ""
@@ -1376,7 +1376,9 @@ def _extract_pdf_text(pdf_b64: str, max_chars: int = 6000) -> str:
             text += page.extract_text() or ""
             if len(text) >= max_chars:
                 break
-        return text[:max_chars].strip()
+        result = text[:max_chars].strip()
+        log.info(f"PDF extraído: {len(result)} chars de {len(reader.pages)} página(s)")
+        return result
     except Exception as e:
         log.error(f"Erro ao extrair texto do PDF: {e}")
         return ""
@@ -1424,6 +1426,9 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
         "messages": openai_messages,
         "temperature": 0.3,
     }).encode("utf-8")
+
+    total_chars = sum(len(m.get("content","")) for m in openai_messages)
+    log.info(f"Chat proxy: {len(openai_messages)} msgs, ~{total_chars} chars totais no contexto, payload={len(payload)} bytes")
 
     try:
         http_req = urllib.request.Request(

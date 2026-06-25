@@ -38,6 +38,7 @@ GOOGLE_CLIENT_ID     = os.environ.get("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 APP_BASE_URL         = os.environ.get("APP_BASE_URL", "")
 GOOGLE_ROUTES_API_KEY = os.environ.get("GOOGLE_ROUTES_API_KEY", "")
+GEMINI_API_KEY       = os.environ.get("GEMINI_API_KEY", "")
 
 USE_POSTGRES = bool(DATABASE_URL and DATABASE_URL.startswith("postgres"))
 
@@ -1364,8 +1365,55 @@ async def start_scheduler():
     asyncio.create_task(scheduler_loop())
 
 # ── CHAT PROXY (Groq — gratuito, evita CORS) ──────────────
+def _extract_pdf_gemini(pdf_b64: str) -> str:
+    """Usa o Gemini Flash para extrair e estruturar o conteúdo do PDF nativamente.
+    Muito superior ao pypdf para PDFs com tabelas, colunas e formatação complexa."""
+    try:
+        prompt = """Você é um assistente de extração de dados médicos. Analise este PDF e extraia TODAS as informações relevantes de forma estruturada.
+
+Retorne um texto claro com:
+- Data da agenda
+- Para cada paciente: nome completo, data/hora do procedimento, procedimento exato, se é COM ANESTESIA ou SEM ANESTESIA, convênio, observações relevantes
+- Destaque claramente quais procedimentos requerem anestesia
+
+Seja preciso e inclua todos os pacientes listados. Não omita nenhum dado."""
+
+        payload = json.dumps({
+            "contents": [{
+                "parts": [
+                    {
+                        "inline_data": {
+                            "mime_type": "application/pdf",
+                            "data": pdf_b64
+                        }
+                    },
+                    {"text": prompt}
+                ]
+            }],
+            "generationConfig": {
+                "temperature": 0.1,
+                "maxOutputTokens": 2000
+            }
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = json.loads(r.read())
+
+        text = data["candidates"][0]["content"]["parts"][0]["text"]
+        log.info(f"Gemini PDF extraction: {len(text)} chars extraídos")
+        return text
+    except Exception as e:
+        log.error(f"Gemini PDF extraction erro: {e}")
+        return ""
+
 def _extract_pdf_text(pdf_b64: str, max_chars: int = 4000) -> str:
-    """Extrai texto de um PDF em base64. Retorna string vazia se falhar."""
+    """Extrai texto de um PDF em base64 via pypdf (fallback quando sem Gemini API key)."""
     if not PDF_SUPPORT or not pdf_b64:
         return ""
     try:
@@ -1377,11 +1425,20 @@ def _extract_pdf_text(pdf_b64: str, max_chars: int = 4000) -> str:
             if len(text) >= max_chars:
                 break
         result = text[:max_chars].strip()
-        log.info(f"PDF extraído: {len(result)} chars de {len(reader.pages)} página(s)")
+        log.info(f"pypdf extração: {len(result)} chars de {len(reader.pages)} página(s)")
         return result
     except Exception as e:
         log.error(f"Erro ao extrair texto do PDF: {e}")
         return ""
+
+def extract_pdf(pdf_b64: str) -> str:
+    """Extrai conteúdo do PDF: usa Gemini se disponível, senão pypdf."""
+    if GEMINI_API_KEY and pdf_b64:
+        result = _extract_pdf_gemini(pdf_b64)
+        if result:
+            return result
+        log.warning("Gemini falhou na extração do PDF, tentando pypdf...")
+    return _extract_pdf_text(pdf_b64)
 
 class ChatRequest(BaseModel):
     system: str
@@ -1409,7 +1466,7 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
                 elif part.get("type") == "document":
                     src = part.get("source", {})
                     pdf_b64 = src.get("data", "")
-                    extracted = _extract_pdf_text(pdf_b64)
+                    extracted = extract_pdf(pdf_b64)
                     if extracted:
                         text_parts.append(f"[Conteúdo extraído do PDF anexado]\n{extracted}")
                     else:
@@ -1610,6 +1667,7 @@ def health():
             "ai":bool(GROQ_KEY),
             "oauth_google":bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and APP_BASE_URL),
             "google_routes":bool(GOOGLE_ROUTES_API_KEY),
+            "gemini":bool(GEMINI_API_KEY),
             "timestamp":datetime.now().isoformat()}
 
 # ── PÁGINAS PÚBLICAS (política de privacidade / termos) ────

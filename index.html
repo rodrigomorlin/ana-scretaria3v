@@ -412,6 +412,8 @@ html,body{height:100%;background:var(--bg);color:var(--text);
         <div class="fl"><label>Código</label><input id="nscode" placeholder="hd" maxlength="3"></div>
         <div class="fl"><label>Cor</label><input type="color" id="nscolor" value="#CECBF6" style="width:100%;height:36px;padding:2px;border-radius:6px;border:0.5px solid var(--border);cursor:pointer"></div>
       </div>
+      <div class="fl" style="margin-bottom:8px"><label>Endereço (para cálculo de deslocamento via HERE API)</label><input id="nsendereco" placeholder="ex: Rua Coronel Genuíno 290, Porto Alegre, RS"></div>
+      <div class="fl" style="margin-bottom:8px"><label>Tempo manual de deslocamento (min) — usado quando sem endereço ou dentro do mesmo prédio</label><input type="number" id="nstempo" min="0" step="5" value="0" style="max-width:100px"></div>
       <button class="btn primary" onclick="addSetor()"><i class="ti ti-plus"></i> Adicionar</button>
     </div>
   </div>
@@ -459,6 +461,10 @@ html,body{height:100%;background:var(--bg);color:var(--text);
       <div class="sep-lbl" style="margin-bottom:3px">Lembrete diário</div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Todos os dias às 18h, a Ana envia automaticamente um resumo da agenda do dia seguinte para cada médico com email cadastrado.</div>
       <button class="btn sm" onclick="sendDailyReminder()"><i class="ti ti-send"></i> Enviar lembrete de amanhã agora</button>
+      <div class="sep-lbl" style="margin-bottom:3px;margin-top:14px">Google Routes API — Cálculo de deslocamento</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Calcula automaticamente o tempo de deslocamento entre setores em endereços diferentes, considerando trânsito em tempo real. Incluso no crédito gratuito de $200/mês do Google Cloud (zero custo na prática para o volume da Ana).</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Configure a variável <code style="background:var(--faint);padding:1px 5px;border-radius:3px">GOOGLE_ROUTES_API_KEY</code> no Railway. Depois cadastre o endereço de cada setor em Config → Setores e clique em Recalcular abaixo.</div>
+      <button class="btn sm" onclick="recalcularDeslocamentos()"><i class="ti ti-refresh"></i> Recalcular deslocamentos</button>
     </div>
   </div>
 
@@ -825,6 +831,10 @@ async function processInput(txt,pdf=null){
 
   const correcoesTxt=(ctx.correcoes||[]).map(c=>`Campo "${c.campo}": evite "${c.valor_errado}", prefira "${c.valor_certo}"`).join(' | ');
 
+  const deslocTxt=Object.entries(ctx.deslocamentos||{}).length
+    ? Object.entries(ctx.deslocamentos).map(([par,min])=>`${par}: ${min}`).join(' | ')
+    : 'nenhum tempo de deslocamento cadastrado ainda';
+
   const semMedicos = !ctx.medicos.length;
   const semSetores = !Object.keys(ctx.setores).length;
   const avisoInicial = (semMedicos||semSetores)
@@ -840,7 +850,8 @@ MEMÓRIAS: ${ctx.memorias.slice(0,20).join(' | ')}
 HISTÓRICO: ${ctx.historico.slice(0,10).map(h=>`${h.date} ${h.time} ${h.setor} ${h.proc} ${h.paciente}`).join(' | ')}
 PADRÕES POR MÉDICO (use como sugestão quando o usuário não especificar setor/horário/duração): ${prefsTxt||'nenhum padrão suficiente ainda'}
 CORREÇÕES APRENDIDAS (erros já cometidos antes — não repita): ${correcoesTxt||'nenhuma correção registrada ainda'}
-REGRAS: interprete linguagem natural e abreviações (CC=Centro Cirúrgico, raqui=raquianestesia, AG=anestesia geral). Use memórias/histórico/padrões por médico para preencher campos omitidos — por exemplo, se o usuário disser apenas "agenda uma raqui pro Dr. Carlos quinta" sem hora, use o horário habitual dele. Estime "duracao_min" com base no tipo de procedimento e na duração média do médico se disponível (padrão 60; cirurgias maiores podem ser 90-180; procedimentos rápidos como sedação podem ser 30). Respeite SEMPRE as correções aprendidas listadas acima. Detecte conflito considerando que o evento ocupa [time, time+duracao_min) — a checagem real é feita pelo servidor, mas avise no texto se notar sobreposição óbvia. Para PDFs: extraia tudo e sugira anestesista. novas_memorias: máx 2. suggests: 2 ações. Seja breve.
+DESLOCAMENTOS ENTRE SETORES (tempo mínimo de folga ao mudar de local): ${deslocTxt}
+REGRAS: interprete linguagem natural e abreviações (CC=Centro Cirúrgico, raqui=raquianestesia, AG=anestesia geral). Use memórias/histórico/padrões por médico para preencher campos omitidos — por exemplo, se o usuário disser apenas "agenda uma raqui pro Dr. Carlos quinta" sem hora, use o horário habitual dele. Estime "duracao_min" com base no tipo de procedimento e na duração média do médico se disponível (padrão 60; cirurgias maiores podem ser 90-180; procedimentos rápidos como sedação podem ser 30). Respeite SEMPRE as correções aprendidas. Detecte conflito considerando que o evento ocupa [time, time+duracao_min) — a checagem real é feita pelo servidor, mas avise no texto se notar sobreposição óbvia. OTIMIZAÇÃO DE SEQUÊNCIA: quando o usuário enviar múltiplos procedimentos para organizar no dia, use os tempos de DESLOCAMENTOS para calcular a folga mínima necessária entre procedimentos do mesmo médico em setores diferentes. Agrupe procedimentos do mesmo médico em setores próximos (menor deslocamento) sempre que possível. Ao sugerir horários, some: duração do procedimento anterior + tempo de deslocamento entre os setores + margem de preparo (adicione 5min extra). Explique brevemente a lógica de sequência no campo "resposta". Para PDFs: extraia tudo e sugira anestesista. novas_memorias: máx 2. suggests: 2 ações. Seja breve.
 RETORNE APENAS JSON sem markdown:
 {"acao":"AGENDAR"|"CANCELAR"|"RELATORIO"|"CONSULTAR"|"CORRECAO"|"DUVIDA","resposta":"HTML","evento":{"id":N,"doc":"","setor":"","proc":"","paciente":"","date":"YYYY-MM-DD","time":"HH:MM","duracao_min":60,"obs":""},"cancelar_id":N|null,"tabela":[{"data":"","hora":"","setor":"","proc":"","paciente":"","medico":"","obs":""}],"novas_memorias":[{"texto":"","icone":""}],"suggests":["",""]}`;
 
@@ -1147,18 +1158,30 @@ async function addDoc(){
 async function rmDoc(id){try{await api('DELETE',`/api/medicos/${id}`);medicos=medicos.filter(d=>d.id!==id);renderDocList();}catch(e){toast(e.message,'err');}}
 
 function renderSetorList(){
-  document.getElementById('setlist').innerHTML=setores.map(s=>`<div class="li"><div class="cdot" style="background:${s.color}"></div><div class="li-name">${s.name}</div><div class="li-spec">cód: ${s.id}</div><button class="btn danger sm" onclick="rmSetor('${s.id}')"><i class="ti ti-trash"></i></button></div>`).join('');
+  document.getElementById('setlist').innerHTML=setores.map(s=>{
+    const info=[];
+    if(s.endereco)info.push(`<i class="ti ti-map-pin"></i> ${s.endereco}`);
+    if(s.tempo_manual>0)info.push(`<i class="ti ti-clock"></i> ${s.tempo_manual}min manual`);
+    return `<div class="li"><div class="cdot" style="background:${s.color}"></div><div class="li-name">${s.name}</div><div class="li-spec">cód: ${s.id}${info.length?' · '+info.join(' · '):''}</div><button class="btn danger sm" onclick="rmSetor('${s.id}')"><i class="ti ti-trash"></i></button></div>`;
+  }).join('');
   const setorSel=document.getElementById('ag-filter-setor');if(setorSel)setorSel.dataset.filled='0';
 }
 async function addSetor(){
   const name=document.getElementById('nsname').value.trim();
   const code=document.getElementById('nscode').value.trim().toLowerCase().replace(/\s/g,'').substring(0,3);
   const color=document.getElementById('nscolor').value;
+  const endereco=document.getElementById('nsendereco').value.trim();
+  const tempo_manual=parseInt(document.getElementById('nstempo').value)||0;
   if(!name||!code){toast('Preencha nome e código.','warn');return;}
-  try{const s={id:code,name,color,text_color:'#1A1A2E'};await api('POST','/api/setores',s);setores.push(s);renderSetorList();toast('Setor adicionado!');}catch(e){toast(e.message,'err');}
+  try{
+    const s={id:code,name,color,text_color:'#1A1A2E',endereco,tempo_manual};
+    await api('POST','/api/setores',s);setores.push(s);renderSetorList();
+    document.getElementById('nsname').value='';document.getElementById('nscode').value='';
+    document.getElementById('nsendereco').value='';document.getElementById('nstempo').value='0';
+    toast('Setor adicionado!');
+  }catch(e){toast(e.message,'err');}
 }
 async function rmSetor(id){try{await api('DELETE',`/api/setores/${id}`);setores=setores.filter(s=>s.id!==id);renderSetorList();}catch(e){toast(e.message,'err');}}
-
 // ── USERS ────────────────────────────────────────────────
 async function loadUList(){
   try{
@@ -1224,6 +1247,13 @@ async function saveOrgInfo(){
   try{
     await api('POST','/api/org/info',{nome});
     toast('Nome do grupo salvo.');
+  }catch(e){toast(e.message,'err');}
+}
+async function recalcularDeslocamentos(){
+  try{
+    toast('Recalculando... pode levar alguns segundos.');
+    const r=await api('POST','/api/deslocamentos/recalcular');
+    toast(`Deslocamentos atualizados: ${r.pares_calculados} par(es) calculado(s).`);
   }catch(e){toast(e.message,'err');}
 }
 async function loadGcalCurrent(){

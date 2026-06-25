@@ -618,8 +618,8 @@ async def gcal_create(ev, setor_name, criado_por_id: Optional[str] = None, org_i
             log.error("GCal criar: serviço não pôde ser construído (sem token e sem GCAL_CREDS).")
             return ""
         ini_min = _time_to_min(ev["time"])
-        fim_min = ini_min + max(ev.get("duracao_min") or 60, 1)
-        fim_min = min(fim_min, 23*60+59)  # não passa da meia-noite
+        # Google Calendar exige hora de fim — usa 30min como padrão fixo (não afeta lógica de conflito)
+        fim_min = min(ini_min + 30, 23*60+59)
         end_h, end_m = fim_min // 60, fim_min % 60
         body = {
             "summary": f"{ev['proc']} — {ev.get('paciente','—')}",
@@ -830,20 +830,14 @@ def delete_usuario(uid: str, user=Depends(auth)):
     conn.commit(); conn.close(); return {"ok": True}
 
 # ── EVENTOS ────────────────────────────────────────────────
-def find_overlap(c, doc: str, date: str, time: str, duracao_min: int, org_id: str, exclude_id: Optional[int] = None):
-    """Retorna o evento que sobrepõe o intervalo [time, time+duracao_min) do mesmo médico no mesmo dia, ou None."""
-    c.execute(f"SELECT id,proc,time,duracao_min,paciente FROM eventos WHERE doc={P()} AND date={P()} AND org_id={P()}", (doc, date, org_id))
-    existentes = fetchall(c)
-    novo_ini = _time_to_min(time)
-    novo_fim = novo_ini + max(duracao_min or 60, 1)
-    for e in existentes:
+def find_overlap(c, doc: str, date: str, time: str, org_id: str, exclude_id: Optional[int] = None):
+    """Retorna o evento com mesmo médico, data e horário exato. Usado como aviso, não bloqueio."""
+    c.execute(f"SELECT id,proc,time,paciente FROM eventos WHERE doc={P()} AND date={P()} AND time={P()} AND org_id={P()}", (doc, date, time, org_id))
+    rows = fetchall(c)
+    for e in rows:
         if exclude_id is not None and e["id"] == exclude_id:
             continue
-        e_ini = _time_to_min(e["time"])
-        e_fim = e_ini + max(e.get("duracao_min") or 60, 1)
-        # Sobreposição se os intervalos se cruzam
-        if novo_ini < e_fim and e_ini < novo_fim:
-            return e
+        return e
     return None
 
 @app.get("/api/eventos")
@@ -856,14 +850,11 @@ def list_eventos(user=Depends(auth)):
 async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=Depends(auth)):
     org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
-    cf = find_overlap(c, ev.doc, ev.date, ev.time, ev.duracao_min or 60, org_id)
+    cf = find_overlap(c, ev.doc, ev.date, ev.time, org_id)
+    aviso_conflito = None
     if cf:
-        conn.close()
-        cf_ini = cf["time"]
-        cf_dur = cf.get("duracao_min") or 60
-        cf_fim_min = _time_to_min(cf_ini) + cf_dur
-        cf_fim = f"{cf_fim_min//60:02d}:{cf_fim_min%60:02d}"
-        raise HTTPException(400, f"Conflito: {ev.doc} já tem '{cf['proc']}' das {cf_ini} às {cf_fim} (paciente {cf.get('paciente') or '—'}).")
+        aviso_conflito = f"⚠️ Atenção: {ev.doc} já tem '{cf['proc']}' às {cf['time']} (paciente: {cf.get('paciente') or '—'}). Agendado mesmo assim."
+        db_log("WARN", f"Conflito de horário: {ev.doc} às {ev.time} — {ev.proc} e {cf['proc']}", usuario=user["id"], org_id=org_id)
 
     # Busca setor e email do médico (dentro do mesmo grupo)
     c.execute(f"SELECT name FROM setores WHERE id={P()} AND org_id={P()}", (ev.setor, org_id))
@@ -872,7 +863,6 @@ async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=
     mr = fetchone(c); med_email = mr["email"] if mr else ""
 
     gcal_id = ""
-    # Tenta usar o calendário pessoal do usuário (OAuth) ou cai para a conta de serviço/calendário do grupo
     if get_user_google_token(user["id"]) or GCAL_CREDS:
         gcal_id = await gcal_create(ev.dict(), sname, criado_por_id=user["id"], org_id=org_id)
 
@@ -881,7 +871,7 @@ async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=
               (ev.doc, ev.setor, ev.proc, ev.paciente or "", ev.date, ev.time,
                ev.obs or "", int(ev.ai or 1), user["id"], gcal_id,
                (ev.pdf_filename or "")[:200], (ev.pdf_data or "")[:3000000],
-               ev.duracao_min or 60, org_id))
+               0, org_id))
 
     if USE_POSTGRES:
         c.execute("SELECT lastval()"); new_id = c.fetchone()[0]
@@ -902,7 +892,7 @@ async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=
                     f"Ana · {ev.proc} — {ev.date} {ev.time}",
                     email_html(ev.dict(), sname))
 
-    return {"id": new_id, **ev.dict()}
+    return {"id": new_id, "aviso": aviso_conflito, **ev.dict()}
 
 @app.delete("/api/eventos/{ev_id}")
 async def delete_evento(ev_id: int, bg: BackgroundTasks, user=Depends(auth)):
@@ -943,17 +933,22 @@ async def update_evento(ev_id: int, ev: EventoUpdate, bg: BackgroundTasks, user=
         "date": ev.date if ev.date is not None else current["date"],
         "time": ev.time if ev.time is not None else current["time"],
         "obs": ev.obs if ev.obs is not None else current["obs"],
-        "duracao_min": ev.duracao_min if ev.duracao_min is not None else (current.get("duracao_min") or 60),
     }
 
-    # Verifica sobreposição (ignorando o próprio evento)
-    cf = find_overlap(c, merged["doc"], merged["date"], merged["time"], merged["duracao_min"], org_id, exclude_id=ev_id)
+    # Verifica horário exato duplicado (aviso, não bloqueio)
+    cf = find_overlap(c, merged["doc"], merged["date"], merged["time"], org_id, exclude_id=ev_id)
+    aviso_conflito = None
     if cf:
-        conn.close()
-        cf_ini = cf["time"]
-        cf_fim_min = _time_to_min(cf_ini) + (cf.get("duracao_min") or 60)
-        cf_fim = f"{cf_fim_min//60:02d}:{cf_fim_min%60:02d}"
-        raise HTTPException(400, f"Conflito: {merged['doc']} já tem '{cf['proc']}' das {cf_ini} às {cf_fim}.")
+        aviso_conflito = f"⚠️ {merged['doc']} já tem '{cf['proc']}' às {cf['time']} (paciente: {cf.get('paciente') or '—'}). Editado mesmo assim."
+        db_log("WARN", f"Conflito de horário na edição: {merged['doc']} às {merged['time']}", usuario=user["id"], org_id=org_id)
+
+    c.execute(f"""UPDATE eventos SET doc={P()},setor={P()},proc={P()},paciente={P()},
+                  date={P()},time={P()},obs={P()} WHERE id={P()} AND org_id={P()}""",
+              (merged["doc"], merged["setor"], merged["proc"], merged["paciente"] or "",
+               merged["date"], merged["time"], merged["obs"] or "", ev_id, org_id))
+    conn.commit(); conn.close()
+    db_log("INFO", f"Editado: evento #{ev_id} → {merged['proc']} | {merged['date']} {merged['time']}",
+           usuario=user["id"], org_id=org_id)
 
     c.execute(f"""UPDATE eventos SET doc={P()},setor={P()},proc={P()},paciente={P()},
                   date={P()},time={P()},obs={P()},duracao_min={P()} WHERE id={P()} AND org_id={P()}""",
@@ -979,7 +974,7 @@ async def update_evento(ev_id: int, ev: EventoUpdate, bg: BackgroundTasks, user=
         c3.execute(f"UPDATE eventos SET gcal_event_id={P()} WHERE id={P()} AND org_id={P()}", (new_gcal, ev_id, org_id))
         conn3.commit(); conn3.close()
 
-    return {"id": ev_id, **merged}
+    return {"id": ev_id, "aviso": aviso_conflito, **merged}
 
 # ── MÉDICOS ────────────────────────────────────────────────
 @app.get("/api/medicos")

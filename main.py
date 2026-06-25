@@ -856,6 +856,46 @@ async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=
         aviso_conflito = f"⚠️ Atenção: {ev.doc} já tem '{cf['proc']}' às {cf['time']} (paciente: {cf.get('paciente') or '—'}). Agendado mesmo assim."
         db_log("WARN", f"Conflito de horário: {ev.doc} às {ev.time} — {ev.proc} e {cf['proc']}", usuario=user["id"], org_id=org_id)
 
+    # Verifica deslocamento: busca outros procedimentos do mesmo médico no mesmo dia
+    aviso_desl = None
+    try:
+        c.execute(f"SELECT id,proc,setor,time FROM eventos WHERE doc={P()} AND date={P()} AND org_id={P()} ORDER BY time",
+                  (ev.doc, ev.date, org_id))
+        outros = fetchall(c)
+        novo_min = _time_to_min(ev.time)
+        for outro in outros:
+            if outro["setor"] == ev.setor:
+                continue  # mesmo setor, sem deslocamento relevante
+            outro_min = _time_to_min(outro["time"])
+            intervalo = abs(novo_min - outro_min)
+            if intervalo == 0:
+                continue
+            mins_desl = get_deslocamento(ev.setor, outro["setor"], org_id)
+            if mins_desl and mins_desl > 0:
+                # Qual vem antes e qual depois
+                if novo_min < outro_min:
+                    anterior_proc, anterior_setor, posterior_proc, posterior_setor = ev.proc, ev.setor, outro["proc"], outro["setor"]
+                else:
+                    anterior_proc, anterior_setor, posterior_proc, posterior_setor = outro["proc"], outro["setor"], ev.proc, ev.setor
+                c2 = get_db().cursor()
+                c2.execute(f"SELECT name FROM setores WHERE id={P()} AND org_id={P()}", (ev.setor, org_id))
+                r1 = fetchone(c2)
+                c2.execute(f"SELECT name FROM setores WHERE id={P()} AND org_id={P()}", (outro["setor"], org_id))
+                r2 = fetchone(c2)
+                nome_setor_novo = r1["name"] if r1 else ev.setor
+                nome_setor_outro = r2["name"] if r2 else outro["setor"]
+                if intervalo < mins_desl:
+                    aviso_desl = (f"🚗 Deslocamento apertado: {ev.doc} tem apenas {intervalo}min entre "
+                                  f"'{anterior_proc}' ({nome_setor_novo if novo_min < outro_min else nome_setor_outro}) "
+                                  f"e '{posterior_proc}' ({nome_setor_outro if novo_min < outro_min else nome_setor_novo}), "
+                                  f"mas o deslocamento estimado é {mins_desl}min.")
+                elif intervalo < mins_desl + 10:
+                    aviso_desl = (f"⏱️ Deslocamento justo: {intervalo}min de intervalo, "
+                                  f"deslocamento estimado {mins_desl}min entre {nome_setor_novo} e {nome_setor_outro}.")
+                break  # avisa só o par mais crítico
+    except Exception as e:
+        log.warning(f"Erro ao verificar deslocamento: {e}")
+
     # Busca setor e email do médico (dentro do mesmo grupo)
     c.execute(f"SELECT name FROM setores WHERE id={P()} AND org_id={P()}", (ev.setor, org_id))
     sr = fetchone(c); sname = sr["name"] if sr else ev.setor
@@ -892,7 +932,10 @@ async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=
                     f"Ana · {ev.proc} — {ev.date} {ev.time}",
                     email_html(ev.dict(), sname))
 
-    return {"id": new_id, "aviso": aviso_conflito, **ev.dict()}
+    # Consolida avisos
+    avisos = [a for a in [aviso_conflito, aviso_desl] if a]
+    aviso_final = " | ".join(avisos) if avisos else None
+    return {"id": new_id, "aviso": aviso_final, **ev.dict()}
 
 @app.delete("/api/eventos/{ev_id}")
 async def delete_evento(ev_id: int, bg: BackgroundTasks, user=Depends(auth)):

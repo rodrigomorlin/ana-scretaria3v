@@ -39,6 +39,7 @@ GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 APP_BASE_URL         = os.environ.get("APP_BASE_URL", "")
 GOOGLE_ROUTES_API_KEY = os.environ.get("GOOGLE_ROUTES_API_KEY", "")
 GEMINI_API_KEY       = os.environ.get("GEMINI_API_KEY", "")
+OCR_SPACE_API_KEY    = os.environ.get("OCR_SPACE_API_KEY", "")
 
 USE_POSTGRES = bool(DATABASE_URL and DATABASE_URL.startswith("postgres"))
 
@@ -1450,8 +1451,44 @@ Seja preciso e inclua todos os pacientes listados. Não omita nenhum dado."""
         log.error(f"Gemini PDF extraction erro: {e}")
         return ""
 
+def _extract_image_ocrspace(image_b64: str, mime_type: str = "image/png") -> str:
+    """Fallback: OCR.space para extração de texto de imagens. Gratuito até 25k req/mês."""
+    if not OCR_SPACE_API_KEY:
+        return ""
+    try:
+        data_url = f"data:{mime_type};base64,{image_b64}"
+        body = urllib.parse.urlencode({
+            "base64Image": data_url,
+            "apikey": OCR_SPACE_API_KEY,
+            "language": "por",
+            "isOverlayRequired": "false",
+            "detectOrientation": "true",
+            "scale": "true",
+            "OCREngine": "2",
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            "https://api.ocr.space/parse/image",
+            data=body,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = json.loads(r.read())
+        if data.get("IsErroredOnProcessing"):
+            log.error(f"OCR.space erro: {data.get('ErrorMessage')}")
+            return ""
+        results = data.get("ParsedResults", [])
+        if not results:
+            return ""
+        text = "\n".join(r.get("ParsedText", "") for r in results).strip()
+        log.info(f"OCR.space extraído: {len(text)} chars")
+        return text
+    except Exception as e:
+        log.error(f"OCR.space erro: {e}")
+        return ""
+
 def _extract_image_gemini(image_b64: str, mime_type: str = "image/jpeg") -> str:
-    """Usa o Gemini Flash para extrair informações de agenda de uma imagem (screenshot, foto de tela, etc)."""
+    """Usa o Gemini Flash para extrair informações de agenda de uma imagem."""
     if not GEMINI_API_KEY:
         return ""
     try:
@@ -1501,6 +1538,8 @@ Seja preciso e inclua todos os pacientes listados. Não omita nenhum dado."""
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="ignore")
         log.error(f"Gemini image HTTP {e.code}: {body[:400]}")
+        if e.code == 429:
+            raise  # Re-lança 429 para o caller tentar o fallback
         return ""
     except Exception as e:
         log.error(f"Gemini image extraction erro: {type(e).__name__}: {e}")
@@ -1570,14 +1609,24 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
                     src = part.get("source", {})
                     img_b64 = src.get("data", "")
                     mime = src.get("media_type", "image/jpeg")
+                    extracted = ""
+                    # Tenta Gemini primeiro, cai para OCR.space se falhar
                     if img_b64 and GEMINI_API_KEY:
-                        extracted = _extract_image_gemini(img_b64, mime)
+                        try:
+                            extracted = _extract_image_gemini(img_b64, mime)
+                        except urllib.error.HTTPError as e:
+                            if e.code == 429:
+                                log.warning("Gemini quota esgotada — tentando OCR.space como fallback")
+                            else:
+                                log.error(f"Gemini image erro {e.code}")
+                    if not extracted and img_b64 and OCR_SPACE_API_KEY:
+                        extracted = _extract_image_ocrspace(img_b64, mime)
                         if extracted:
-                            text_parts.append(f"[Conteúdo extraído da imagem anexada]\n{extracted}")
-                        else:
-                            text_parts.append("[Aviso: não foi possível extrair informações da imagem. Descreva o conteúdo em texto.]")
+                            log.info("OCR.space usado como fallback para imagem")
+                    if extracted:
+                        text_parts.append(f"[Conteúdo extraído da imagem anexada]\n{extracted}")
                     else:
-                        text_parts.append("[Imagem recebida mas GEMINI_API_KEY não configurada — não foi possível extrair o conteúdo. Configure GEMINI_API_KEY no Railway.]")
+                        text_parts.append("[Aviso: não foi possível extrair informações da imagem. Configure GEMINI_API_KEY ou OCR_SPACE_API_KEY no Railway.]")
             text = "\n".join(text_parts)
         else:
             text = str(content)
@@ -1774,6 +1823,7 @@ def health():
             "oauth_google":bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and APP_BASE_URL),
             "google_routes":bool(GOOGLE_ROUTES_API_KEY),
             "gemini":bool(GEMINI_API_KEY),
+            "ocr_space":bool(OCR_SPACE_API_KEY),
             "timestamp":datetime.now().isoformat()}
 
 # ── PÁGINAS PÚBLICAS (política de privacidade / termos) ────

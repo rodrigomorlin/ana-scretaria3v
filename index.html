@@ -829,16 +829,18 @@ document.body.addEventListener('drop',e=>{
 });
 function attachFile(file){
   if(!file)return;
-  const isImage=file.type.startsWith('image/');
-  const isPDF=file.type==='application/pdf'||file.name.endsWith('.pdf');
+  // Imagens coladas do clipboard às vezes vêm sem type — assume image/png
+  const mimeType=file.type||'image/png';
+  const isImage=mimeType.startsWith('image/');
+  const isPDF=mimeType==='application/pdf'||(file.name&&file.name.endsWith('.pdf'));
   if(!isImage&&!isPDF){toast('Formato não suportado. Use PDF, JPG ou PNG.','warn');return;}
   const r=new FileReader();
   r.onload=()=>{
-    pdfData={name:file.name,b64:r.result.split(',')[1],mime:file.type,isImage};
+    pdfData={name:file.name||'imagem.png',b64:r.result.split(',')[1],mime:mimeType,isImage};
     const icon=document.getElementById('pfi-icon');
     icon.className=isImage?'ti ti-photo':'ti ti-file-text';
     icon.style.color='var(--accent)';
-    document.getElementById('pdfname').textContent=file.name;
+    document.getElementById('pdfname').textContent=file.name||'imagem colada';
     document.getElementById('pdfwrap').style.display='block';
     document.getElementById('minp').placeholder=isImage?'Instrução (ex: agende os com anestesia)...':'Instrução adicional (opcional)...';
     document.getElementById('minp').focus();

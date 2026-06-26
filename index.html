@@ -221,6 +221,14 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 .toast.warn{background:#FFFBEB;border-color:#fcd34d;color:#92400e}
 .toast.info{background:#EFF6FF;border-color:#93c5fd;color:#1e40af}
 
+/* ── BOTTOM NAV (mobile) ─────────────────────────────────── */
+.bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--border);z-index:50;padding:6px 0 max(6px,env(safe-area-inset-bottom))}
+.bottom-nav-items{display:flex;justify-content:space-around;align-items:center}
+.bn-item{display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 12px;border:none;background:none;cursor:pointer;color:var(--muted);font-size:9px;font-weight:500;font-family:inherit;border-radius:8px;transition:color .12s;min-width:52px}
+.bn-item i{font-size:20px}
+.bn-item.on{color:var(--accent)}
+.bn-item.on i{color:var(--accent)}
+
 /* ── RESPONSIVE ─────────────────────────────────────────── */
 @media(max-width:768px){
   .sidenav{width:56px}
@@ -240,6 +248,8 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 }
 @media(max-width:480px){
   .sidenav{display:none}
+  .bottom-nav{display:block}
+  .main{padding-bottom:64px}
   .grid4{grid-template-columns:1fr 1fr;gap:8px}
   .stat-n{font-size:22px}
 }
@@ -543,6 +553,18 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 </div><!-- /panels-wrapper -->
 </div><!-- /content-area -->
 </div><!-- /main -->
+
+<!-- BOTTOM NAV (mobile) -->
+<nav class="bottom-nav" id="bottom-nav">
+  <div class="bottom-nav-items">
+    <button class="bn-item on" id="bn-chat" onclick="tab('chat')"><i class="ti ti-message-2"></i>Chat</button>
+    <button class="bn-item" id="bn-agenda" onclick="tab('agenda')"><i class="ti ti-calendar"></i>Agenda</button>
+    <button class="bn-item" id="bn-relatorios" onclick="tab('relatorios')"><i class="ti ti-chart-bar"></i>Relatórios</button>
+    <button class="bn-item" id="bn-config" onclick="tab('config')"><i class="ti ti-settings"></i>Config</button>
+    <button class="bn-item" id="bn-logs" onclick="tab('logs')" style="display:none"><i class="ti ti-terminal"></i>Logs</button>
+  </div>
+</nav>
+
 </div><!-- /app -->
 
 <!-- MODAL EDITAR EVENTO -->
@@ -634,6 +656,7 @@ async function showApp(){
   if(ur)ur.textContent=me.role==='admin'?'Administrador':'Médico';
   if(me.role==='admin'){
     const el=document.getElementById('snav-logs');if(el)el.style.display='flex';
+    const bn=document.getElementById('bn-logs');if(bn)bn.style.display='flex';
   }
   await loadAll();loadIntStatus();initWelcome();
   setInterval(loadAll,30000);
@@ -770,6 +793,9 @@ function tab(n){
   names.forEach(name=>{
     const el=document.getElementById('snav-'+name);
     if(el)el.classList.toggle('on',name===n);
+    // Bottom nav
+    const bn=document.getElementById('bn-'+name);
+    if(bn)bn.classList.toggle('on',name===n);
   });
   // Chat column: visível só na aba chat
   const chatCol=document.getElementById('chat-col');

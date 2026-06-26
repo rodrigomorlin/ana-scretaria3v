@@ -377,7 +377,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <div class="inp-row">
       <button class="att-btn" onclick="document.getElementById('pfi').click()" aria-label="Anexar arquivo" title="Anexar PDF ou imagem"><i class="ti ti-paperclip"></i></button>
       <input type="file" id="pfi" accept=".pdf,image/jpeg,image/png,image/webp" style="display:none" onchange="attachFile(this.files[0])">
-      <input class="msg-inp" id="minp" placeholder="Fale com a Ana... (Ctrl+V para colar imagem)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}" onpaste="handlePaste(event)">
+      <input class="msg-inp" id="minp" placeholder="Fale com a Ana... (Ctrl+V para colar imagem)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}">
       <button class="snd-btn" id="sbtn" onclick="send()" aria-label="Enviar"><i class="ti ti-send"></i></button>
     </div>
     <div class="hint-txt">📎 Anexar PDF/imagem · Ctrl+V para colar printscreen · "novo CC terça 08h — raqui Maria, Dra. Ana"</div>
@@ -827,22 +827,6 @@ document.body.addEventListener('drop',e=>{
   e.preventDefault();document.getElementById('dov').classList.remove('on');
   const f=e.dataTransfer.files[0];if(f&&f.type==='application/pdf')attachPDF(f);else if(f)addMsg('Só aceito PDFs.','bot');
 });
-function handlePaste(event){
-  const items=event.clipboardData?.items;
-  if(!items)return;
-  for(const item of items){
-    if(item.type.startsWith('image/')){
-      event.preventDefault();
-      const file=item.getAsFile();
-      if(file){
-        attachFile(file);
-        toast('Imagem colada! Escreva uma instrução e envie.','info',3000);
-      }
-      return;
-    }
-  }
-  // Se não for imagem, deixa o paste normal acontecer (texto)
-}
 function attachFile(file){
   if(!file)return;
   const isImage=file.type.startsWith('image/');
@@ -1547,6 +1531,28 @@ if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch
 
 // ── INIT ─────────────────────────────────────────────────
 tryAuto();
+
+// Captura Ctrl+V com imagem em qualquer lugar da página
+document.addEventListener('paste', function(e){
+  // Só processa se o app estiver visível (usuário logado)
+  if(!token)return;
+  const items = e.clipboardData?.items;
+  if(!items)return;
+  for(const item of items){
+    if(item.type.startsWith('image/')){
+      e.preventDefault();
+      const file = item.getAsFile();
+      if(file){
+        attachFile(file);
+        // Foca o input para o usuário digitar a instrução
+        const inp = document.getElementById('minp');
+        if(inp)inp.focus();
+        toast('Imagem colada! Escreva uma instrução e envie.','info',3000);
+      }
+      return;
+    }
+  }
+});
 </script>
 </body>
 </html>

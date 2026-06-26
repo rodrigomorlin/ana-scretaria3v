@@ -1483,11 +1483,27 @@ Seja preciso e inclua todos os pacientes listados. Não omita nenhum dado."""
         with urllib.request.urlopen(req, timeout=30) as r:
             data = json.loads(r.read())
 
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
-        log.info(f"Gemini image extraction: {len(text)} chars extraídos")
+        # Verifica se há candidatos válidos
+        candidates = data.get("candidates", [])
+        if not candidates:
+            log.error(f"Gemini image: sem candidatos. Resposta: {json.dumps(data)[:300]}")
+            return ""
+        parts = candidates[0].get("content", {}).get("parts", [])
+        if not parts:
+            log.error(f"Gemini image: sem parts. Candidato: {json.dumps(candidates[0])[:300]}")
+            return ""
+        text = parts[0].get("text", "")
+        if not text:
+            log.error(f"Gemini image: texto vazio. Parts: {json.dumps(parts)[:300]}")
+            return ""
+        log.info(f"Gemini image extraction: {len(text)} chars extraídos, mime={mime_type}")
         return text
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="ignore")
+        log.error(f"Gemini image HTTP {e.code}: {body[:400]}")
+        return ""
     except Exception as e:
-        log.error(f"Gemini image extraction erro: {e}")
+        log.error(f"Gemini image extraction erro: {type(e).__name__}: {e}")
         return ""
 
 

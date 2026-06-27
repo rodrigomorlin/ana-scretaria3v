@@ -1933,5 +1933,33 @@ def sw(): return HTMLResponse(open("sw.js").read(), media_type="application/java
 @app.get("/manifest.json")
 def manifest(): return JSONResponse(json.load(open("manifest.json")))
 
+@app.get("/icon.svg")
+def icon_svg():
+    svg = '''<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+<rect width="512" height="512" rx="80" fill="#EEF2FF"/>
+<polygon points="256,80 370,144 370,272 256,336 142,272 142,144" fill="none" stroke="#6366f1" stroke-width="18"/>
+<polygon points="256,130 330,172 330,256 256,298 182,256 182,172" fill="#F8FAFF" stroke="#818cf8" stroke-width="8" opacity=".7"/>
+<line x1="256" y1="214" x2="256" y2="138" stroke="#818cf8" stroke-width="6" opacity=".7"/>
+<line x1="256" y1="214" x2="320" y2="250" stroke="#818cf8" stroke-width="6" opacity=".7"/>
+<line x1="256" y1="214" x2="320" y2="178" stroke="#818cf8" stroke-width="6" opacity=".7"/>
+<line x1="256" y1="214" x2="192" y2="178" stroke="#818cf8" stroke-width="6" opacity=".7"/>
+<line x1="256" y1="214" x2="192" y2="250" stroke="#818cf8" stroke-width="6" opacity=".7"/>
+<line x1="256" y1="214" x2="256" y2="290" stroke="#818cf8" stroke-width="6" opacity=".7"/>
+<circle cx="256" cy="138" r="10" fill="#6366f1"/>
+<circle cx="330" cy="172" r="10" fill="#818cf8"/>
+<circle cx="330" cy="256" r="10" fill="#818cf8"/>
+<circle cx="256" cy="290" r="10" fill="#6366f1"/>
+<circle cx="182" cy="256" r="10" fill="#818cf8"/>
+<circle cx="182" cy="172" r="10" fill="#818cf8"/>
+<circle cx="256" cy="214" r="44" fill="#EEF2FF" stroke="#6366f1" stroke-width="10"/>
+<circle cx="256" cy="214" r="26" fill="#6366f1"/>
+<circle cx="256" cy="214" r="12" fill="white"/>
+<path d="M256 170 A44 44 0 0 1 300 214" fill="none" stroke="#6366f1" stroke-width="14" stroke-linecap="round"/>
+<text x="256" y="400" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="80" font-weight="700" fill="#4338ca" letter-spacing="-2">ANA</text>
+<text x="256" y="440" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="28" fill="#6366f1" letter-spacing="6">SECRE&#84;&#193;RIA</text>
+</svg>'''
+    return HTMLResponse(svg, media_type="image/svg+xml",
+                        headers={"Cache-Control": "public, max-age=86400"})
+
 @app.get("/", response_class=HTMLResponse)
 def index(): return HTMLResponse(open("index.html", encoding="utf-8").read())

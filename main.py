@@ -1436,7 +1436,7 @@ Seja preciso e inclua todos os pacientes listados. Não omita nenhum dado."""
         }).encode("utf-8")
 
         req = urllib.request.Request(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}",
             data=payload,
             headers={"Content-Type": "application/json"},
             method="POST"
@@ -1512,7 +1512,7 @@ Seja preciso e inclua todos os pacientes listados. Não omita nenhum dado."""
         }).encode("utf-8")
 
         req = urllib.request.Request(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}",
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}",
             data=payload,
             headers={"Content-Type": "application/json"},
             method="POST"

@@ -501,6 +501,13 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <input id="ag-search" placeholder="Buscar paciente, médico ou procedimento..." oninput="renderAgenda()" style="flex:2;min-width:140px;border:1px solid var(--border);border-radius:var(--rs);padding:8px 13px;font-size:12px;background:var(--surface);color:var(--text);outline:none;transition:border-color .15s">
     <select id="ag-filter-setor" onchange="renderAgenda()" style="flex:1;min-width:100px;border:1px solid var(--border);border-radius:var(--rs);padding:8px 11px;font-size:12px;background:var(--surface);color:var(--text)"><option value="">Todos os setores</option></select>
     <select id="ag-filter-medico" onchange="renderAgenda()" style="flex:1;min-width:100px;border:1px solid var(--border);border-radius:var(--rs);padding:8px 11px;font-size:12px;background:var(--surface);color:var(--text)"><option value="">Todos os médicos</option></select>
+    <select id="ag-filter-status" onchange="renderAgenda()" style="min-width:110px;border:1px solid var(--border);border-radius:var(--rs);padding:8px 11px;font-size:12px;background:var(--surface);color:var(--text)">
+      <option value="">Todos os status</option>
+      <option value="aguardando">Aguardando</option>
+      <option value="confirmado">Confirmado</option>
+      <option value="realizado">Realizado</option>
+      <option value="cancelado">Cancelado</option>
+    </select>
   </div>
   <div class="ag-card">
     <div style="overflow-x:auto"><table class="ag-tbl" id="agtbl"><tr><td style="padding:22px;color:var(--hint);text-align:center">Carregando...</td></tr></table></div>
@@ -1221,6 +1228,8 @@ function renderAgenda(){
   const filtroMedico=document.getElementById('ag-filter-medico').value;
   if(filtroSetor) sorted=sorted.filter(e=>e.setor===filtroSetor);
   if(filtroMedico) sorted=sorted.filter(e=>e.doc===filtroMedico);
+  const filtroStatus=document.getElementById('ag-filter-status')?.value;
+  if(filtroStatus) sorted=sorted.filter(e=>(e.status||'aguardando')===filtroStatus);
 
   // busca textual
   const q=document.getElementById('ag-search').value.trim().toLowerCase();
@@ -1244,13 +1253,38 @@ function renderAgenda(){
     <div class="stat-card"><div class="stat-n">${hojeN}</div><div class="stat-l">hoje</div></div>
     <div class="stat-card"><div class="stat-n">${fut}</div><div class="stat-l">futuros</div></div>
     <div class="stat-card"><div class="stat-n">${mesN}</div><div class="stat-l">este mês</div></div>`;
-  if(!sorted.length){document.getElementById('agtbl').innerHTML='<tr><td colspan="8" style="padding:18px;color:var(--muted);text-align:center">Nenhum agendamento encontrado.</td></tr>';return;}
-  let html=`<tr><th>Data</th><th>Hora</th><th>Setor</th><th>Procedimento</th><th>Paciente</th><th>Médico</th><th></th><th></th></tr>`;
+  if(!sorted.length){document.getElementById('agtbl').innerHTML='<tr><td colspan="9" style="padding:18px;color:var(--muted);text-align:center">Nenhum agendamento encontrado.</td></tr>';return;}
+
+  // Mapa de status com badge style
+  const STATUS_STYLE={
+    aguardando:'background:#EFF6FF;color:#1d4ed8',
+    confirmado:'background:#F0FDF9;color:#065f46',
+    realizado:'background:#F3F4F6;color:#374151',
+    cancelado:'background:#FEF2F2;color:#991b1b'
+  };
+  const STATUS_LABEL={aguardando:'Aguardando',confirmado:'Confirmado',realizado:'Realizado',cancelado:'Cancelado'};
+
+  let html=`<tr><th>Data</th><th>Hora</th><th>Setor</th><th>Procedimento</th><th>Paciente</th><th>Médico</th><th>Status</th><th></th><th></th></tr>`;
   sorted.forEach(e=>{const s=getS(e.setor);const bc=BADGE[e.setor]||'';const past=e.date<hoje;
     const pdfIcon=e.pdf_filename?`<i class="ti ti-file-text" style="color:var(--accent);font-size:13px" title="${e.pdf_filename}"></i>`:'';
-    html+=`<tr style="${past?'opacity:.5':''}"><td style="white-space:nowrap">${fmtD(e.date)}</td><td>${e.time}</td><td><span class="ev-tag ${bc}">${s.name}</span></td><td>${e.proc} ${pdfIcon}</td><td>${e.paciente||'—'}</td><td style="font-size:11px;color:var(--muted)">${e.doc}</td><td><button class="btn sm" onclick="openEditModal(${e.id})" title="Editar"><i class="ti ti-pencil"></i></button></td><td><button class="btn danger sm" onclick="delEvt(${e.id})" title="Excluir"><i class="ti ti-trash"></i></button></td></tr>`;
+    const st=e.status||'aguardando';
+    const stStyle=STATUS_STYLE[st]||STATUS_STYLE.aguardando;
+    const stLabel=STATUS_LABEL[st]||st;
+    const stDropdown=`<select onchange="updateStatus(${e.id},this.value)" style="${stStyle};border:none;border-radius:20px;padding:3px 8px;font-size:10px;font-weight:600;cursor:pointer">
+      ${Object.entries(STATUS_LABEL).map(([v,l])=>`<option value="${v}"${v===st?' selected':''}>${l}</option>`).join('')}
+    </select>`;
+    html+=`<tr style="${past?'opacity:.5':''}"><td style="white-space:nowrap">${fmtD(e.date)}</td><td>${e.time}</td><td><span class="ev-tag ${bc}">${s.name}</span></td><td>${e.proc} ${pdfIcon}</td><td>${e.paciente||'—'}</td><td style="font-size:11px;color:var(--muted)">${e.doc}</td><td>${stDropdown}</td><td><button class="btn sm" onclick="openEditModal(${e.id})" title="Editar"><i class="ti ti-pencil"></i></button></td><td><button class="btn danger sm" onclick="delEvt(${e.id})" title="Excluir"><i class="ti ti-trash"></i></button></td></tr>`;
   });
   document.getElementById('agtbl').innerHTML=html;
+}
+
+async function updateStatus(id, status){
+  try{
+    await api('PATCH',`/api/eventos/${id}/status?status=${status}`);
+    const ev=eventos.find(e=>e.id===id);
+    if(ev)ev.status=status;
+    toast(`Status atualizado: ${status}`);
+  }catch(e){toast(e.message,'err');renderAgenda();}
 }
 
 function populateAgendaFilters(){

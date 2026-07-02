@@ -24,12 +24,18 @@
   --ok:#10b981;--err:#ef4444;--warn:#f59e0b;
   --r:12px;--rs:8px;
 }
-*{box-sizing:border-box;margin:0;padding:0}
+html.dark{
+  --bg:#0f1117;--surface:#1a1d27;--border:#2d3148;--faint:#1e2235;
+  --text:#e2e8f0;--muted:#94a3b8;--hint:#64748b;
+  --accent:#818cf8;--al:#1e2240;--ad:#a5b4fc;
+  --ok:#34d399;--err:#f87171;--warn:#fbbf24;
+}
+*{box-sizing:border-box;margin:0;padding:0;transition:background-color .2s,border-color .2s,color .15s}
 html,body{height:100%;background:var(--bg);color:var(--text);
   font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:14px}
 
 /* ── LOGIN ─────────────────────────────────────────────── */
-.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1rem;background:linear-gradient(135deg,#F0F4FF 0%,#F8FAFC 100%)}
+.login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1rem;background:var(--bg)}
 .login-card{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:2.2rem;width:360px;max-width:100%;box-shadow:0 4px 24px rgba(99,102,241,.08)}
 .login-logo{width:56px;height:56px;background:var(--al);border-radius:14px;display:flex;align-items:center;justify-content:center;color:var(--accent);font-size:28px;margin:0 auto 1.2rem}
 .login-title{text-align:center;font-size:21px;font-weight:700;margin-bottom:4px;color:var(--text);letter-spacing:-.4px}
@@ -227,7 +233,15 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 .toast.warn{background:#FFFBEB;border-color:#fcd34d;color:#92400e}
 .toast.info{background:#EFF6FF;border-color:#93c5fd;color:#1e40af}
 
-/* ── BOTTOM NAV (mobile) ─────────────────────────────────── */
+/* ── AUTOCOMPLETE ───────────────────────────────────────── */
+.ac-wrap{position:relative}
+.ac-list{position:absolute;top:100%;left:0;right:0;background:var(--surface);border:1px solid var(--border);border-radius:var(--rs);box-shadow:0 4px 16px rgba(0,0,0,.1);z-index:200;max-height:200px;overflow-y:auto;display:none}
+.ac-list.open{display:block}
+.ac-item{padding:9px 13px;cursor:pointer;border-bottom:.5px solid var(--border);transition:background .1s}
+.ac-item:last-child{border-bottom:none}
+.ac-item:hover{background:var(--faint)}
+.ac-name{font-size:13px;font-weight:500;color:var(--text)}
+.ac-sub{font-size:10px;color:var(--hint);margin-top:2px}
 .bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--border);z-index:50;padding:6px 0 max(6px,env(safe-area-inset-bottom))}
 .bottom-nav-items{display:flex;justify-content:space-around;align-items:center}
 .bn-item{display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 12px;border:none;background:none;cursor:pointer;color:var(--muted);font-size:9px;font-weight:500;font-family:inherit;border-radius:8px;transition:color .12s;min-width:52px}
@@ -260,6 +274,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
   .stat-n{font-size:22px}
 }
 </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" defer></script>
 </head>
 <body>
 
@@ -440,6 +455,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
       <div class="user-avatar" id="user-avatar">?</div>
       <div><div class="user-name" id="uname">—</div><div class="user-role" id="urole">—</div></div>
       <button class="sidenav-logout" onclick="doLogout()" title="Sair"><i class="ti ti-logout"></i></button>
+      <button class="sidenav-logout" id="dark-toggle" onclick="toggleDark()" title="Alternar tema" style="margin-left:4px"><i class="ti ti-moon"></i></button>
     </div>
   </div>
 </nav>
@@ -492,7 +508,8 @@ html,body{height:100%;background:var(--bg);color:var(--text);
       <div id="minha-toggle-wrap" style="display:none">
         <button class="btn sm" id="minha-toggle" onclick="toggleMinhaAgenda()"><i class="ti ti-user-circle"></i> Minha agenda</button>
       </div>
-      <button class="btn sm" onclick="exportPDF()"><i class="ti ti-file-export"></i> Exportar</button>
+      <button class="btn sm" onclick="exportPDF()"><i class="ti ti-file-export"></i> Exportar PDF</button>
+      <button class="btn sm" onclick="exportAgendaImg()"><i class="ti ti-photo"></i> Imagem do dia</button>
       <button class="btn primary sm" onclick="tab('chat');document.getElementById('minp').focus()"><i class="ti ti-plus"></i> Novo</button>
     </div>
   </div>
@@ -659,6 +676,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <button class="bn-item" id="bn-relatorios" onclick="tab('relatorios')"><i class="ti ti-chart-bar"></i>Relatórios</button>
     <button class="bn-item" id="bn-config" onclick="tab('config')"><i class="ti ti-settings"></i>Config</button>
     <button class="bn-item" id="bn-logs" onclick="tab('logs')" style="display:none"><i class="ti ti-terminal"></i>Logs</button>
+    <button class="bn-item" id="bn-dark" onclick="toggleDark()"><i class="ti ti-moon" id="bn-dark-icon"></i>Tema</button>
   </div>
 </nav>
 
@@ -675,7 +693,13 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <div class="fl"><label>Data</label><input type="date" id="edate"></div>
     <div class="fl"><label>Horário</label><input type="time" id="etime"></div>
   </div>
-  <div class="fl" style="margin-bottom:8px"><label>Paciente</label><input id="epaciente"></div>
+  <div class="fl" style="margin-bottom:8px">
+    <label>Paciente</label>
+    <div class="ac-wrap">
+      <input id="epaciente" autocomplete="off" placeholder="Nome do paciente" oninput="acPaciente(this.value)" onfocus="acPaciente(this.value)">
+      <div class="ac-list" id="ac-list"></div>
+    </div>
+  </div>
   <div class="fl" style="margin-bottom:8px"><label>Observação</label><input id="eobs"></div>
   <div class="login-err" id="edit-err" style="display:none"></div>
   <div class="ma">
@@ -914,7 +938,7 @@ function tab(n){
   if(ts)ts.textContent=subs[n]||'';
   if(ta){
     if(n==='agenda'){
-      ta.innerHTML=`<button class="btn sm" onclick="exportPDF()"><i class="ti ti-file-export"></i> Exportar</button><button class="btn primary sm" onclick="tab('chat');document.getElementById('minp').focus()"><i class="ti ti-plus"></i> Novo</button>`;
+      ta.innerHTML=`<button class="btn sm" onclick="exportPDF()"><i class="ti ti-file-export"></i> PDF</button><button class="btn sm" onclick="exportAgendaImg()"><i class="ti ti-photo"></i> Imagem</button><button class="btn primary sm" onclick="tab('chat');document.getElementById('minp').focus()"><i class="ti ti-plus"></i> Novo</button>`;
     }else if(n==='relatorios'){
       ta.innerHTML=`<button class="btn sm" onclick="loadRelatorios()"><i class="ti ti-refresh"></i> Atualizar</button>`;
     }else{ta.innerHTML='';}
@@ -1083,6 +1107,7 @@ HISTÓRICO: ${ctx.historico.slice(0,10).map(h=>`${h.date} ${h.time} ${h.setor} $
 PADRÕES POR MÉDICO (use como sugestão quando o usuário não especificar setor/horário/duração): ${prefsTxt||'nenhum padrão suficiente ainda'}
 CORREÇÕES APRENDIDAS (erros já cometidos antes — não repita): ${correcoesTxt||'nenhuma correção registrada ainda'}
 DESLOCAMENTOS ENTRE SETORES (tempo mínimo de folga ao mudar de local): ${deslocTxt}
+PACIENTES CONHECIDOS (histórico — ao citar um nome, use o médico/setor habitual como sugestão): ${(ctx.pacientes||[]).map(p=>`${p.nome}→${p.doc}|${p.proc}`).join(' | ')||'nenhum ainda'}
 REGRAS: interprete linguagem natural e abreviações (CC=Centro Cirúrgico, raqui=raquianestesia, AG=anestesia geral). Use memórias/histórico/padrões por médico para preencher campos omitidos. Conflito de horário ocorre SOMENTE quando o mesmo médico tiver dois procedimentos no exato mesmo horário — o servidor vai sinalizar mas agendará normalmente. OTIMIZAÇÃO DE SEQUÊNCIA: use DESLOCAMENTOS para calcular folga mínima entre setores diferentes do mesmo médico. PDF OU IMAGEM COM MÚLTIPLOS PACIENTES: quando o PDF ou imagem tiver 2 ou mais procedimentos para agendar, use OBRIGATORIAMENTE a ação AGENDAR_MULTIPLOS com todos os eventos na lista "eventos" — NUNCA use AGENDAR para múltiplos pacientes. AGENDAR_MULTIPLOS deve incluir TODOS os pacientes, sem exceção. novas_memorias: máx 2. suggests: 2 ações. Seja breve.
 RETORNE APENAS JSON sem markdown:
 {"acao":"AGENDAR"|"AGENDAR_MULTIPLOS"|"CANCELAR"|"RELATORIO"|"CONSULTAR"|"CORRECAO"|"DUVIDA","resposta":"HTML","evento":{"id":N,"doc":"","setor":"","proc":"","paciente":"","date":"YYYY-MM-DD","time":"HH:MM","obs":""},"eventos":[{"doc":"","setor":"","proc":"","paciente":"","date":"YYYY-MM-DD","time":"HH:MM","obs":""}],"cancelar_id":N|null,"tabela":[{"data":"","hora":"","setor":"","proc":"","paciente":"","medico":"","obs":""}],"novas_memorias":[{"texto":"","icone":""}],"suggests":["",""]}`;
@@ -1328,6 +1353,79 @@ function populateSelect(id,items,selected,isObj=false){
   }).join('');
 }
 function closeEditModal(){document.getElementById('modal-edit').classList.remove('open');editingId=null;}
+// ── DARK MODE ────────────────────────────────────────────────
+function applyTheme(dark){
+  document.documentElement.classList.toggle('dark', dark);
+  const btn=document.getElementById('dark-toggle');
+  if(btn)btn.innerHTML=dark?'<i class="ti ti-sun"></i>':'<i class="ti ti-moon"></i>';
+  const bnIcon=document.getElementById('bn-dark-icon');
+  if(bnIcon)bnIcon.className=dark?'ti ti-sun':'ti ti-moon';
+  const meta=document.querySelector('meta[name="theme-color"]');
+  if(meta)meta.content=dark?'#1a1d27':'#6366f1';
+}
+function toggleDark(){
+  const isDark=document.documentElement.classList.contains('dark');
+  const newDark=!isDark;
+  localStorage.setItem('ana-dark',newDark?'1':'0');
+  applyTheme(newDark);
+}
+function initTheme(){
+  const saved=localStorage.getItem('ana-dark');
+  if(saved!==null){
+    applyTheme(saved==='1');
+  }else{
+    // Respeita preferência do sistema
+    applyTheme(window.matchMedia('(prefers-color-scheme:dark)').matches);
+  }
+}
+initTheme();
+// Observa mudanças na preferência do sistema (quando não há preferência salva)
+window.matchMedia('(prefers-color-scheme:dark)').addEventListener('change',e=>{
+  if(localStorage.getItem('ana-dark')===null)applyTheme(e.matches);
+});
+
+// ── AUTOCOMPLETE PACIENTES ────────────────────────────────
+let acTimer=null;
+async function acPaciente(q){
+  clearTimeout(acTimer);
+  const list=document.getElementById('ac-list');
+  if(!list)return;
+  if(q.length<2){list.classList.remove('open');return;}
+  acTimer=setTimeout(async()=>{
+    try{
+      const results=await api('GET',`/api/pacientes?q=${encodeURIComponent(q)}`);
+      if(!results.length){list.classList.remove('open');return;}
+      list.innerHTML=results.slice(0,8).map(p=>{
+        const s=getS(p.setor);
+        const dataFmt=p.date?fmtD(p.date):'';
+        return `<div class="ac-item" onclick="selectPaciente(${JSON.stringify(p.paciente)},${JSON.stringify(p.doc)},${JSON.stringify(p.setor)})">
+          <div class="ac-name">${p.paciente}</div>
+          <div class="ac-sub">${p.proc||''} · ${s.name||p.setor||''} · ${dataFmt} · ${p.doc||''}</div>
+        </div>`;
+      }).join('');
+      list.classList.add('open');
+    }catch{}
+  },250);
+}
+function selectPaciente(nome,doc,setor){
+  document.getElementById('epaciente').value=nome;
+  document.getElementById('ac-list').classList.remove('open');
+  // Sugere o médico e setor do último procedimento do paciente
+  if(doc){
+    const docSel=document.getElementById('edoc');
+    if(docSel&&[...docSel.options].some(o=>o.value===doc)){
+      docSel.value=doc;
+      toast(`Último procedimento: ${doc} · ${getS(setor).name||setor}`,'info',2000);
+    }
+  }
+}
+// Fecha autocomplete ao clicar fora
+document.addEventListener('click',e=>{
+  if(!e.target.closest('.ac-wrap')){
+    document.querySelectorAll('.ac-list').forEach(l=>l.classList.remove('open'));
+  }
+});
+
 async function saveEdit(){
   const body={
     doc:document.getElementById('edoc').value,
@@ -1361,6 +1459,89 @@ function exportPDF(){
 }
 
 // ── MAPA CIRÚRGICO ───────────────────────────────────────
+function exportAgendaImg(){
+  const hoje=new Date().toISOString().slice(0,10);
+  const hojeEv=[...eventos]
+    .filter(e=>e.date===hoje)
+    .sort((a,b)=>a.time.localeCompare(b.time));
+
+  const dataFmt=new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
+  const STATUS_COLOR={aguardando:'#3b82f6',confirmado:'#10b981',realizado:'#6b7280',cancelado:'#ef4444'};
+  const STATUS_LABEL={aguardando:'Aguardando',confirmado:'Confirmado',realizado:'Realizado',cancelado:'Cancelado'};
+
+  // Cria canvas via elemento HTML oculto
+  const wrapper=document.createElement('div');
+  wrapper.style.cssText='position:fixed;left:-9999px;top:0;width:600px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;background:#F0F4F8;padding:0';
+
+  const rows=hojeEv.length?hojeEv.map(e=>{
+    const s=getS(e.setor);
+    const st=e.status||'aguardando';
+    const stColor=STATUS_COLOR[st]||'#3b82f6';
+    const stLabel=STATUS_LABEL[st]||st;
+    return `<div style="background:#fff;border-radius:10px;padding:12px 16px;margin-bottom:8px;display:flex;align-items:flex-start;gap:12px;box-shadow:0 1px 4px rgba(0,0,0,.06)">
+      <div style="background:${s.color||'#EEF2FF'};color:${s.text_color||'#4338ca'};border-radius:8px;padding:8px 10px;font-size:11px;font-weight:700;min-width:52px;text-align:center;flex-shrink:0">
+        <div style="font-size:16px;font-weight:700">${e.time}</div>
+        <div style="margin-top:2px;opacity:.8">${s.name}</div>
+      </div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600;color:#1a202c;margin-bottom:3px">${e.proc}</div>
+        <div style="font-size:11px;color:#64748b">${e.paciente||'—'} · ${e.doc}</div>
+        ${e.obs?`<div style="font-size:10px;color:#94a3b8;margin-top:2px">${e.obs}</div>`:''}
+      </div>
+      <div style="background:${stColor}18;color:${stColor};border-radius:20px;padding:3px 9px;font-size:9px;font-weight:700;flex-shrink:0;align-self:center">${stLabel}</div>
+    </div>`;
+  }).join('') : '<div style="text-align:center;padding:32px;color:#94a3b8;font-size:13px">Nenhum procedimento hoje.</div>';
+
+  // Busca org name
+  api('GET','/api/org/info').then(info=>{
+    const orgNome=info.nome||'Grupo de Anestesia';
+    wrapper.innerHTML=`
+    <div style="background:linear-gradient(135deg,#6366f1,#4338ca);padding:24px 24px 20px;border-radius:0">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
+        <div style="width:38px;height:38px;background:rgba(255,255,255,.2);border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <svg viewBox="0 0 100 100" width="26" height="26">
+            <polygon points="50,12 76,26 76,54 50,68 24,54 24,26" fill="none" stroke="white" stroke-width="7"/>
+            <circle cx="50" cy="42" r="10" fill="white" opacity=".9"/>
+            <circle cx="50" cy="42" r="5" fill="#6366f1"/>
+          </svg>
+        </div>
+        <div>
+          <div style="color:white;font-size:16px;font-weight:700;letter-spacing:-.3px">${orgNome}</div>
+          <div style="color:rgba(255,255,255,.75);font-size:11px">Ana · Secretária Virtual</div>
+        </div>
+      </div>
+      <div style="color:white;font-size:13px;font-weight:500;margin-top:8px;text-transform:capitalize">${dataFmt}</div>
+      <div style="color:rgba(255,255,255,.75);font-size:11px;margin-top:2px">${hojeEv.length} procedimento${hojeEv.length!==1?'s':''} agendado${hojeEv.length!==1?'s':''}</div>
+    </div>
+    <div style="padding:16px">${rows}</div>
+    <div style="padding:8px 20px 16px;text-align:center;font-size:9px;color:#94a3b8">Gerado automaticamente pela Ana · ${new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</div>`;
+
+    document.body.appendChild(wrapper);
+
+    // Usa html2canvas se disponível, senão fallback para nova aba
+    if(window.html2canvas){
+      html2canvas(wrapper,{scale:2,backgroundColor:'#F0F4F8',useCORS:true}).then(canvas=>{
+        document.body.removeChild(wrapper);
+        canvas.toBlob(blob=>{
+          const url=URL.createObjectURL(blob);
+          const a=document.createElement('a');
+          a.href=url;a.download=`agenda-${hoje}.png`;a.click();
+          setTimeout(()=>URL.revokeObjectURL(url),1000);
+          toast('Imagem baixada!');
+        },'image/png');
+      }).catch(()=>{document.body.removeChild(wrapper);toast('Erro ao gerar imagem.','err');});
+    }else{
+      // Fallback: abre HTML em nova aba para o usuário salvar manualmente
+      document.body.removeChild(wrapper);
+      const w=window.open('','_blank');
+      if(w){
+        w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Agenda ${dataFmt}</title></head><body style="margin:0;background:#F0F4F8">${wrapper.innerHTML}<script>window.onload=()=>{window.print()}<\/script></body></html>`);
+        w.document.close();
+      }
+    }
+  }).catch(()=>toast('Erro ao gerar imagem.','err'));
+}
+
 function openMapaCirurgico(){
   document.getElementById('mapa-data').value=new Date().toISOString().slice(0,10);
   document.getElementById('mapa-err').style.display='none';

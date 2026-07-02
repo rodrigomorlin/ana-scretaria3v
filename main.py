@@ -40,6 +40,9 @@ APP_BASE_URL         = os.environ.get("APP_BASE_URL", "")
 GOOGLE_ROUTES_API_KEY = os.environ.get("GOOGLE_ROUTES_API_KEY", "")
 GEMINI_API_KEY       = os.environ.get("GEMINI_API_KEY", "")
 OCR_SPACE_API_KEY    = os.environ.get("OCR_SPACE_API_KEY", "")
+VAPID_PUBLIC_KEY     = os.environ.get("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY    = os.environ.get("VAPID_PRIVATE_KEY", "")
+VAPID_CLAIMS_EMAIL   = os.environ.get("VAPID_CLAIMS_EMAIL", "rodrigomorlin@gmail.com")
 
 USE_POSTGRES = bool(DATABASE_URL and DATABASE_URL.startswith("postgres"))
 
@@ -182,6 +185,12 @@ CREATE TABLE IF NOT EXISTS deslocamentos (
     minutos INTEGER NOT NULL,
     fonte TEXT DEFAULT 'manual',
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+    id TEXT PRIMARY KEY,
+    usuario_id TEXT NOT NULL,
+    org_id TEXT DEFAULT 'default',
+    subscription TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS memorias (
     id TEXT PRIMARY KEY, texto TEXT NOT NULL,
     icone TEXT DEFAULT 'ti-brain', tipo TEXT DEFAULT 'aprendido',
@@ -364,6 +373,11 @@ def _time_to_min(t: str) -> int:
         return int(h) * 60 + int(m)
     except Exception:
         return 0
+
+def fmtDate(d: str) -> str:
+    """Formata YYYY-MM-DD para DD/MM."""
+    try: return f"{d[8:10]}/{d[5:7]}"
+    except: return d
 
 # ── DESLOCAMENTO ENTRE SETORES (HERE API + cache) ──────────
 def _cache_key(setor_a: str, setor_b: str, org_id: str) -> str:
@@ -933,6 +947,12 @@ async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=
                     f"Ana · {ev.proc} — {ev.date} {ev.time}",
                     email_html(ev.dict(), sname))
 
+    # Push notification para o grupo
+    if VAPID_PUBLIC_KEY:
+        bg.add_task(push_all_org, org_id,
+                    f"📅 Novo agendamento",
+                    f"{ev.proc} — {ev.doc} · {fmtDate(ev.date)} {ev.time}")
+
     # Consolida avisos
     avisos = [a for a in [aviso_conflito, aviso_desl] if a]
     aviso_final = " | ".join(avisos) if avisos else None
@@ -1374,6 +1394,13 @@ async def run_daily_reminder(org_id: Optional[str] = None):
             sent += 1
         if sent:
             db_log("INFO", f"Lembrete diário enviado para {sent} médico(s) — {amanha_str}", org_id=oid)
+        # Push notification para todos da org
+        if total_sent > 0 or True:  # sempre envia push, mesmo sem email
+            total_ev = len(eventos_amanha)
+            await push_all_org(oid,
+                f"🩺 Ana · Agenda de {amanha_str}",
+                f"{total_ev} procedimento{'s' if total_ev!=1 else ''} agendado{'s' if total_ev!=1 else ''} para amanhã",
+                "/")
         total_sent += sent
 
     return {"sent": total_sent, "date": amanha}
@@ -1675,6 +1702,95 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
     except Exception as e:
         log.error(f"Chat proxy erro: {e}")
         raise HTTPException(500, str(e))
+
+# ── WEB PUSH NOTIFICATIONS ─────────────────────────────────
+def send_push(subscription_info: dict, title: str, body: str, url: str = "/") -> bool:
+    """Envia uma Web Push notification para uma subscription."""
+    if not VAPID_PUBLIC_KEY or not VAPID_PRIVATE_KEY:
+        return False
+    try:
+        from pywebpush import webpush, WebPushException
+        webpush(
+            subscription_info=subscription_info,
+            data=json.dumps({"title": title, "body": body, "url": url}),
+            vapid_private_key=VAPID_PRIVATE_KEY,
+            vapid_claims={"sub": f"mailto:{VAPID_CLAIMS_EMAIL}"}
+        )
+        return True
+    except Exception as e:
+        log.error(f"Push notification erro: {e}")
+        return False
+
+async def push_all_org(org_id: str, title: str, body: str, url: str = "/"):
+    """Envia push para todos os usuários de uma org com subscription ativa."""
+    conn = get_db(); c = conn.cursor()
+    c.execute(f"SELECT id, subscription FROM push_subscriptions WHERE org_id={P()}", (org_id,))
+    subs = fetchall(c); conn.close()
+    sent = 0
+    for sub in subs:
+        try:
+            info = json.loads(sub["subscription"])
+            if send_push(info, title, body, url):
+                sent += 1
+        except Exception as e:
+            log.error(f"Push erro sub {sub['id']}: {e}")
+    return sent
+
+@app.get("/api/push/vapid-key")
+def get_vapid_key():
+    """Retorna a chave pública VAPID para o frontend registrar subscriptions."""
+    if not VAPID_PUBLIC_KEY:
+        raise HTTPException(400, "Web Push não configurado no servidor.")
+    return {"public_key": VAPID_PUBLIC_KEY}
+
+@app.post("/api/push/subscribe")
+def push_subscribe(request: Request, user=Depends(auth)):
+    """Salva a subscription de push do dispositivo do usuário."""
+    import asyncio
+    body = asyncio.get_event_loop().run_until_complete(request.json())
+    sub_json = json.dumps(body)
+    sub_id = secrets.token_hex(16)
+    org_id = user.get("org_id", "default")
+    conn = get_db(); c = conn.cursor()
+    # Remove subscriptions antigas do mesmo endpoint se existir
+    endpoint = body.get("endpoint", "")
+    if endpoint:
+        c.execute("DELETE FROM push_subscriptions WHERE subscription LIKE ?", (f'%{endpoint[:80]}%',))
+    c.execute(f"INSERT INTO push_subscriptions (id,usuario_id,org_id,subscription) VALUES ({Ps(4)})",
+              (sub_id, user["id"], org_id, sub_json))
+    conn.commit(); conn.close()
+    db_log("INFO", "Push subscription registrada", usuario=user["id"], org_id=org_id)
+    return {"ok": True}
+
+@app.delete("/api/push/subscribe")
+def push_unsubscribe(user=Depends(auth)):
+    """Remove todas as subscriptions do usuário."""
+    conn = get_db(); c = conn.cursor()
+    c.execute(f"DELETE FROM push_subscriptions WHERE usuario_id={P()}", (user["id"],))
+    conn.commit(); conn.close()
+    return {"ok": True}
+
+@app.get("/api/push/status")
+def push_status(user=Depends(auth)):
+    conn = get_db(); c = conn.cursor()
+    c.execute(f"SELECT COUNT(*) FROM push_subscriptions WHERE usuario_id={P()}", (user["id"],))
+    count = c.fetchone()[0]; conn.close()
+    return {"enabled": count > 0, "vapid_configured": bool(VAPID_PUBLIC_KEY)}
+
+@app.post("/api/push/test")
+async def push_test(user=Depends(auth)):
+    """Envia uma notificação de teste para o usuário atual."""
+    conn = get_db(); c = conn.cursor()
+    c.execute(f"SELECT subscription FROM push_subscriptions WHERE usuario_id={P()}", (user["id"],))
+    subs = fetchall(c); conn.close()
+    if not subs:
+        raise HTTPException(400, "Nenhum dispositivo registrado para este usuário.")
+    sent = 0
+    for sub in subs:
+        info = json.loads(sub["subscription"])
+        if send_push(info, "🩺 Ana · Teste", "Notificações funcionando!", "/"):
+            sent += 1
+    return {"ok": True, "sent": sent}
 
 # ── CONFIGURAÇÃO DO GOOGLE CALENDAR (via app) ───────────────
 class GCalConfig(BaseModel):

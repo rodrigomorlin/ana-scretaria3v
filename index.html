@@ -610,6 +610,10 @@ html,body{height:100%;background:var(--bg);color:var(--text);
       <div class="sep-lbl" style="margin-bottom:3px">Lembrete diário</div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Todos os dias às 18h, a Ana envia automaticamente um resumo da agenda do dia seguinte para cada médico com email cadastrado.</div>
       <button class="btn sm" onclick="sendDailyReminder()"><i class="ti ti-send"></i> Enviar lembrete de amanhã agora</button>
+      <div class="sep-lbl" style="margin-bottom:3px;margin-top:14px">Notificações Push</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Receba notificações no celular quando houver novos agendamentos e no lembrete diário — mesmo com a tela bloqueada.</div>
+      <div id="push-status" style="margin-bottom:8px;font-size:12px;color:var(--muted)">Verificando...</div>
+      <div id="push-actions"></div>
       <div class="sep-lbl" style="margin-bottom:3px;margin-top:14px">Google Routes API — Cálculo de deslocamento</div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Calcula automaticamente o tempo de deslocamento entre setores em endereços diferentes, considerando trânsito em tempo real. Incluso no crédito gratuito de $200/mês do Google Cloud (zero custo na prática para o volume da Ana).</div>
       <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Configure a variável <code style="background:var(--faint);padding:1px 5px;border-radius:3px">GOOGLE_ROUTES_API_KEY</code> no Railway. Depois cadastre o endereço de cada setor em Config → Setores e clique em Recalcular abaixo.</div>
@@ -911,7 +915,7 @@ function tab(n){
   if(n==='agenda')renderAgenda();
   if(n==='relatorios')loadRelatorios();
   if(n==='logs')loadLogs();
-  if(n==='config'){loadCorrecoes();loadGcalCurrent();loadGcalPessoal();loadOrgInfo();}
+  if(n==='config'){loadCorrecoes();loadGcalCurrent();loadGcalPessoal();loadOrgInfo();loadPushStatus();}
 }
 
 // ── MEMÓRIA ──────────────────────────────────────────────
@@ -1545,6 +1549,79 @@ async function loadCorrecoes(){
     el.innerHTML=list.map(c=>`<div class="mem-item" style="font-size:11px;padding:7px 9px"><i class="ti ti-edit"></i><span style="flex:1"><b>${c.campo}</b>: ${c.valor_errado?`evitar "${c.valor_errado}" → `:''}preferir "${c.valor_certo}"<br><span style="color:var(--hint);font-size:10px">${(c.contexto||'').slice(0,80)}</span></span></div>`).join('');
   }catch{}
 }
+// ── PUSH NOTIFICATIONS ───────────────────────────────────────
+function urlBase64ToUint8Array(base64String){
+  const padding='='.repeat((4-base64String.length%4)%4);
+  const base64=(base64String+padding).replace(/-/g,'+').replace(/_/g,'/');
+  const raw=atob(base64);
+  return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));
+}
+
+async function loadPushStatus(){
+  const statusEl=document.getElementById('push-status');
+  const actionsEl=document.getElementById('push-actions');
+  if(!statusEl)return;
+  if(!('serviceWorker' in navigator)||!('PushManager' in window)){
+    statusEl.innerHTML='<span style="color:var(--hint)">⚠️ Seu browser não suporta notificações push.</span>';
+    return;
+  }
+  try{
+    const s=await api('GET','/api/push/status');
+    if(!s.vapid_configured){
+      statusEl.innerHTML='<span style="color:var(--hint)">⚙️ Configure VAPID_PUBLIC_KEY e VAPID_PRIVATE_KEY no Railway para ativar.</span>';
+      return;
+    }
+    const perm=Notification.permission;
+    if(perm==='denied'){
+      statusEl.innerHTML='<span style="color:var(--err)">🔕 Notificações bloqueadas no browser. Clique no cadeado da barra de endereço para permitir.</span>';
+      return;
+    }
+    if(s.enabled&&perm==='granted'){
+      statusEl.innerHTML='<span style="color:var(--ok)"><i class="ti ti-bell-check"></i> Notificações ativas neste dispositivo.</span>';
+      actionsEl.innerHTML=`
+        <button class="btn sm" onclick="testPush()"><i class="ti ti-bell"></i> Testar notificação</button>
+        <button class="btn sm danger" onclick="disablePush()" style="margin-left:6px"><i class="ti ti-bell-off"></i> Desativar</button>`;
+    }else{
+      statusEl.innerHTML='<span style="color:var(--muted)">🔔 Notificações desativadas neste dispositivo.</span>';
+      actionsEl.innerHTML=`<button class="btn primary sm" onclick="enablePush()"><i class="ti ti-bell"></i> Ativar notificações</button>`;
+    }
+  }catch(e){statusEl.innerHTML='<span style="color:var(--err)">Erro ao verificar status.</span>';}
+}
+
+async function enablePush(){
+  try{
+    const perm=await Notification.requestPermission();
+    if(perm!=='granted'){toast('Permissão negada para notificações.','err');return;}
+    const r=await api('GET','/api/push/vapid-key');
+    const sw=await navigator.serviceWorker.ready;
+    const sub=await sw.pushManager.subscribe({
+      userVisibleOnly:true,
+      applicationServerKey:urlBase64ToUint8Array(r.public_key)
+    });
+    await api('POST','/api/push/subscribe',sub.toJSON());
+    toast('Notificações ativadas!');
+    loadPushStatus();
+  }catch(e){toast(e.message||'Erro ao ativar notificações.','err');}
+}
+
+async function disablePush(){
+  try{
+    const sw=await navigator.serviceWorker.ready;
+    const sub=await sw.pushManager.getSubscription();
+    if(sub)await sub.unsubscribe();
+    await api('DELETE','/api/push/subscribe');
+    toast('Notificações desativadas.');
+    loadPushStatus();
+  }catch(e){toast(e.message||'Erro ao desativar.','err');}
+}
+
+async function testPush(){
+  try{
+    await api('POST','/api/push/test');
+    toast('Notificação de teste enviada!');
+  }catch(e){toast(e.message,'err');}
+}
+
 async function loadOrgInfo(){
   if(me?.role!=='admin'){document.getElementById('org-info-card').style.display='none';return;}
   document.getElementById('org-info-card').style.display='block';

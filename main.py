@@ -237,6 +237,7 @@ CREATE TABLE IF NOT EXISTS config (
         "ALTER TABLE eventos ADD COLUMN pdf_filename TEXT DEFAULT ''",
         "ALTER TABLE eventos ADD COLUMN pdf_data TEXT DEFAULT ''",
         "ALTER TABLE eventos ADD COLUMN duracao_min INTEGER DEFAULT 60",
+        "ALTER TABLE eventos ADD COLUMN status TEXT DEFAULT 'aguardando'",
         "ALTER TABLE usuarios ADD COLUMN medico_id TEXT DEFAULT ''",
         "ALTER TABLE usuarios ADD COLUMN gcal_access_token TEXT DEFAULT ''",
         "ALTER TABLE usuarios ADD COLUMN gcal_refresh_token TEXT DEFAULT ''",
@@ -854,6 +855,20 @@ def find_overlap(c, doc: str, date: str, time: str, org_id: str, exclude_id: Opt
             continue
         return e
     return None
+
+@app.patch("/api/eventos/{ev_id}/status")
+def update_status(ev_id: int, user=Depends(auth), status: str = "aguardando"):
+    org_id = user.get("org_id","default")
+    valid = ["aguardando","confirmado","realizado","cancelado"]
+    if status not in valid:
+        raise HTTPException(400, f"Status inválido. Use: {', '.join(valid)}")
+    conn = get_db(); c = conn.cursor()
+    c.execute(f"SELECT id FROM eventos WHERE id={P()} AND org_id={P()}", (ev_id, org_id))
+    if not fetchone(c): conn.close(); raise HTTPException(404, "Não encontrado.")
+    c.execute(f"UPDATE eventos SET status={P()} WHERE id={P()} AND org_id={P()}", (status, ev_id, org_id))
+    conn.commit(); conn.close()
+    db_log("INFO", f"Status atualizado: evento #{ev_id} → {status}", usuario=user["id"], org_id=org_id)
+    return {"ok": True, "status": status}
 
 @app.get("/api/eventos")
 def list_eventos(user=Depends(auth)):

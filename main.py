@@ -870,6 +870,31 @@ def update_status(ev_id: int, user=Depends(auth), status: str = "aguardando"):
     db_log("INFO", f"Status atualizado: evento #{ev_id} → {status}", usuario=user["id"], org_id=org_id)
     return {"ok": True, "status": status}
 
+@app.get("/api/pacientes")
+def list_pacientes(q: str = "", user=Depends(auth)):
+    """Retorna pacientes únicos do histórico do grupo com último procedimento."""
+    org_id = user.get("org_id","default")
+    conn = get_db(); c = conn.cursor()
+    if q:
+        pattern = f"%{q}%"
+        c.execute(f"""SELECT paciente, doc, proc, date, time, setor
+                     FROM eventos WHERE org_id={P()} AND paciente LIKE {P()} AND paciente != ''
+                     ORDER BY date DESC, time DESC""", (org_id, pattern))
+    else:
+        c.execute(f"""SELECT paciente, doc, proc, date, time, setor
+                     FROM eventos WHERE org_id={P()} AND paciente != ''
+                     ORDER BY date DESC, time DESC""", (org_id,))
+    rows = fetchall(c); conn.close()
+    # Deduplica por paciente, mantendo o registro mais recente
+    seen = {}
+    for r in rows:
+        name = r["paciente"]
+        if name not in seen:
+            seen[name] = r
+    # Retorna ordenado por nome
+    result = sorted(seen.values(), key=lambda x: x["paciente"].lower())
+    return result[:50]
+
 @app.get("/api/eventos")
 def list_eventos(user=Depends(auth)):
     conn = get_db(); c = conn.cursor()
@@ -1230,6 +1255,15 @@ def get_contexto(user=Depends(auth)):
     preferencias_medicos = _calc_preferencias_medicos(c, org_id)
     c.execute(f"SELECT campo,valor_errado,valor_certo FROM correcoes WHERE org_id={P()} ORDER BY created_at DESC LIMIT 15", (org_id,))
     correcoes = fetchall(c)
+    # Histórico de pacientes (últimos 30 únicos) para sugestão automática
+    c.execute(f"""SELECT paciente, doc, proc, date FROM eventos
+                  WHERE org_id={P()} AND paciente != '' ORDER BY date DESC, time DESC""", (org_id,))
+    todos_ev = fetchall(c)
+    pacientes_hist = {}
+    for r in todos_ev:
+        if r["paciente"] and r["paciente"] not in pacientes_hist:
+            pacientes_hist[r["paciente"]] = {"doc": r["doc"], "proc": r["proc"], "date": r["date"]}
+    pacientes_lista = [{"nome": k, **v} for k, v in list(pacientes_hist.items())[:30]]
     # Matrix de deslocamentos entre setores
     setores_ids = list(setores.keys())
     conn.close()
@@ -1244,7 +1278,8 @@ def get_contexto(user=Depends(auth)):
             "medicos":medicos,"setores":setores,
             "preferencias_medicos":preferencias_medicos,
             "correcoes":correcoes,
-            "deslocamentos":matrix}
+            "deslocamentos":matrix,
+            "pacientes":pacientes_lista}
 
 # ── RELATÓRIOS ─────────────────────────────────────────────
 @app.get("/api/relatorios/resumo")

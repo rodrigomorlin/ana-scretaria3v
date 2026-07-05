@@ -761,6 +761,26 @@ async function api(m,p,b=null){
   return r.json();
 }
 
+// ── HELPERS (reconstruídos) ───────────────────────────────
+function getS(id){return setores.find(s=>s.id===id)||{id:id,name:id||'—',color:'#EEF2FF',text_color:'#4338ca'};}
+function fmtD(d){if(!d)return'—';const[a,m,dia]=d.split('-');return`${dia}/${m}`;}
+function nowT(){return new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});}
+async function loadAll(){
+  try{
+    [medicos,setores,eventos,memorias]=await Promise.all([
+      api('GET','/api/medicos'),api('GET','/api/setores'),
+      api('GET','/api/eventos'),api('GET','/api/memorias')]);
+    renderMem();renderDocList();renderSetorList();populateAgendaFilters();
+    if(me?.role==='admin'){
+      const usec=document.getElementById('usec');if(usec)usec.style.display='block';
+    }
+    const hoje=new Date().toISOString().slice(0,10);
+    const hoje_n=eventos.filter(e=>e.date>=hoje).length;
+    const badge=document.getElementById('snav-badge');
+    if(badge){badge.textContent=hoje_n;badge.style.display=hoje_n>0?'inline-flex':'none';}
+  }catch(e){toast(e.message,'err');}
+}
+
 // ── AUTH (Supabase) ──────────────────────────────────────
 async function doLogin(){
   const email=document.getElementById('lu').value.trim();
@@ -1082,7 +1102,7 @@ document.body.addEventListener('dragover',e=>{e.preventDefault();document.getEle
 document.body.addEventListener('dragleave',e=>{if(!document.body.contains(e.relatedTarget))document.getElementById('dov').classList.remove('on')});
 document.body.addEventListener('drop',e=>{
   e.preventDefault();document.getElementById('dov').classList.remove('on');
-  const f=e.dataTransfer.files[0];if(f&&f.type==='application/pdf')attachPDF(f);else if(f)addMsg('Só aceito PDFs.','bot');
+  const f=e.dataTransfer.files[0];if(f)attachFile(f);
 });
 function attachFile(file){
   if(!file)return;

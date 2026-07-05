@@ -698,6 +698,29 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 </div>
 </div>
 
+<div class="modal-bg" id="modal-plantao">
+  <div class="modal">
+    <h3><i class="ti ti-calendar-stats"></i> <span id="pl-title">Plantões</span></h3>
+    <div id="pl-list" style="margin-bottom:14px"></div>
+    <div class="sep"></div>
+    <div class="sep-lbl">Adicionar plantão</div>
+    <div style="display:flex;gap:6px;margin-bottom:10px">
+      <button class="btn sm" style="flex:1;border-color:#fbbf24;color:#b45309" onclick="plTurno='morning';plHighlight(this)">🌅 Manhã</button>
+      <button class="btn sm" style="flex:1;border-color:#f97316;color:#c2410c" onclick="plTurno='afternoon';plHighlight(this)">☀️ Tarde</button>
+      <button class="btn sm" style="flex:1;border-color:#6366f1;color:#4338ca" onclick="plTurno='night';plHighlight(this)">🌙 Noite</button>
+    </div>
+    <div style="display:flex;gap:14px;margin-bottom:10px;font-size:12px;color:var(--muted)">
+      <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" id="pl-meio"> Meio turno</label>
+      <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" id="pl-hnt"> HNT ambulatório</label>
+    </div>
+    <div class="fl"><label>Setor (opcional)</label><select id="pl-setor"><option value="">—</option></select></div>
+    <div class="ma">
+      <button class="btn" onclick="closePlantaoModal()">Fechar</button>
+      <button class="btn primary" onclick="savePlantao()"><i class="ti ti-plus"></i> Adicionar</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast-wrap" id="toast-wrap"></div>
 
 <script>
@@ -828,6 +851,7 @@ async function loadEscala(){
   const grid=document.getElementById('escala-grid');
   try{
     const e=await api('GET',`/api/escala?mes=${escalaAtual}`);
+    escalaCache=e;
     if(!e.medicos.length){grid.innerHTML='<tr><td style="padding:22px;color:var(--hint);text-align:center">Nenhum médico no grupo ainda.</td></tr>';return;}
     const dias=new Date(a,m,0).getDate();
     const DOW=['D','S','T','Q','Q','S','S'];
@@ -855,7 +879,7 @@ async function loadEscala(){
           const tip=`${p.turno==='morning'?'Manhã':p.turno==='afternoon'?'Tarde':'Noite'}${p.meio?' (meio)':''}${p.hnt?' · HNT':''}${p.setor?' · '+p.setor:''}`;
           cell+=`<span title="${tip}" style="display:inline-block;width:9px;height:9px;border-radius:3px;background:${cor};margin:1px;${p.meio?'opacity:.45;':''}${p.hnt?'border:1.5px solid #10b981;':''}"></span>`;
         }
-        h+=`<td style="text-align:center;padding:4px 2px;${fds?'background:var(--faint);':''}">${cell}</td>`;
+        h+=`<td style="text-align:center;padding:4px 2px;cursor:pointer;${fds?'background:var(--faint);':''}" onclick="openPlantaoModal('${doc.replace(/'/g,"\\'")}','${dt}')" title="Clique para editar">${cell||'<span style=\'opacity:.15\'>·</span>'}</td>`;
       }
       h+='</tr>';
     }
@@ -864,6 +888,45 @@ async function loadEscala(){
     grid.innerHTML=`<tr><td style="padding:22px;color:var(--err);text-align:center">${err.message}</td></tr>`;
   }
 }
+let plCtx={doc:'',data:''},plTurno='morning',escalaCache=null;
+function plHighlight(btn){
+  btn.parentElement.querySelectorAll('button').forEach(b=>b.style.background='');
+  btn.style.background='var(--al)';
+}
+async function openPlantaoModal(doc,data){
+  plCtx={doc,data};plTurno='morning';
+  document.getElementById('pl-title').textContent=`${doc} — ${fmtD(data)}`;
+  document.getElementById('pl-meio').checked=false;
+  document.getElementById('pl-hnt').checked=false;
+  const sel=document.getElementById('pl-setor');
+  sel.innerHTML='<option value="">—</option>'+setores.map(s=>`<option value="${s.id}">${s.name}</option>`).join('');
+  renderPlList();
+  document.getElementById('modal-plantao').classList.add('open');
+}
+function renderPlList(){
+  const ps=((escalaCache?.plantoes||{})[plCtx.doc]||{})[plCtx.data]||[];
+  const NOMES={morning:'🌅 Manhã',afternoon:'☀️ Tarde',night:'🌙 Noite'};
+  document.getElementById('pl-list').innerHTML=ps.length
+    ?ps.map(p=>`<div class="li" style="margin-bottom:5px"><span style="font-size:12px">${NOMES[p.turno]||p.turno}${p.meio?' <span style="font-size:10px;color:var(--hint)">(meio)</span>':''}${p.hnt?' <span style="font-size:10px;color:#10b981">HNT</span>':''}${p.setor?` <span style="font-size:10px;color:var(--hint)">· ${p.setor}</span>`:''}</span><button class="btn danger sm" style="margin-left:auto" onclick="delPlantao('${p.id}')"><i class="ti ti-trash"></i></button></div>`).join('')
+    :'<div style="font-size:11px;color:var(--hint);text-align:center;padding:8px">Nenhum plantão neste dia.</div>';
+}
+async function savePlantao(){
+  try{
+    await api('POST','/api/escala/plantao',{medico:plCtx.doc,data:plCtx.data,turno:plTurno,
+      meio:document.getElementById('pl-meio').checked,hnt:document.getElementById('pl-hnt').checked,
+      setor:document.getElementById('pl-setor').value});
+    toast('Plantão adicionado!');
+    await loadEscala();renderPlList();
+  }catch(e){toast(e.message,'err');}
+}
+async function delPlantao(id){
+  try{
+    await api('DELETE',`/api/escala/plantao/${id}`);
+    toast('Plantão removido.');
+    await loadEscala();renderPlList();
+  }catch(e){toast(e.message,'err');}
+}
+function closePlantaoModal(){document.getElementById('modal-plantao').classList.remove('open');}
 function openMedSS(){
   if(window._medssUrl)window.open(window._medssUrl,'_blank');
 }

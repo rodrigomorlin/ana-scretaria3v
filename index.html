@@ -275,6 +275,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 }
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
 <body>
 
@@ -327,58 +328,27 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <div class="login-title">Ana v3</div>
     <div class="login-sub">Secretária de Anestesiologia</div>
 
-    <!-- LOGIN FORM -->
+    <!-- LOGIN FORM (Supabase Auth — mesma conta do MedSS) -->
     <div id="login-form">
       <div class="f">
-        <label>ID do usuário</label><input id="lu" placeholder="admin" onkeydown="if(event.key==='Enter')doLogin()">
-        <label>PIN</label><input id="lp" type="password" placeholder="••••" maxlength="8" onkeydown="if(event.key==='Enter')doLogin()">
+        <label>Email</label><input id="lu" type="email" placeholder="voce@exemplo.com" onkeydown="if(event.key==='Enter')doLogin()">
+        <label>Senha</label><input id="lp" type="password" placeholder="••••••••" onkeydown="if(event.key==='Enter')doLogin()">
       </div>
       <button class="btn-full" onclick="doLogin()" id="lbtn"><i class="ti ti-login"></i> Entrar</button>
       <div class="login-err" id="lerr"></div>
-      <div class="login-hint" id="login-hint">Padrão: admin / 1234 · Troque após o primeiro acesso</div>
-      <div style="text-align:center;margin-top:10px;display:flex;flex-direction:column;gap:4px">
-        <a href="#" onclick="event.preventDefault();showSignupForm()" style="font-size:11px;color:var(--accent);text-decoration:underline">Ainda não tem conta? Criar conta</a>
-        <a href="#" onclick="event.preventDefault();showSetupForm()" style="font-size:10px;color:var(--hint);text-decoration:underline">Problemas para entrar? Criar/recuperar acesso</a>
-      </div>
-    </div>
-
-    <!-- SIGNUP FORM (cadastro público — cria um novo grupo isolado) -->
-    <div id="signup-form" style="display:none">
-      <div class="login-hint" style="margin-top:0;margin-bottom:12px;text-align:left;background:var(--al);color:var(--ad);border-radius:var(--rs);padding:8px 10px">
-        <i class="ti ti-user-plus"></i> Crie sua conta — isso cria um grupo novo e independente, do qual você será administrador.
-      </div>
-      <div class="f">
-        <label>Seu nome</label><input id="sg-nome" placeholder="Nome completo">
-        <label>Nome do grupo/clínica (opcional)</label><input id="sg-org" placeholder="ex: Grupo de Anestesia XYZ">
-        <label>ID de acesso (sem espaços)</label><input id="sg-id" placeholder="ex: drsobrenome">
-        <label>PIN (mínimo 4 dígitos)</label><input id="sg-pin" type="password" placeholder="••••" maxlength="8">
-      </div>
-      <button class="btn-full" onclick="doSignup()" id="sg-btn"><i class="ti ti-user-plus"></i> Criar conta</button>
-      <div class="login-err" id="sg-err"></div>
+      <div class="login-hint">Use a mesma conta do MedSS (escala). Contas novas são convidadas pelo administrador do grupo.</div>
       <div style="text-align:center;margin-top:10px">
-        <a href="#" onclick="event.preventDefault();showLoginForm()" style="font-size:10px;color:var(--hint);text-decoration:underline">Já tem conta? Voltar ao login</a>
+        <a href="#" onclick="event.preventDefault();doForgot()" style="font-size:11px;color:var(--accent);text-decoration:underline">Esqueci minha senha</a>
       </div>
     </div>
 
-    <!-- SETUP FORM (primeiro acesso) -->
-    <div id="setup-form" style="display:none">
+    <!-- SELETOR DE GRUPO (multi-grupo) -->
+    <div id="group-picker" style="display:none">
       <div class="login-hint" style="margin-top:0;margin-bottom:12px;text-align:left;background:var(--al);color:var(--ad);border-radius:var(--rs);padding:8px 10px">
-        <i class="ti ti-sparkles"></i> Nenhum usuário encontrado. Crie o primeiro acesso (administrador).
+        <i class="ti ti-users-group"></i> Você participa de mais de um grupo. Escolha com qual deseja trabalhar:
       </div>
-      <div class="f">
-        <label>Seu nome</label><input id="su-nome" placeholder="Nome completo">
-        <label>ID de acesso (sem espaços)</label><input id="su-id" placeholder="ex: drsobrenome">
-        <label>PIN (mínimo 4 dígitos)</label><input id="su-pin" type="password" placeholder="••••" maxlength="8">
-        <label>Google Calendar do grupo (opcional)</label><input id="su-gcal" placeholder="ex: grupo@gmail.com ou abc123@group.calendar.google.com">
-      </div>
-      <div style="font-size:10px;color:var(--hint);margin-top:-6px;margin-bottom:10px">Todos os agendamentos da Ana serão sincronizados com este calendário. Pode deixar em branco e configurar depois em Config → Integrações.</div>
-      <button class="btn-full" onclick="doSetup()" id="su-btn"><i class="ti ti-user-plus"></i> Criar acesso</button>
-      <div class="login-err" id="su-err"></div>
-      <div style="text-align:center;margin-top:10px">
-        <a href="#" onclick="event.preventDefault();doForceSetup()" style="font-size:10px;color:var(--hint);text-decoration:underline">Já existem usuários travados? Apagar e recriar do zero</a>
-      </div>
+      <div id="group-list"></div>
     </div>
-
   </div>
 </div>
 
@@ -592,65 +562,12 @@ html,body{height:100%;background:var(--bg);color:var(--text);
   </div>
 
   <div class="card" id="usec" style="display:none">
-    <div class="card-title"><i class="ti ti-lock" style="color:var(--accent)"></i>Usuários e acesso</div>
-    <div id="ulist"></div>
-    <div class="sep"><div class="sep-lbl">Criar usuário</div>
-      <div class="grid2" style="margin-bottom:8px">
-        <div class="fl"><label>ID</label><input id="nuid" placeholder="drcarlos"></div>
-        <div class="fl"><label>Nome</label><input id="nunome" placeholder="Dr. Carlos Mendes"></div>
-      </div>
-      <div class="grid2" style="margin-bottom:8px">
-        <div class="fl"><label>PIN</label><input id="nupin" type="password" placeholder="••••" maxlength="8"></div>
-        <div class="fl"><label>Papel</label><select id="nurole"><option value="medico">Médico</option><option value="admin">Admin</option></select></div>
-      </div>
-      <div class="fl" style="margin-bottom:8px"><label>Vincular a um médico (opcional — habilita "Minha agenda")</label>
-        <select id="numedico"><option value="">— nenhum —</option></select>
-      </div>
-      <button class="btn primary" onclick="addUser()"><i class="ti ti-user-plus"></i> Criar</button>
-    </div>
-    <div class="sep"><div class="sep-lbl">Alterar meu PIN</div>
-      <div class="grid2" style="margin-bottom:8px">
-        <div class="fl"><label>PIN atual</label><input id="pina" type="password" placeholder="••••"></div>
-        <div class="fl"><label>Novo PIN</label><input id="pinn" type="password" placeholder="••••"></div>
-      </div>
-      <button class="btn primary" onclick="changePin()"><i class="ti ti-key"></i> Alterar</button>
-    </div>
+  <div class="card-title"><i class="ti ti-lock"></i> Usuários e acesso</div>
+  <div style="font-size:12px;color:var(--muted);line-height:1.7">
+    As contas agora são unificadas com o <b>MedSS</b> (mesma conta para escala e agenda).<br>
+    Para convidar médicos, alterar papéis ou remover membros do grupo, use a gestão de membros do MedSS.
+    Novos membros passam a acessar a Ana automaticamente com o mesmo email e senha.
   </div>
-
-  <div class="card">
-    <div class="card-title"><i class="ti ti-plug" style="color:var(--accent)"></i>Integrações</div>
-    <div id="int-status"></div>
-    <div class="sep"><div class="sep-lbl" style="margin-bottom:3px">Google Calendar</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">A conexão (credenciais) é configurada uma vez no Railway via <code style="background:var(--faint);padding:1px 5px;border-radius:3px">GCAL_CREDENTIALS</code>. Aqui você escolhe <b>qual calendário</b> recebe os agendamentos — sem precisar tocar no Railway.</div>
-      <div id="gcal-current" style="font-size:11px;margin-bottom:8px"></div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
-        <select id="gcal-select" style="flex:1;min-width:200px;border:0.5px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:12px;background:var(--surface);color:var(--text)"><option value="">Carregar calendários disponíveis...</option></select>
-        <button class="btn sm" onclick="loadGcalList()"><i class="ti ti-refresh"></i> Buscar calendários</button>
-      </div>
-      <div class="fl" style="margin-bottom:8px"><label>Ou cole o ID/domínio manualmente</label><input id="gcal-manual" placeholder="ex: medico@gmail.com ou abc123@group.calendar.google.com"></div>
-      <button class="btn primary sm" onclick="saveGcalConfig()"><i class="ti ti-check"></i> Salvar calendário</button>
-      <div class="sep-lbl" style="margin-bottom:3px;margin-top:14px">Notificações por email</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Configure <code style="background:var(--faint);padding:1px 5px;border-radius:3px">SMTP_HOST</code>, <code style="background:var(--faint);padding:1px 5px;border-radius:3px">SMTP_USER</code> e <code style="background:var(--faint);padding:1px 5px;border-radius:3px">SMTP_PASS</code> no Railway. O email do médico deve ser cadastrado no perfil acima.</div>
-      <div class="sep-lbl" style="margin-bottom:3px">Lembrete diário</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Todos os dias às 18h, a Ana envia automaticamente um resumo da agenda do dia seguinte para cada médico com email cadastrado.</div>
-      <button class="btn sm" onclick="sendDailyReminder()"><i class="ti ti-send"></i> Enviar lembrete de amanhã agora</button>
-      <div class="sep-lbl" style="margin-bottom:3px;margin-top:14px">Notificações Push</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Receba notificações no celular quando houver novos agendamentos e no lembrete diário — mesmo com a tela bloqueada.</div>
-      <div id="push-status" style="margin-bottom:8px;font-size:12px;color:var(--muted)">Verificando...</div>
-      <div id="push-actions"></div>
-      <div class="sep-lbl" style="margin-bottom:3px;margin-top:14px">Google Routes API — Cálculo de deslocamento</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Calcula automaticamente o tempo de deslocamento entre setores em endereços diferentes, considerando trânsito em tempo real. Incluso no crédito gratuito de $200/mês do Google Cloud (zero custo na prática para o volume da Ana).</div>
-      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Configure a variável <code style="background:var(--faint);padding:1px 5px;border-radius:3px">GOOGLE_ROUTES_API_KEY</code> no Railway. Depois cadastre o endereço de cada setor em Config → Setores e clique em Recalcular abaixo.</div>
-      <button class="btn sm" onclick="recalcularDeslocamentos()"><i class="ti ti-refresh"></i> Recalcular deslocamentos</button>
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="card-title"><i class="ti ti-school" style="color:var(--accent)"></i>O que a Ana aprendeu</div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Correções que vocês já fizeram e que a Ana passa a respeitar nas próximas conversas.</div>
-    <div id="correcoes-list"></div>
-  </div>
-
 </div>
 
 <!-- LOGS -->
@@ -734,8 +651,25 @@ let eventos=[],medicos=[],setores=[],memorias=[];
 let charts={};
 
 // ── API ──────────────────────────────────────────────────
+let sb=null, groupId=localStorage.getItem('ana-group')||'';
+
+async function initSupabase(){
+  if(sb)return sb;
+  const cfg=await (await fetch('/api/public-config')).json();
+  if(!cfg.supabase_auth){document.getElementById('lerr').textContent='Supabase não configurado no servidor.';document.getElementById('lerr').style.display='block';return null;}
+  sb=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
+  return sb;
+}
+async function getToken(){
+  if(!sb)await initSupabase();
+  const {data:{session}}=await sb.auth.getSession();
+  return session?.access_token||'';
+}
 async function api(m,p,b=null){
-  const o={method:m,headers:{'Content-Type':'application/json','X-Token':token}};
+  const t=await getToken();
+  const h={'Content-Type':'application/json','Authorization':'Bearer '+t};
+  if(groupId)h['X-Group-Id']=groupId;
+  const o={method:m,headers:h};
   if(b)o.body=JSON.stringify(b);
   const r=await fetch(API+p,o);
   if(r.status===401){doLogout();throw new Error('Sessão expirada.');}
@@ -743,36 +677,86 @@ async function api(m,p,b=null){
   return r.json();
 }
 
-// ── AUTH ─────────────────────────────────────────────────
+// ── AUTH (Supabase) ──────────────────────────────────────
 async function doLogin(){
-  const uid=document.getElementById('lu').value.trim();
-  const pin=document.getElementById('lp').value;
-  if(!uid||!pin){showErr('Preencha ID e PIN.');return;}
+  const email=document.getElementById('lu').value.trim();
+  const senha=document.getElementById('lp').value;
+  if(!email||!senha){showErr('Preencha email e senha.');return;}
   const btn=document.getElementById('lbtn');btn.disabled=true;
   try{
-    const r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({usuario_id:uid,pin})});
-    if(!r.ok){const e=await r.json().catch(()=>({detail:'Erro'}));throw new Error(e.detail);}
-    const d=await r.json();token=d.token;me=d.usuario;
-    sessionStorage.setItem('ana_token',token);showApp();
+    await initSupabase();
+    const {error}=await sb.auth.signInWithPassword({email,password:senha});
+    if(error)throw new Error(error.message==='Invalid login credentials'?'Email ou senha incorretos.':error.message);
+    await afterLogin();
   }catch(e){showErr(e.message||'Erro.');}
   btn.disabled=false;
 }
+async function doForgot(){
+  const email=document.getElementById('lu').value.trim();
+  if(!email){showErr('Digite seu email no campo acima e clique de novo.');return;}
+  await initSupabase();
+  const {error}=await sb.auth.resetPasswordForEmail(email);
+  showErr(error?error.message:'Email de recuperação enviado! Confira sua caixa de entrada.');
+}
+async function afterLogin(){
+  // Resolve identidade e grupos no backend
+  const who=await api('GET','/api/supabase/whoami');
+  me={id:who.id,nome:who.nome,role:who.role,org_id:who.group_id};
+  const ms=who.memberships||[];
+  if(ms.length>1&&!ms.some(m=>m.group_id===groupId)){
+    // multi-grupo: pedir escolha
+    await showGroupPicker(ms);
+    return;
+  }
+  if(ms.length===1)setGroup(ms[0].group_id,false);
+  showApp();
+}
+async function showGroupPicker(ms){
+  document.getElementById('login-form').style.display='none';
+  const gp=document.getElementById('group-picker');gp.style.display='block';
+  const list=document.getElementById('group-list');
+  list.innerHTML='<div style="text-align:center;color:var(--hint);font-size:11px">Carregando grupos...</div>';
+  // Busca nomes dos grupos
+  const names={};
+  try{
+    for(const m of ms){
+      try{
+        groupId=m.group_id;
+        const info=await api('GET','/api/org/info');
+        names[m.group_id]=info.nome;
+      }catch{names[m.group_id]=m.group_id.slice(0,8);}
+    }
+  }finally{groupId='';}
+  list.innerHTML=ms.map(m=>
+    `<button class="btn-full" style="margin-bottom:8px" onclick="setGroup('${m.group_id}',true)">
+      <i class="ti ti-building-hospital"></i> ${names[m.group_id]||m.group_id.slice(0,8)}
+      <span style="font-size:10px;opacity:.7;margin-left:6px">${m.role==='admin'?'Admin':'Membro'}</span>
+    </button>`).join('');
+}
+function setGroup(gid,enter){
+  groupId=gid;localStorage.setItem('ana-group',gid);
+  if(enter){
+    document.getElementById('group-picker').style.display='none';
+    document.getElementById('login-form').style.display='block';
+    afterLogin();
+  }
+}
 function showErr(m){const e=document.getElementById('lerr');e.textContent=m;e.style.display='block';}
 async function doLogout(){
-  try{await api('POST','/api/logout');}catch{}
-  token='';me=null;sessionStorage.removeItem('ana_token');
+  try{if(sb)await sb.auth.signOut();}catch{}
+  me=null;localStorage.removeItem('ana-group');groupId='';
   document.getElementById('app').classList.remove('on');
   document.getElementById('lwrap').style.display='flex';
+  document.getElementById('login-form').style.display='block';
+  document.getElementById('group-picker').style.display='none';
   document.getElementById('msgs').innerHTML='<div class="typing" id="typ"><span></span><span></span><span></span></div>';
 }
 async function showApp(){
   document.getElementById('lwrap').style.display='none';
   document.getElementById('app').classList.add('on');
   document.getElementById('uname').textContent=me.nome;
-  // Avatar initials
   const av=document.getElementById('user-avatar');
   if(av){const parts=me.nome.split(' ');av.textContent=(parts[0][0]+(parts[1]?parts[1][0]:'')).toUpperCase();}
-  // Role label
   const ur=document.getElementById('urole');
   if(ur)ur.textContent=me.role==='admin'?'Administrador':'Médico';
   if(me.role==='admin'){
@@ -783,129 +767,13 @@ async function showApp(){
   setInterval(loadAll,30000);
 }
 async function tryAuto(){
-  const t=sessionStorage.getItem('ana_token');if(!t){checkSetup();return;}
-  try{const r=await fetch('/api/me',{headers:{'X-Token':t}});if(r.ok){token=t;me=await r.json();showApp();}else{checkSetup();}}catch{checkSetup();}
-}
-
-async function checkSetup(){
   try{
-    const r=await fetch('/api/setup-needed');
-    const d=await r.json();
-    if(d.needed){
-      document.getElementById('login-form').style.display='none';
-      document.getElementById('setup-form').style.display='block';
-    }
-  }catch{}
+    await initSupabase();
+    if(!sb)return;
+    const {data:{session}}=await sb.auth.getSession();
+    if(session)await afterLogin();
+  }catch(e){console.warn('auto-login falhou:',e);}
 }
-
-async function doSetup(){
-  const nome=document.getElementById('su-nome').value.trim();
-  const id=document.getElementById('su-id').value.trim().toLowerCase().replace(/\s/g,'');
-  const pin=document.getElementById('su-pin').value;
-  const gcal=document.getElementById('su-gcal').value.trim();
-  const err=document.getElementById('su-err');err.style.display='none';
-  if(!nome||!id||!pin||pin.length<4){
-    err.textContent='Preencha nome, ID e PIN (mínimo 4 dígitos).';err.style.display='block';return;
-  }
-  const btn=document.getElementById('su-btn');btn.disabled=true;
-  try{
-    const r=await fetch('/api/setup',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({usuario_id:id,nome,pin,gcal_calendar_id:gcal})});
-    if(!r.ok){const e=await r.json().catch(()=>({detail:'Erro'}));throw new Error(e.detail);}
-    document.getElementById('lu').value=id;
-    document.getElementById('lp').value=pin;
-    document.getElementById('setup-form').style.display='none';
-    document.getElementById('login-form').style.display='block';
-    await doLogin();
-  }catch(e){err.textContent=e.message||'Erro ao criar acesso.';err.style.display='block';}
-  btn.disabled=false;
-}
-
-async function doForceSetup(){
-  const nome=document.getElementById('su-nome').value.trim();
-  const id=document.getElementById('su-id').value.trim().toLowerCase().replace(/\s/g,'');
-  const pin=document.getElementById('su-pin').value;
-  const gcal=document.getElementById('su-gcal').value.trim();
-  const err=document.getElementById('su-err');err.style.display='none';
-  if(!nome||!id||!pin||pin.length<4){
-    err.textContent='Preencha nome, ID e PIN (mínimo 4 dígitos) antes de apagar e recriar.';err.style.display='block';return;
-  }
-  if(!confirm('Isso vai apagar TODOS os usuários existentes e criar este como novo administrador. Continuar?'))return;
-  const btn=document.getElementById('su-btn');btn.disabled=true;
-  try{
-    const r=await fetch('/api/setup',{method:'POST',headers:{'Content-Type':'application/json','X-Emergency-Key':'reset-ana-2026'},
-      body:JSON.stringify({usuario_id:id,nome,pin,gcal_calendar_id:gcal})});
-    if(!r.ok){const e=await r.json().catch(()=>({detail:'Erro'}));throw new Error(e.detail);}
-    document.getElementById('lu').value=id;
-    document.getElementById('lp').value=pin;
-    document.getElementById('setup-form').style.display='none';
-    document.getElementById('login-form').style.display='block';
-    await doLogin();
-  }catch(e){err.textContent=e.message||'Erro ao recriar acesso.';err.style.display='block';}
-  btn.disabled=false;
-}
-
-function showSetupForm(){
-  document.getElementById('login-form').style.display='none';
-  document.getElementById('signup-form').style.display='none';
-  document.getElementById('setup-form').style.display='block';
-}
-function showSignupForm(){
-  document.getElementById('login-form').style.display='none';
-  document.getElementById('setup-form').style.display='none';
-  document.getElementById('signup-form').style.display='block';
-}
-function showLoginForm(){
-  document.getElementById('signup-form').style.display='none';
-  document.getElementById('setup-form').style.display='none';
-  document.getElementById('login-form').style.display='block';
-}
-async function doSignup(){
-  const nome=document.getElementById('sg-nome').value.trim();
-  const orgNome=document.getElementById('sg-org').value.trim();
-  const id=document.getElementById('sg-id').value.trim().toLowerCase().replace(/\s/g,'');
-  const pin=document.getElementById('sg-pin').value;
-  const err=document.getElementById('sg-err');err.style.display='none';
-  if(!nome||!id||!pin||pin.length<4){
-    err.textContent='Preencha nome, ID e PIN (mínimo 4 dígitos).';err.style.display='block';return;
-  }
-  const btn=document.getElementById('sg-btn');btn.disabled=true;
-  try{
-    const r=await fetch('/api/signup',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({usuario_id:id,nome,pin,org_nome:orgNome})});
-    if(!r.ok){const e=await r.json().catch(()=>({detail:'Erro'}));throw new Error(e.detail);}
-    document.getElementById('lu').value=id;
-    document.getElementById('lp').value=pin;
-    document.getElementById('signup-form').style.display='none';
-    document.getElementById('login-form').style.display='block';
-    await doLogin();
-  }catch(e){err.textContent=e.message||'Erro ao criar conta.';err.style.display='block';}
-  btn.disabled=false;
-}
-
-
-// ── DATA ─────────────────────────────────────────────────
-async function loadAll(){
-  try{
-    [medicos,setores,eventos,memorias]=await Promise.all([
-      api('GET','/api/medicos'),api('GET','/api/setores'),
-      api('GET','/api/eventos'),api('GET','/api/memorias')]);
-    renderMem();renderDocList();renderSetorList();
-    if(me?.role==='admin'){
-      loadUList();
-      const usec=document.getElementById('usec');if(usec)usec.style.display='block';
-    }
-    // Update agenda badge in sidebar
-    const hoje=new Date().toISOString().slice(0,10);
-    const hoje_n=eventos.filter(e=>e.date>=hoje).length;
-    const badge=document.getElementById('snav-badge');
-    if(badge){badge.textContent=hoje_n;badge.style.display=hoje_n>0?'inline-flex':'none';}
-  }catch(e){toast(e.message,'err');}
-}
-
-function getS(id){return setores.find(s=>s.id===id)||{name:id,color:'#ddd',text_color:'#333'}}
-function nowT(){return new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}
-function fmtD(iso){return new Date(iso+'T12:00').toLocaleDateString('pt-BR',{weekday:'short',day:'2-digit',month:'short'})}
 
 // ── TABS ─────────────────────────────────────────────────
 function tab(n){
@@ -1043,7 +911,7 @@ async function handleCorrection(txt){
 Identifique qual campo estava errado (doc, setor, proc, paciente, date, time, duracao_min ou obs) e qual o valor certo.
 RETORNE APENAS JSON sem markdown: {"campo":"nome_do_campo","valor_errado":"valor antigo ou vazio","valor_certo":"valor novo","resposta":"confirmação breve em HTML"}`;
   try{
-    const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json','X-Token':token},
+    const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await getToken(),...(groupId?{'X-Group-Id':groupId}:{})},
       body:JSON.stringify({system:sysCorr,messages:[{role:'user',content:txt}],max_tokens:300})});
     if(!res.ok)throw new Error('Falha ao processar correção.');
     const data=await res.json();
@@ -1127,7 +995,7 @@ RETORNE APENAS JSON sem markdown:
            .replace(/HISTÓRICO: .*?(\n|$)/s, '')
     : system;
   try{
-    const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json','X-Token':token},
+    const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await getToken(),...(groupId?{'X-Group-Id':groupId}:{})},
       body:JSON.stringify({system:systemFinal,messages:[{role:'user',content:mc}],max_tokens:1500})});
     if(!res.ok){
       let errMsg=`Erro ${res.status}`;
@@ -1981,7 +1849,7 @@ tryAuto();
 // Captura Ctrl+V com imagem em qualquer lugar da página
 document.addEventListener('paste', function(e){
   // Só processa se o app estiver visível (usuário logado)
-  if(!token)return;
+  if(!me)return;
   const items = e.clipboardData?.items;
   if(!items)return;
   for(const item of items){

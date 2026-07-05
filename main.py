@@ -44,6 +44,11 @@ VAPID_PUBLIC_KEY     = os.environ.get("VAPID_PUBLIC_KEY", "")
 VAPID_PRIVATE_KEY    = os.environ.get("VAPID_PRIVATE_KEY", "")
 VAPID_CLAIMS_EMAIL   = os.environ.get("VAPID_CLAIMS_EMAIL", "rodrigomorlin@gmail.com")
 
+# ── SUPABASE (migração em andamento — coexiste com auth antigo) ──
+SUPABASE_URL              = os.environ.get("SUPABASE_URL", "").rstrip("/")
+SUPABASE_ANON_KEY         = os.environ.get("SUPABASE_ANON_KEY", "")
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+
 USE_POSTGRES = bool(DATABASE_URL and DATABASE_URL.startswith("postgres"))
 
 def hash_pin(pin): return hashlib.sha256(f"{pin}{SECRET}".encode()).hexdigest()
@@ -298,10 +303,110 @@ def get_user(token):
     row = fetchone(c); conn.close(); return row
 
 def auth(request: Request):
+    # 1. Tenta JWT do Supabase (Authorization: Bearer <token>)
+    authz = request.headers.get("Authorization", "")
+    if authz.startswith("Bearer ") and SUPABASE_URL:
+        user = _auth_supabase(request, authz[7:])
+        if user:
+            return user
+    # 2. Auth legado (X-Token / cookie)
     token = request.headers.get("X-Token","") or request.cookies.get("ana_token","")
     user = get_user(token)
     if not user: raise HTTPException(401, "Não autorizado.")
     return user
+
+# ── SUPABASE AUTH (JWT via JWKS) ─────────────────────────────
+_jwks_client = None
+_membership_cache: dict = {}  # user_id → (timestamp, [memberships])
+
+def _get_jwks_client():
+    global _jwks_client
+    if _jwks_client is None:
+        import jwt as pyjwt
+        _jwks_client = pyjwt.PyJWKClient(
+            f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json",
+            cache_keys=True, lifespan=3600)
+    return _jwks_client
+
+def validate_supabase_jwt(token: str) -> Optional[dict]:
+    """Valida um JWT do Supabase. Retorna claims ou None."""
+    try:
+        import jwt as pyjwt
+        header = pyjwt.get_unverified_header(token)
+        alg = header.get("alg", "")
+        if alg in ("RS256", "ES256"):
+            key = _get_jwks_client().get_signing_key_from_jwt(token).key
+            claims = pyjwt.decode(token, key, algorithms=[alg], audience="authenticated")
+        elif alg == "HS256":
+            # Projetos antigos do Supabase assinam com o JWT secret (não exposto);
+            # sem o secret não dá para validar HS256 — rejeita com log claro.
+            log.warning("JWT Supabase HS256 recebido — configure JWT assimétrico no projeto ou forneça o secret.")
+            return None
+        else:
+            return None
+        return claims
+    except Exception as e:
+        log.warning(f"JWT Supabase inválido: {type(e).__name__}: {e}")
+        return None
+
+def sb_rest(method: str, path: str, body=None, use_service_role=True, user_jwt: str = ""):
+    """Chamada ao PostgREST do Supabase. path ex: '/group_members?user_id=eq.xxx&select=group_id,role'"""
+    key = SUPABASE_SERVICE_ROLE_KEY if use_service_role else SUPABASE_ANON_KEY
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {user_jwt or key}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(f"{SUPABASE_URL}/rest/v1{path}", data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            raw = r.read()
+            return json.loads(raw) if raw else []
+    except urllib.error.HTTPError as e:
+        body_err = e.read().decode("utf-8", errors="ignore")[:300]
+        log.error(f"Supabase REST {method} {path} → {e.code}: {body_err}")
+        raise HTTPException(502, f"Erro Supabase ({e.code})")
+
+def get_memberships(user_id: str) -> list:
+    """Retorna [{group_id, role}] do usuário, com cache de 60s."""
+    import time as _t
+    cached = _membership_cache.get(user_id)
+    if cached and _t.time() - cached[0] < 60:
+        return cached[1]
+    rows = sb_rest("GET", f"/group_members?user_id=eq.{user_id}&select=group_id,role")
+    _membership_cache[user_id] = (_t.time(), rows)
+    return rows
+
+def _auth_supabase(request: Request, token: str) -> Optional[dict]:
+    """Autentica via JWT Supabase. Retorna user dict compatível com o resto do código."""
+    claims = validate_supabase_jwt(token)
+    if not claims:
+        return None
+    user_id = claims.get("sub", "")
+    email = claims.get("email", "")
+    if not user_id:
+        return None
+    memberships = get_memberships(user_id)
+    if not memberships:
+        raise HTTPException(403, "Usuário não pertence a nenhum grupo. Peça convite ao administrador.")
+    # Multi-grupo: header X-Group-Id seleciona; valida pertencimento
+    wanted = request.headers.get("X-Group-Id", "")
+    if wanted:
+        m = next((m for m in memberships if m["group_id"] == wanted), None)
+        if not m:
+            raise HTTPException(403, "Você não pertence a esse grupo.")
+    else:
+        m = memberships[0]
+    # Nome: metadados do JWT ou email
+    meta = claims.get("user_metadata") or {}
+    nome = meta.get("full_name") or meta.get("name") or (email.split("@")[0] if email else user_id[:8])
+    role = "admin" if m.get("role") == "admin" else "medico"
+    return {"id": user_id, "nome": nome, "role": role,
+            "org_id": m["group_id"], "email": email,
+            "auth_source": "supabase", "jwt": token,
+            "memberships": memberships}
 
 def db_log(nivel, msg, usuario="", ip="", org_id="default"):
     try:
@@ -1980,6 +2085,39 @@ def oauth_google_disconnect(user=Depends(auth)):
     return {"ok": True}
 
 # ── HEALTH ─────────────────────────────────────────────────
+@app.get("/api/supabase/status")
+def supabase_status():
+    """Diagnóstico da integração Supabase (sem expor chaves)."""
+    status = {"configured": bool(SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY),
+              "url_set": bool(SUPABASE_URL),
+              "anon_key_set": bool(SUPABASE_ANON_KEY),
+              "service_role_set": bool(SUPABASE_SERVICE_ROLE_KEY),
+              "jwks_reachable": False, "rest_reachable": False}
+    if SUPABASE_URL:
+        try:
+            req = urllib.request.Request(f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json")
+            with urllib.request.urlopen(req, timeout=8) as r:
+                jwks = json.loads(r.read())
+                status["jwks_reachable"] = bool(jwks.get("keys"))
+        except Exception as e:
+            status["jwks_error"] = str(e)[:150]
+        if SUPABASE_SERVICE_ROLE_KEY:
+            try:
+                rows = sb_rest("GET", "/groups?select=id&limit=1")
+                status["rest_reachable"] = True
+                status["groups_visible"] = len(rows)
+            except Exception as e:
+                status["rest_error"] = str(e)[:150]
+    return status
+
+@app.get("/api/supabase/whoami")
+def supabase_whoami(user=Depends(auth)):
+    """Retorna a identidade resolvida — útil para testar o JWT do Supabase."""
+    return {"id": user["id"], "nome": user["nome"], "role": user["role"],
+            "group_id": user.get("org_id"),
+            "auth_source": user.get("auth_source", "legado"),
+            "memberships": user.get("memberships", [])}
+
 @app.get("/api/health")
 def health():
     return {"status":"ok","version":"3.0.0",
@@ -1990,6 +2128,7 @@ def health():
             "google_routes":bool(GOOGLE_ROUTES_API_KEY),
             "gemini":bool(GEMINI_API_KEY),
             "ocr_space":bool(OCR_SPACE_API_KEY),
+            "supabase":bool(SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY),
             "timestamp":datetime.now().isoformat()}
 
 # ── PÁGINAS PÚBLICAS (política de privacidade / termos) ────

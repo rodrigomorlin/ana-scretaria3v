@@ -586,6 +586,37 @@ def sb_relatorio_resumo(user):
             "por_mes": [{"mes": k, "total": v} for k, v in sorted(por_mes.items())]}
 
 
+def sb_escala(user, mes):
+    """Escala do mês (tabela shifts do MedSS) para os médicos do grupo.
+    mes: 'YYYY-MM'. Read-only — edição continua no MedSS por enquanto."""
+    gid = _gid(user)
+    docs = _doctors_map(gid)
+    if not docs:
+        return {"mes": mes, "medicos": [], "plantoes": {}}
+    ids = ",".join(f'"{i}"' for i in docs)
+    ini = f"{mes}-01"
+    ano, m = int(mes[:4]), int(mes[5:7])
+    prox = f"{ano + 1}-01-01" if m == 12 else f"{ano}-{m + 1:02d}-01"
+    rows = _sb("GET", f"/shifts?doctor_id=in.({ids})&shift_date=gte.{ini}&shift_date=lt.{prox}"
+                      f"&select=doctor_id,shift_date,shift_type,is_hnt_ambulatory,is_half_shift,sector_id"
+                      f"&order=shift_date")
+    secs = _sectors_map(gid)
+    plantoes = {}
+    for r in rows:
+        d = docs.get(r["doctor_id"], {}).get("name", "?")
+        dia = r["shift_date"]
+        plantoes.setdefault(d, {}).setdefault(dia, []).append({
+            "turno": r["shift_type"],
+            "meio": bool(r.get("is_half_shift")),
+            "hnt": bool(r.get("is_hnt_ambulatory")),
+            "setor": secs.get(r.get("sector_id") or "", {}).get("name", ""),
+        })
+    medicos = sorted(docs.values(), key=lambda x: x["name"])
+    return {"mes": mes,
+            "medicos": [m["name"] for m in medicos],
+            "plantoes": plantoes}
+
+
 def sb_mapa_cirurgico(user, data):
     gid = _gid(user)
     docs = _doctors_map(gid)

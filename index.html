@@ -1295,10 +1295,10 @@ function renderAgenda(){
     const st=e.status||'aguardando';
     const stStyle=STATUS_STYLE[st]||STATUS_STYLE.aguardando;
     const stLabel=STATUS_LABEL[st]||st;
-    const stDropdown=`<select onchange="updateStatus(${e.id},this.value)" style="${stStyle};border:none;border-radius:20px;padding:3px 8px;font-size:10px;font-weight:600;cursor:pointer">
+    const stDropdown=`<select onchange="updateStatus('${e.id}',this.value)" style="${stStyle};border:none;border-radius:20px;padding:3px 8px;font-size:10px;font-weight:600;cursor:pointer">
       ${Object.entries(STATUS_LABEL).map(([v,l])=>`<option value="${v}"${v===st?' selected':''}>${l}</option>`).join('')}
     </select>`;
-    html+=`<tr style="${past?'opacity:.5':''}"><td style="white-space:nowrap">${fmtD(e.date)}</td><td>${e.time}</td><td><span class="ev-tag ${bc}">${s.name}</span></td><td>${e.proc} ${pdfIcon}</td><td>${e.paciente||'—'}</td><td style="font-size:11px;color:var(--muted)">${e.doc}</td><td>${stDropdown}</td><td><button class="btn sm" onclick="openEditModal(${e.id})" title="Editar"><i class="ti ti-pencil"></i></button></td><td><button class="btn danger sm" onclick="delEvt(${e.id})" title="Excluir"><i class="ti ti-trash"></i></button></td></tr>`;
+    html+=`<tr style="${past?'opacity:.5':''}"><td style="white-space:nowrap">${fmtD(e.date)}</td><td>${e.time}</td><td><span class="ev-tag ${bc}">${s.name}</span></td><td>${e.proc} ${pdfIcon}</td><td>${e.paciente||'—'}</td><td style="font-size:11px;color:var(--muted)">${e.doc}</td><td>${stDropdown}</td><td><button class="btn sm" onclick="openEditModal('${e.id}')" title="Editar"><i class="ti ti-pencil"></i></button></td><td><button class="btn danger sm" onclick="delEvt('${e.id}')" title="Excluir"><i class="ti ti-trash"></i></button></td></tr>`;
   });
   document.getElementById('agtbl').innerHTML=html;
 }

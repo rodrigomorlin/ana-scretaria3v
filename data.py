@@ -588,7 +588,7 @@ def sb_relatorio_resumo(user):
 
 def sb_escala(user, mes):
     """Escala do mês (tabela shifts do MedSS) para os médicos do grupo.
-    mes: 'YYYY-MM'. Read-only — edição continua no MedSS por enquanto."""
+    mes: 'YYYY-MM'."""
     gid = _gid(user)
     docs = _doctors_map(gid)
     if not docs:
@@ -598,7 +598,7 @@ def sb_escala(user, mes):
     ano, m = int(mes[:4]), int(mes[5:7])
     prox = f"{ano + 1}-01-01" if m == 12 else f"{ano}-{m + 1:02d}-01"
     rows = _sb("GET", f"/shifts?doctor_id=in.({ids})&shift_date=gte.{ini}&shift_date=lt.{prox}"
-                      f"&select=doctor_id,shift_date,shift_type,is_hnt_ambulatory,is_half_shift,sector_id"
+                      f"&select=id,doctor_id,shift_date,shift_type,is_hnt_ambulatory,is_half_shift,sector_id"
                       f"&order=shift_date")
     secs = _sectors_map(gid)
     plantoes = {}
@@ -606,6 +606,7 @@ def sb_escala(user, mes):
         d = docs.get(r["doctor_id"], {}).get("name", "?")
         dia = r["shift_date"]
         plantoes.setdefault(d, {}).setdefault(dia, []).append({
+            "id": r["id"],
             "turno": r["shift_type"],
             "meio": bool(r.get("is_half_shift")),
             "hnt": bool(r.get("is_hnt_ambulatory")),
@@ -615,6 +616,30 @@ def sb_escala(user, mes):
     return {"mes": mes,
             "medicos": [m["name"] for m in medicos],
             "plantoes": plantoes}
+
+
+def sb_create_plantao(user, p):
+    """Cria um plantão na tabela shifts do MedSS."""
+    gid = _gid(user)
+    doctor_id = _find_doctor_id(gid, p.medico)
+    if not doctor_id:
+        raise HTTPException(400, f"Médico '{p.medico}' não encontrado no grupo.")
+    if p.turno not in ("morning", "afternoon", "night"):
+        raise HTTPException(400, "Turno inválido.")
+    body = {"group_id": gid, "doctor_id": doctor_id,
+            "shift_date": p.data, "shift_type": p.turno,
+            "is_half_shift": bool(p.meio), "is_hnt_ambulatory": bool(p.hnt),
+            "sector_id": _find_sector_id(gid, p.setor) if p.setor else None}
+    rows = _sb("POST", "/shifts", body)
+    _log(user, f"Plantão criado: {p.medico} {p.data} {p.turno}")
+    return {"ok": True, "id": rows[0]["id"]}
+
+
+def sb_delete_plantao(user, shift_id):
+    gid = _gid(user)
+    _sb("DELETE", f"/shifts?id=eq.{_q(shift_id)}&group_id=eq.{_q(gid)}")
+    _log(user, f"Plantão removido: {shift_id}")
+    return {"ok": True}
 
 
 def sb_mapa_cirurgico(user, data):

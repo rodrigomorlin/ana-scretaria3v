@@ -441,7 +441,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <button class="sidenav-item" id="snav-agenda" onclick="tab('agenda')"><i class="ti ti-calendar"></i><span>Agenda</span><span class="sidenav-badge" id="snav-badge" style="display:none">0</span></button>
     <button class="sidenav-item" id="snav-relatorios" onclick="tab('relatorios')"><i class="ti ti-chart-bar"></i><span>Relatórios</span></button>
     <button class="sidenav-item" id="snav-mapa" onclick="openMapaCirurgico()"><i class="ti ti-clipboard-list"></i><span>Mapa Cirúrgico</span></button>
-    <button class="sidenav-item" id="snav-medss" onclick="openMedSS()" style="display:none"><i class="ti ti-calendar-stats"></i><span>Escala (MedSS)</span><i class="ti ti-external-link" style="font-size:12px;margin-left:auto;opacity:.5"></i></button>
+    <button class="sidenav-item" id="snav-escala" onclick="tab('escala')"><i class="ti ti-calendar-stats"></i><span>Escala</span></button>
   </div>
   <div class="sidenav-section">
     <div class="sidenav-lbl">Sistema</div>
@@ -536,6 +536,30 @@ html,body{height:100%;background:var(--bg);color:var(--text);
   </div>
 </div>
 
+<!-- ESCALA (MedSS integrado) -->
+<div id="pescala" class="panel">
+  <div class="panel-header">
+    <div class="panel-title">Escala de plantões</div>
+    <div class="panel-actions">
+      <button class="btn sm" onclick="escalaMes(-1)"><i class="ti ti-chevron-left"></i></button>
+      <span id="escala-mes-label" style="font-size:13px;font-weight:600;min-width:130px;text-align:center"></span>
+      <button class="btn sm" onclick="escalaMes(1)"><i class="ti ti-chevron-right"></i></button>
+      <button class="btn sm" id="btn-medss-ext" onclick="openMedSS()" style="display:none"><i class="ti ti-external-link"></i> Editar no MedSS</button>
+    </div>
+  </div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px;font-size:10px;color:var(--muted)">
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:#fbbf24;vertical-align:middle;margin-right:4px"></span>Manhã</span>
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:#f97316;vertical-align:middle;margin-right:4px"></span>Tarde</span>
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:#6366f1;vertical-align:middle;margin-right:4px"></span>Noite</span>
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:#fbbf24;opacity:.45;vertical-align:middle;margin-right:4px"></span>Meio turno</span>
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;border:2px solid #10b981;vertical-align:middle;margin-right:4px"></span>HNT ambulatório</span>
+  </div>
+  <div class="ag-card" style="overflow-x:auto">
+    <table class="ag-tbl" id="escala-grid" style="min-width:700px"><tr><td style="padding:22px;color:var(--hint);text-align:center">Carregando escala...</td></tr></table>
+  </div>
+  <div style="font-size:10px;color:var(--hint);margin-top:10px"><i class="ti ti-info-circle"></i> Escala em modo consulta — os plantões são gerenciados no MedSS e aparecem aqui em tempo real (mesmo banco).</div>
+</div>
+
 <!-- RELATÓRIOS -->
 <div id="prelatorios" class="panel">
   <div class="panel-header">
@@ -625,6 +649,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
   <div class="bottom-nav-items">
     <button class="bn-item on" id="bn-chat" onclick="tab('chat')"><i class="ti ti-message-2"></i>Chat</button>
     <button class="bn-item" id="bn-agenda" onclick="tab('agenda')"><i class="ti ti-calendar"></i>Agenda</button>
+    <button class="bn-item" id="bn-escala" onclick="tab('escala')"><i class="ti ti-calendar-stats"></i>Escala</button>
     <button class="bn-item" id="bn-relatorios" onclick="tab('relatorios')"><i class="ti ti-chart-bar"></i>Relatórios</button>
     <button class="bn-item" id="bn-config" onclick="tab('config')"><i class="ti ti-settings"></i>Config</button>
     <button class="bn-item" id="bn-logs" onclick="tab('logs')" style="display:none"><i class="ti ti-terminal"></i>Logs</button>
@@ -787,6 +812,58 @@ async function afterLogin(){
   if(ms.length===1)setGroup(ms[0].group_id,false);
   showApp();
 }
+let escalaAtual=new Date().toISOString().slice(0,7);
+function escalaMes(delta){
+  let [a,m]=escalaAtual.split('-').map(Number);
+  m+=delta; if(m<1){m=12;a--;} if(m>12){m=1;a++;}
+  escalaAtual=`${a}-${String(m).padStart(2,'0')}`;
+  loadEscala();
+}
+async function loadEscala(){
+  const MESES=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  const [a,m]=escalaAtual.split('-').map(Number);
+  document.getElementById('escala-mes-label').textContent=`${MESES[m-1]} ${a}`;
+  const bx=document.getElementById('btn-medss-ext');
+  if(bx)bx.style.display=window._medssUrl?'inline-flex':'none';
+  const grid=document.getElementById('escala-grid');
+  try{
+    const e=await api('GET',`/api/escala?mes=${escalaAtual}`);
+    if(!e.medicos.length){grid.innerHTML='<tr><td style="padding:22px;color:var(--hint);text-align:center">Nenhum médico no grupo ainda.</td></tr>';return;}
+    const dias=new Date(a,m,0).getDate();
+    const DOW=['D','S','T','Q','Q','S','S'];
+    const hoje=new Date().toISOString().slice(0,10);
+    const CORES={morning:'#fbbf24',afternoon:'#f97316',night:'#6366f1'};
+    let h='<tr><th style="position:sticky;left:0;background:var(--faint);z-index:2">Médico</th>';
+    for(let d=1;d<=dias;d++){
+      const dt=`${escalaAtual}-${String(d).padStart(2,'0')}`;
+      const dow=new Date(a,m-1,d).getDay();
+      const fds=dow===0||dow===6;
+      const isHoje=dt===hoje;
+      h+=`<th style="text-align:center;padding:6px 4px;min-width:26px;${fds?'background:var(--al);':''}${isHoje?'box-shadow:inset 0 -2px 0 var(--accent);':''}"><div style="font-size:8px;opacity:.6">${DOW[dow]}</div>${d}</th>`;
+    }
+    h+='</tr>';
+    for(const doc of e.medicos){
+      h+=`<tr><td style="position:sticky;left:0;background:var(--surface);z-index:1;font-weight:500;font-size:11px;white-space:nowrap">${doc}</td>`;
+      for(let d=1;d<=dias;d++){
+        const dt=`${escalaAtual}-${String(d).padStart(2,'0')}`;
+        const ps=(e.plantoes[doc]||{})[dt]||[];
+        const dow=new Date(a,m-1,d).getDay();
+        const fds=dow===0||dow===6;
+        let cell='';
+        for(const p of ps){
+          const cor=CORES[p.turno]||'#94a3b8';
+          const tip=`${p.turno==='morning'?'Manhã':p.turno==='afternoon'?'Tarde':'Noite'}${p.meio?' (meio)':''}${p.hnt?' · HNT':''}${p.setor?' · '+p.setor:''}`;
+          cell+=`<span title="${tip}" style="display:inline-block;width:9px;height:9px;border-radius:3px;background:${cor};margin:1px;${p.meio?'opacity:.45;':''}${p.hnt?'border:1.5px solid #10b981;':''}"></span>`;
+        }
+        h+=`<td style="text-align:center;padding:4px 2px;${fds?'background:var(--faint);':''}">${cell}</td>`;
+      }
+      h+='</tr>';
+    }
+    grid.innerHTML=h;
+  }catch(err){
+    grid.innerHTML=`<tr><td style="padding:22px;color:var(--err);text-align:center">${err.message}</td></tr>`;
+  }
+}
 function openMedSS(){
   if(window._medssUrl)window.open(window._medssUrl,'_blank');
 }
@@ -878,7 +955,7 @@ async function tryAuto(){
 
 // ── TABS ─────────────────────────────────────────────────
 function tab(n){
-  const names=['chat','agenda','relatorios','config','logs'];
+  const names=['chat','agenda','escala','relatorios','config','logs'];
   // Sidebar nav items
   names.forEach(name=>{
     const el=document.getElementById('snav-'+name);
@@ -894,12 +971,12 @@ function tab(n){
   const panelsWrap=document.querySelector('[id="pagenda"]')?.parentElement;
   if(panelsWrap)panelsWrap.style.display=n!=='chat'?'flex':'none';
   // Panels
-  ['agenda','relatorios','config','logs'].forEach(p=>{
+  ['agenda','escala','relatorios','config','logs'].forEach(p=>{
     const el=document.getElementById('p'+p);if(el)el.classList.toggle('on',p===n);
   });
   // Topbar contextual
-  const titles={chat:'Chat',agenda:'Agenda',relatorios:'Relatórios',config:'Configurações',logs:'Logs'};
-  const subs={chat:'Fale com a Ana em linguagem natural',agenda:'Todos os procedimentos agendados',relatorios:'Análises e gráficos do grupo',config:'Médicos, setores e integrações',logs:'Registro de atividades do sistema'};
+  const titles={chat:'Chat',agenda:'Agenda',escala:'Escala',relatorios:'Relatórios',config:'Configurações',logs:'Logs'};
+  const subs={chat:'Fale com a Ana em linguagem natural',agenda:'Todos os procedimentos agendados',escala:'Plantões do grupo — integrado ao MedSS',relatorios:'Análises e gráficos do grupo',config:'Médicos, setores e integrações',logs:'Registro de atividades do sistema'};
   const tt=document.getElementById('topbar-title');
   const ts=document.getElementById('topbar-sub');
   const ta=document.getElementById('topbar-actions');
@@ -913,6 +990,7 @@ function tab(n){
     }else{ta.innerHTML='';}
   }
   if(n==='agenda')renderAgenda();
+  if(n==='escala')loadEscala();
   if(n==='relatorios')loadRelatorios();
   if(n==='logs')loadLogs();
   if(n==='config'){loadCorrecoes();loadGcalCurrent();loadGcalPessoal();loadOrgInfo();loadPushStatus();}

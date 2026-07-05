@@ -331,6 +331,7 @@ def sb_create_evento(user, ev):
     _log(user, f"Agendado: {ev.proc} | {ev.paciente} | {ev.date} {ev.time} | {ev.doc}")
     docs = _doctors_map(gid); secs = _sectors_map(gid)
     out = _appt_to_evento(saved, docs, secs)
+    out["setor_nome"] = secs.get(saved.get("sector_id") or "", {}).get("name", "")
     out["aviso"] = " | ".join(avisos) if avisos else None
     return out
 

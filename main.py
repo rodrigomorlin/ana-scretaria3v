@@ -2059,6 +2059,10 @@ def oauth_google_start(request: Request, user=Depends(auth)):
     # state = token de sessão atual, para sabermos a qual usuário vincular no callback
     token = request.headers.get("X-Token","") or request.query_params.get("token","")
     if not token:
+        authz = request.headers.get("Authorization", "")
+        if authz.startswith("Bearer "):
+            token = authz[7:]
+    if not token:
         raise HTTPException(401, "Token ausente.")
     url = build_oauth_url(state=token)
     return {"auth_url": url}
@@ -2068,6 +2072,22 @@ def oauth_google_callback(code: str = "", state: str = "", error: str = ""):
     if error:
         return HTMLResponse(f"<html><body style='font-family:sans-serif;text-align:center;padding:40px'><h3>Autorização cancelada</h3><p>{error}</p><script>setTimeout(()=>window.close(),2000)</script></body></html>")
     user = get_user(state)
+    if not user and SUPABASE_URL:
+        # state pode ser um JWT do Supabase (login novo)
+        claims = validate_supabase_jwt(state)
+        if claims and claims.get("sub"):
+            uid = claims["sub"]
+            meta = claims.get("user_metadata") or {}
+            nome = meta.get("full_name") or meta.get("name") or (claims.get("email","").split("@")[0] or uid[:8])
+            conn = get_db(); c = conn.cursor()
+            c.execute(f"SELECT id FROM usuarios WHERE id={P()}", (uid,))
+            if not fetchone(c):
+                # linha-sombra: só para armazenar os tokens Google deste usuário
+                c.execute(f"INSERT INTO usuarios (id,nome,pin_hash,role) VALUES ({Ps(4)})",
+                          (uid, nome, "!supabase!", "medico"))
+                conn.commit()
+            conn.close()
+            user = {"id": uid, "nome": nome}
     if not user:
         return HTMLResponse("<html><body style='font-family:sans-serif;text-align:center;padding:40px'><h3>Sessão inválida ou expirada</h3><p>Volte ao app e tente novamente.</p></body></html>")
     try:
@@ -2118,6 +2138,12 @@ def oauth_google_disconnect(user=Depends(auth)):
     return {"ok": True}
 
 # ── HEALTH ─────────────────────────────────────────────────
+@app.get("/api/public-config")
+def public_config():
+    """Config pública para o frontend inicializar o supabase-js (anon key é pública por design)."""
+    return {"supabase_url": SUPABASE_URL, "supabase_anon_key": SUPABASE_ANON_KEY,
+            "supabase_auth": bool(SUPABASE_URL and SUPABASE_ANON_KEY)}
+
 @app.get("/api/supabase/status")
 def supabase_status():
     """Diagnóstico da integração Supabase (sem expor chaves)."""

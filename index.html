@@ -342,6 +342,24 @@ html,body{height:100%;background:var(--bg);color:var(--text);
       </div>
     </div>
 
+    <!-- ONBOARDING: sem grupo ainda -->
+    <div id="onboarding" style="display:none">
+      <div class="login-hint" style="margin-top:0;margin-bottom:14px;text-align:left;background:var(--al);color:var(--ad);border-radius:var(--rs);padding:10px 12px;line-height:1.6">
+        <i class="ti ti-sparkles"></i> <b>Bem-vindo(a)!</b> Você ainda não participa de nenhum grupo.
+        Crie o seu — você será o administrador — ou aguarde um convite de um grupo existente.
+      </div>
+      <div class="f">
+        <label>Nome do grupo / clínica</label>
+        <input id="ob-nome" placeholder="ex: Grupo de Anestesia POA" onkeydown="if(event.key==='Enter')doCreateGroup()">
+      </div>
+      <button class="btn-full" onclick="doCreateGroup()" id="ob-btn"><i class="ti ti-plus"></i> Criar meu grupo</button>
+      <div class="login-err" id="ob-err"></div>
+      <div style="text-align:center;margin-top:14px;display:flex;flex-direction:column;gap:6px">
+        <a href="#" onclick="event.preventDefault();recheckGroups()" style="font-size:11px;color:var(--accent);text-decoration:underline"><i class="ti ti-refresh"></i> Já fui convidado — verificar novamente</a>
+        <a href="#" onclick="event.preventDefault();doLogout()" style="font-size:10px;color:var(--hint);text-decoration:underline">Sair</a>
+      </div>
+    </div>
+
     <!-- SELETOR DE GRUPO (multi-grupo) -->
     <div id="group-picker" style="display:none">
       <div class="login-hint" style="margin-top:0;margin-bottom:12px;text-align:left;background:var(--al);color:var(--ad);border-radius:var(--rs);padding:8px 10px">
@@ -407,6 +425,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <button class="sidenav-item" id="snav-agenda" onclick="tab('agenda')"><i class="ti ti-calendar"></i><span>Agenda</span><span class="sidenav-badge" id="snav-badge" style="display:none">0</span></button>
     <button class="sidenav-item" id="snav-relatorios" onclick="tab('relatorios')"><i class="ti ti-chart-bar"></i><span>Relatórios</span></button>
     <button class="sidenav-item" id="snav-mapa" onclick="openMapaCirurgico()"><i class="ti ti-clipboard-list"></i><span>Mapa Cirúrgico</span></button>
+    <button class="sidenav-item" id="snav-medss" onclick="openMedSS()" style="display:none"><i class="ti ti-calendar-stats"></i><span>Escala (MedSS)</span><i class="ti ti-external-link" style="font-size:12px;margin-left:auto;opacity:.5"></i></button>
   </div>
   <div class="sidenav-section">
     <div class="sidenav-lbl">Sistema</div>
@@ -658,6 +677,7 @@ async function initSupabase(){
   const cfg=await (await fetch('/api/public-config')).json();
   if(!cfg.supabase_auth){document.getElementById('lerr').textContent='Supabase não configurado no servidor.';document.getElementById('lerr').style.display='block';return null;}
   sb=window.supabase.createClient(cfg.supabase_url,cfg.supabase_anon_key);
+  window._medssUrl=cfg.medss_url||'';
   return sb;
 }
 async function getToken(){
@@ -703,13 +723,43 @@ async function afterLogin(){
   const who=await api('GET','/api/supabase/whoami');
   me={id:who.id,nome:who.nome,role:who.role,org_id:who.group_id};
   const ms=who.memberships||[];
+  if(ms.length===0){
+    // sem grupo: onboarding (criar ou aguardar convite)
+    document.getElementById('login-form').style.display='none';
+    document.getElementById('group-picker').style.display='none';
+    document.getElementById('onboarding').style.display='block';
+    return;
+  }
   if(ms.length>1&&!ms.some(m=>m.group_id===groupId)){
-    // multi-grupo: pedir escolha
     await showGroupPicker(ms);
     return;
   }
   if(ms.length===1)setGroup(ms[0].group_id,false);
   showApp();
+}
+function openMedSS(){
+  if(window._medssUrl)window.open(window._medssUrl,'_blank');
+}
+async function doCreateGroup(){
+  const nome=document.getElementById('ob-nome').value.trim();
+  const err=document.getElementById('ob-err');
+  if(!nome){err.textContent='Digite o nome do grupo.';err.style.display='block';return;}
+  const btn=document.getElementById('ob-btn');btn.disabled=true;
+  try{
+    const r=await api('POST','/api/grupos',{nome});
+    setGroup(r.group_id,false);
+    document.getElementById('onboarding').style.display='none';
+    document.getElementById('login-form').style.display='block';
+    me.role='admin';me.org_id=r.group_id;
+    toast(`Grupo "${r.nome}" criado! Você é o administrador.`);
+    showApp();
+  }catch(e){err.textContent=e.message||'Erro ao criar grupo.';err.style.display='block';}
+  btn.disabled=false;
+}
+async function recheckGroups(){
+  document.getElementById('onboarding').style.display='none';
+  document.getElementById('login-form').style.display='block';
+  await afterLogin();
 }
 async function showGroupPicker(ms){
   document.getElementById('login-form').style.display='none';
@@ -763,6 +813,7 @@ async function showApp(){
     const el=document.getElementById('snav-logs');if(el)el.style.display='flex';
     const bn=document.getElementById('bn-logs');if(bn)bn.style.display='flex';
   }
+  if(window._medssUrl){const ms=document.getElementById('snav-medss');if(ms)ms.style.display='flex';}
   await loadAll();loadIntStatus();initWelcome();
   setInterval(loadAll,30000);
 }

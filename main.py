@@ -682,37 +682,78 @@ def refresh_oauth_token(refresh_token: str) -> dict:
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read())
 
+def _gtok_get(uid: str) -> dict:
+    """Tokens Google do usuário — Supabase (ana_user_google_tokens) ou SQLite."""
+    if SB_DATA:
+        try:
+            rows = sb_rest("GET", f"/ana_user_google_tokens?user_id=eq.{uid}&select=credentials")
+            return rows[0]["credentials"] if rows else {}
+        except Exception:
+            return {}
+    conn = get_db(); c = conn.cursor()
+    c.execute(f"SELECT gcal_access_token,gcal_refresh_token,gcal_token_expiry,gcal_email FROM usuarios WHERE id={P()}", (uid,))
+    row = fetchone(c); conn.close()
+    if not row: return {}
+    return {"access_token": row.get("gcal_access_token") or "",
+            "refresh_token": row.get("gcal_refresh_token") or "",
+            "expiry": row.get("gcal_token_expiry") or "",
+            "email": row.get("gcal_email") or ""}
+
+def _gtok_save(uid: str, **patch):
+    if SB_DATA:
+        cur = _gtok_get(uid)
+        cur.update({k: v for k, v in patch.items() if v is not None})
+        try:
+            sb_rest("DELETE", f"/ana_user_google_tokens?user_id=eq.{uid}")
+            sb_rest("POST", "/ana_user_google_tokens", {"user_id": uid, "credentials": cur})
+        except Exception as e:
+            log.error(f"_gtok_save supabase: {e}")
+        return
+    sets, vals = [], []
+    mapping = {"access_token": "gcal_access_token", "refresh_token": "gcal_refresh_token",
+               "expiry": "gcal_token_expiry", "email": "gcal_email"}
+    for k, col in mapping.items():
+        if k in patch and patch[k] is not None:
+            sets.append(f"{col}={P()}"); vals.append(patch[k])
+    if not sets: return
+    vals.append(uid)
+    conn = get_db(); c = conn.cursor()
+    c.execute(f"UPDATE usuarios SET {', '.join(sets)} WHERE id={P()}", tuple(vals))
+    conn.commit(); conn.close()
+
+def _gtok_clear(uid: str):
+    if SB_DATA:
+        try: sb_rest("DELETE", f"/ana_user_google_tokens?user_id=eq.{uid}")
+        except Exception: pass
+        return
+    conn = get_db(); c = conn.cursor()
+    c.execute(f"""UPDATE usuarios SET gcal_access_token='', gcal_refresh_token='',
+                  gcal_token_expiry='', gcal_email='' WHERE id={P()}""", (uid,))
+    conn.commit(); conn.close()
+
 def get_user_google_token(usuario_id: str) -> Optional[str]:
     """Retorna um access_token válido para o usuário, renovando se necessário. None se não conectado."""
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT gcal_access_token,gcal_refresh_token,gcal_token_expiry FROM usuarios WHERE id={P()}", (usuario_id,))
-    row = fetchone(c); conn.close()
-    if not row or not row.get("gcal_refresh_token"):
-        log.info(f"GCal token: usuário {usuario_id} sem refresh_token salvo.")
+    row = _gtok_get(usuario_id)
+    if not row or not row.get("refresh_token"):
         return None
-    expiry = row.get("gcal_token_expiry") or ""
+    expiry = row.get("expiry") or ""
     try:
         expiry_dt = datetime.fromisoformat(expiry) if expiry else datetime.min
     except Exception:
         expiry_dt = datetime.min
-    if row.get("gcal_access_token") and datetime.now() < expiry_dt:
-        log.info(f"GCal token: usando access_token em cache para {usuario_id} (expira {expiry}).")
-        return row["gcal_access_token"]
+    if row.get("access_token") and datetime.now() < expiry_dt:
+        return row["access_token"]
     # token expirado — renova
     log.info(f"GCal token: access_token expirado/ausente para {usuario_id}, renovando via refresh_token...")
     try:
-        tok = refresh_oauth_token(row["gcal_refresh_token"])
+        tok = refresh_oauth_token(row["refresh_token"])
         new_access = tok.get("access_token", "")
         if not new_access:
             log.error(f"GCal token: refresh não retornou access_token. Resposta: {tok}")
             return None
         expires_in = tok.get("expires_in", 3600)
         new_expiry = (datetime.now() + timedelta(seconds=expires_in - 60)).isoformat()
-        conn2 = get_db(); c2 = conn2.cursor()
-        c2.execute(f"UPDATE usuarios SET gcal_access_token={P()}, gcal_token_expiry={P()} WHERE id={P()}",
-                   (new_access, new_expiry, usuario_id))
-        conn2.commit(); conn2.close()
-        log.info(f"GCal token: renovado com sucesso para {usuario_id}.")
+        _gtok_save(usuario_id, access_token=new_access, expiry=new_expiry)
         return new_access
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="ignore")
@@ -1019,7 +1060,18 @@ def list_eventos(user=Depends(auth)):
 
 @app.post("/api/eventos")
 async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_create_evento(user, ev)
+    if SB_DATA:
+        out = ana_data.sb_create_evento(user, ev)
+        org_id = user.get("org_id", "default")
+        try:
+            if get_user_google_token(user["id"]) or GCAL_CREDS:
+                await gcal_create(ev.dict(), out.get("setor_nome") or "", criado_por_id=user["id"], org_id=org_id)
+        except Exception as e:
+            log.warning(f"GCal sync (modo supabase): {e}")
+        if VAPID_PUBLIC_KEY:
+            bg.add_task(push_all_org, org_id, "📅 Novo agendamento",
+                        f"{ev.proc} — {ev.doc} · {fmtDate(ev.date)} {ev.time}")
+        return out
     org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
     cf = find_overlap(c, ev.doc, ev.date, ev.time, org_id)
@@ -1908,10 +1960,14 @@ def send_push(subscription_info: dict, title: str, body: str, url: str = "/") ->
         return False
 
 async def push_all_org(org_id: str, title: str, body: str, url: str = "/"):
-    """Envia push para todos os usuários de uma org com subscription ativa."""
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT id, subscription FROM push_subscriptions WHERE org_id={P()}", (org_id,))
-    subs = fetchall(c); conn.close()
+    """Envia push para todos os usuários de uma org/grupo com subscription ativa."""
+    if SB_DATA:
+        rows = sb_rest("GET", f"/ana_push_subscriptions?group_id=eq.{org_id}&select=id,subscription")
+        subs = [{"id": r["id"], "subscription": json.dumps(r["subscription"])} for r in rows]
+    else:
+        conn = get_db(); c = conn.cursor()
+        c.execute(f"SELECT id, subscription FROM push_subscriptions WHERE org_id={P()}", (org_id,))
+        subs = fetchall(c); conn.close()
     sent = 0
     for sub in subs:
         try:
@@ -1930,27 +1986,34 @@ def get_vapid_key():
     return {"public_key": VAPID_PUBLIC_KEY}
 
 @app.post("/api/push/subscribe")
-def push_subscribe(request: Request, user=Depends(auth)):
+async def push_subscribe(request: Request, user=Depends(auth)):
     """Salva a subscription de push do dispositivo do usuário."""
-    import asyncio
-    body = asyncio.get_event_loop().run_until_complete(request.json())
+    body = await request.json()
     sub_json = json.dumps(body)
     sub_id = secrets.token_hex(16)
     org_id = user.get("org_id", "default")
-    conn = get_db(); c = conn.cursor()
-    # Remove subscriptions antigas do mesmo endpoint se existir
-    endpoint = body.get("endpoint", "")
-    if endpoint:
-        c.execute("DELETE FROM push_subscriptions WHERE subscription LIKE ?", (f'%{endpoint[:80]}%',))
-    c.execute(f"INSERT INTO push_subscriptions (id,usuario_id,org_id,subscription) VALUES ({Ps(4)})",
-              (sub_id, user["id"], org_id, sub_json))
-    conn.commit(); conn.close()
+    if SB_DATA:
+        # remove inscrições anteriores do usuário e insere a nova
+        sb_rest("DELETE", f"/ana_push_subscriptions?user_id=eq.{user['id']}")
+        sb_rest("POST", "/ana_push_subscriptions",
+                {"user_id": user["id"], "group_id": org_id, "subscription": body})
+    else:
+        conn = get_db(); c = conn.cursor()
+        endpoint = body.get("endpoint", "")
+        if endpoint:
+            c.execute("DELETE FROM push_subscriptions WHERE subscription LIKE ?", (f'%{endpoint[:80]}%',))
+        c.execute(f"INSERT INTO push_subscriptions (id,usuario_id,org_id,subscription) VALUES ({Ps(4)})",
+                  (sub_id, user["id"], org_id, sub_json))
+        conn.commit(); conn.close()
     db_log("INFO", "Push subscription registrada", usuario=user["id"], org_id=org_id)
     return {"ok": True}
 
 @app.delete("/api/push/subscribe")
 def push_unsubscribe(user=Depends(auth)):
     """Remove todas as subscriptions do usuário."""
+    if SB_DATA:
+        sb_rest("DELETE", f"/ana_push_subscriptions?user_id=eq.{user['id']}")
+        return {"ok": True}
     conn = get_db(); c = conn.cursor()
     c.execute(f"DELETE FROM push_subscriptions WHERE usuario_id={P()}", (user["id"],))
     conn.commit(); conn.close()
@@ -1958,6 +2021,9 @@ def push_unsubscribe(user=Depends(auth)):
 
 @app.get("/api/push/status")
 def push_status(user=Depends(auth)):
+    if SB_DATA:
+        rows = sb_rest("GET", f"/ana_push_subscriptions?user_id=eq.{user['id']}&select=id")
+        return {"enabled": len(rows) > 0, "vapid_configured": bool(VAPID_PUBLIC_KEY)}
     conn = get_db(); c = conn.cursor()
     c.execute(f"SELECT COUNT(*) FROM push_subscriptions WHERE usuario_id={P()}", (user["id"],))
     count = c.fetchone()[0]; conn.close()
@@ -1966,9 +2032,13 @@ def push_status(user=Depends(auth)):
 @app.post("/api/push/test")
 async def push_test(user=Depends(auth)):
     """Envia uma notificação de teste para o usuário atual."""
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT subscription FROM push_subscriptions WHERE usuario_id={P()}", (user["id"],))
-    subs = fetchall(c); conn.close()
+    if SB_DATA:
+        rows = sb_rest("GET", f"/ana_push_subscriptions?user_id=eq.{user['id']}&select=subscription")
+        subs = [{"subscription": json.dumps(r["subscription"])} for r in rows]
+    else:
+        conn = get_db(); c = conn.cursor()
+        c.execute(f"SELECT subscription FROM push_subscriptions WHERE usuario_id={P()}", (user["id"],))
+        subs = fetchall(c); conn.close()
     if not subs:
         raise HTTPException(400, "Nenhum dispositivo registrado para este usuário.")
     sent = 0
@@ -2045,11 +2115,9 @@ def list_gcal_calendars(user=Depends(auth)):
 # ── OAUTH GOOGLE (calendário pessoal por usuário) ───────────
 @app.get("/api/oauth/google/status")
 def oauth_google_status(user=Depends(auth)):
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT gcal_refresh_token,gcal_email FROM usuarios WHERE id={P()}", (user["id"],))
-    row = fetchone(c); conn.close()
-    connected = bool(row and row.get("gcal_refresh_token"))
-    return {"connected": connected, "email": row.get("gcal_email","") if row else "",
+    row = _gtok_get(user["id"])
+    connected = bool(row.get("refresh_token"))
+    return {"connected": connected, "email": row.get("email",""),
             "oauth_disponivel": bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and APP_BASE_URL)}
 
 @app.get("/api/oauth/google/start")
@@ -2108,16 +2176,11 @@ def oauth_google_callback(code: str = "", state: str = "", error: str = ""):
         except Exception:
             pass
 
-        conn = get_db(); c = conn.cursor()
         if refresh_token:
-            c.execute(f"""UPDATE usuarios SET gcal_access_token={P()}, gcal_refresh_token={P()},
-                          gcal_token_expiry={P()}, gcal_email={P()} WHERE id={P()}""",
-                      (access_token, refresh_token, expiry, email, user["id"]))
+            _gtok_save(user["id"], access_token=access_token, refresh_token=refresh_token, expiry=expiry, email=email)
         else:
             # Google só manda refresh_token na primeira autorização; se já existir, mantém o antigo
-            c.execute(f"UPDATE usuarios SET gcal_access_token={P()}, gcal_token_expiry={P()}, gcal_email={P()} WHERE id={P()}",
-                      (access_token, expiry, email, user["id"]))
-        conn.commit(); conn.close()
+            _gtok_save(user["id"], access_token=access_token, expiry=expiry, email=email)
         db_log("INFO", f"Google Calendar pessoal conectado: {email}", usuario=user["id"])
         return HTMLResponse(f"""<html><body style='font-family:sans-serif;text-align:center;padding:40px'>
             <h3>✅ Calendário conectado!</h3><p>{email}</p>
@@ -2130,10 +2193,7 @@ def oauth_google_callback(code: str = "", state: str = "", error: str = ""):
 
 @app.post("/api/oauth/google/disconnect")
 def oauth_google_disconnect(user=Depends(auth)):
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"""UPDATE usuarios SET gcal_access_token='', gcal_refresh_token='',
-                  gcal_token_expiry='', gcal_email='' WHERE id={P()}""", (user["id"],))
-    conn.commit(); conn.close()
+    _gtok_clear(user["id"])
     db_log("INFO", "Google Calendar pessoal desconectado", usuario=user["id"])
     return {"ok": True}
 

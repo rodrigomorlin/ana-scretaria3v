@@ -2200,7 +2200,7 @@ def criar_grupo(g: NovoGrupo, request: Request):
             sb_rest("POST", "/profiles", {"id": u["id"], "full_name": u["nome"]})
     except Exception as e:
         log.warning(f"profiles check/insert: {e}")
-    grupo = sb_rest("POST", "/groups", {"name": nome})[0]
+    grupo = sb_rest("POST", "/groups", {"name": nome, "created_by": u["id"]})[0]
     sb_rest("POST", "/group_members",
             {"user_id": u["id"], "group_id": grupo["id"], "role": "admin"})
     _membership_cache.pop(u["id"], None)

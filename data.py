@@ -98,6 +98,26 @@ def _find_doctor_id(gid, name):
     return rows[0]["id"] if rows else None
 
 
+def _is_uuid(v: str) -> bool:
+    import re
+    return bool(re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", str(v or "")))
+
+
+def _find_sector_id(gid, valor):
+    """Resolve um setor a partir de UUID ou nome (a IA às vezes manda o nome)."""
+    if not valor:
+        return None
+    if _is_uuid(valor):
+        rows = _sb("GET", f"/sectors?id=eq.{_q(valor)}&group_id=eq.{_q(gid)}&select=id")
+        if rows:
+            return valor
+    rows = _sb("GET", f"/sectors?group_id=eq.{_q(gid)}&name=ilike.{_q(valor)}&select=id&limit=1")
+    if rows:
+        return rows[0]["id"]
+    rows = _sb("GET", f"/sectors?group_id=eq.{_q(gid)}&name=ilike.{_q('*' + str(valor) + '*')}&select=id&limit=1")
+    return rows[0]["id"] if rows else None
+
+
 # ── SETORES ─────────────────────────────────────────────────
 def sb_list_setores(user):
     gid = _gid(user)
@@ -240,10 +260,11 @@ def sb_list_eventos(user):
 def sb_create_evento(user, ev):
     gid = _gid(user)
     doctor_id = _find_doctor_id(gid, ev.doc)
+    sector_id = _find_sector_id(gid, ev.setor)
     body = {
         "group_id": gid,
         "doctor_id": doctor_id,
-        "sector_id": ev.setor or None,
+        "sector_id": sector_id,
         "appointment_date": ev.date,
         "appointment_time": ev.time or None,
         "patient_name": ev.paciente or "—",
@@ -268,7 +289,7 @@ def sb_create_evento(user, ev):
                           f"(paciente: {c.get('patient_name') or '—'}). Agendado mesmo assim.")
 
     # deslocamento entre setores no mesmo dia
-    if doctor_id and ev.setor and ev.time:
+    if doctor_id and sector_id and ev.time:
         outros = _sb("GET", f"/appointments?group_id=eq.{_q(gid)}&doctor_id=eq.{_q(doctor_id)}"
                             f"&appointment_date=eq.{_q(ev.date)}&id=neq.{_q(saved['id'])}"
                             f"&status=neq.cancelled&select=sector_id,appointment_time,procedure")
@@ -279,13 +300,13 @@ def sb_create_evento(user, ev):
                 return None
         novo = tomin(ev.time)
         for o in outros:
-            if not o.get("sector_id") or o["sector_id"] == ev.setor:
+            if not o.get("sector_id") or o["sector_id"] == sector_id:
                 continue
             om = tomin(o.get("appointment_time"))
             if novo is None or om is None:
                 continue
             intervalo = abs(novo - om)
-            mins = sb_get_deslocamento(gid, ev.setor, o["sector_id"])
+            mins = sb_get_deslocamento(gid, sector_id, o["sector_id"])
             if mins and intervalo < mins:
                 avisos.append(f"🚗 Deslocamento apertado: apenas {intervalo}min de intervalo, "
                               f"deslocamento estimado {mins}min.")
@@ -323,7 +344,7 @@ def sb_update_evento(user, ev_id, ev):
     if ev.doc is not None:
         body["doctor_id"] = _find_doctor_id(gid, ev.doc)
         body["surgeon"] = None
-    if ev.setor is not None: body["sector_id"] = ev.setor or None
+    if ev.setor is not None: body["sector_id"] = _find_sector_id(gid, ev.setor)
     if ev.proc is not None: body["procedure"] = ev.proc
     if ev.paciente is not None: body["patient_name"] = ev.paciente or "—"
     if ev.date is not None: body["appointment_date"] = ev.date

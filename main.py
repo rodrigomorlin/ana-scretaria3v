@@ -2154,6 +2154,26 @@ def get_escala(mes: str = "", user=Depends(auth)):
         mes = datetime.now().strftime("%Y-%m")
     return ana_data.sb_escala(user, mes)
 
+class Plantao(BaseModel):
+    medico: str
+    data: str
+    turno: str          # morning | afternoon | night
+    meio: bool = False
+    hnt: bool = False
+    setor: str = ""
+
+@app.post("/api/escala/plantao")
+def criar_plantao(p: Plantao, user=Depends(auth)):
+    if not SB_DATA:
+        raise HTTPException(400, "Escala disponível apenas com o banco compartilhado (Supabase).")
+    return ana_data.sb_create_plantao(user, p)
+
+@app.delete("/api/escala/plantao/{shift_id}")
+def remover_plantao(shift_id: str, user=Depends(auth)):
+    if not SB_DATA:
+        raise HTTPException(400, "Escala disponível apenas com o banco compartilhado (Supabase).")
+    return ana_data.sb_delete_plantao(user, shift_id)
+
 @app.get("/api/supabase/status")
 def supabase_status():
     """Diagnóstico da integração Supabase (sem expor chaves)."""

@@ -337,8 +337,24 @@ html,body{height:100%;background:var(--bg);color:var(--text);
       <button class="btn-full" onclick="doLogin()" id="lbtn"><i class="ti ti-login"></i> Entrar</button>
       <div class="login-err" id="lerr"></div>
       <div class="login-hint">Use a mesma conta do MedSS (escala). Contas novas são convidadas pelo administrador do grupo.</div>
+      <div style="text-align:center;margin-top:10px;display:flex;flex-direction:column;gap:5px">
+        <a href="#" onclick="event.preventDefault();showSignup()" style="font-size:11px;color:var(--accent);text-decoration:underline">Ainda não tem conta? Criar conta</a>
+        <a href="#" onclick="event.preventDefault();doForgot()" style="font-size:10px;color:var(--hint);text-decoration:underline">Esqueci minha senha</a>
+      </div>
+    </div>
+
+    <!-- SIGNUP -->
+    <div id="signup-form" style="display:none">
+      <div class="f">
+        <label>Nome completo</label><input id="su-nome" placeholder="Dr. Nome Sobrenome">
+        <label>Email</label><input id="su-email" type="email" placeholder="voce@exemplo.com">
+        <label>Senha (mínimo 6 caracteres)</label><input id="su-senha" type="password" placeholder="••••••••" onkeydown="if(event.key==='Enter')doSignup()">
+      </div>
+      <button class="btn-full" onclick="doSignup()" id="su-btn"><i class="ti ti-user-plus"></i> Criar conta</button>
+      <div class="login-err" id="su-err"></div>
+      <div class="login-hint">A conta vale para a Ana e para o MedSS (escala) — é o mesmo login.</div>
       <div style="text-align:center;margin-top:10px">
-        <a href="#" onclick="event.preventDefault();doForgot()" style="font-size:11px;color:var(--accent);text-decoration:underline">Esqueci minha senha</a>
+        <a href="#" onclick="event.preventDefault();showLoginForm()" style="font-size:10px;color:var(--hint);text-decoration:underline">Já tem conta? Voltar ao login</a>
       </div>
     </div>
 
@@ -709,6 +725,40 @@ async function doLogin(){
     if(error)throw new Error(error.message==='Invalid login credentials'?'Email ou senha incorretos.':error.message);
     await afterLogin();
   }catch(e){showErr(e.message||'Erro.');}
+  btn.disabled=false;
+}
+function showSignup(){
+  document.getElementById('login-form').style.display='none';
+  document.getElementById('signup-form').style.display='block';
+}
+function showLoginForm(){
+  document.getElementById('signup-form').style.display='none';
+  document.getElementById('onboarding').style.display='none';
+  document.getElementById('group-picker').style.display='none';
+  document.getElementById('login-form').style.display='block';
+}
+async function doSignup(){
+  const nome=document.getElementById('su-nome').value.trim();
+  const email=document.getElementById('su-email').value.trim();
+  const senha=document.getElementById('su-senha').value;
+  const err=document.getElementById('su-err');
+  const show=m=>{err.textContent=m;err.style.display='block';};
+  if(!nome||!email||!senha){show('Preencha nome, email e senha.');return;}
+  if(senha.length<6){show('A senha precisa de pelo menos 6 caracteres.');return;}
+  const btn=document.getElementById('su-btn');btn.disabled=true;
+  try{
+    await initSupabase();
+    const {data,error}=await sb.auth.signUp({email,password:senha,options:{data:{full_name:nome}}});
+    if(error)throw new Error(error.message.includes('already registered')?'Este email já tem conta. Use "Voltar ao login".':error.message);
+    if(data.session){
+      // confirmação de email desativada: entra direto → onboarding cria o grupo
+      showLoginForm();
+      await afterLogin();
+    }else{
+      show('Conta criada! Confira seu email para confirmar o cadastro e depois faça login.');
+      err.style.background='#F0FDF9';err.style.borderColor='#6ee7b7';err.style.color='#065f46';
+    }
+  }catch(e){show(e.message||'Erro ao criar conta.');}
   btn.disabled=false;
 }
 async function doForgot(){

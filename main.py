@@ -2145,6 +2145,15 @@ def public_config():
             "supabase_auth": bool(SUPABASE_URL and SUPABASE_ANON_KEY),
             "medss_url": os.environ.get("MEDSS_URL", "")}
 
+@app.get("/api/escala")
+def get_escala(mes: str = "", user=Depends(auth)):
+    """Escala mensal (shifts do MedSS) — disponível apenas no backend Supabase."""
+    if not SB_DATA:
+        raise HTTPException(400, "Escala disponível apenas com o banco compartilhado (Supabase).")
+    if not mes:
+        mes = datetime.now().strftime("%Y-%m")
+    return ana_data.sb_escala(user, mes)
+
 @app.get("/api/supabase/status")
 def supabase_status():
     """Diagnóstico da integração Supabase (sem expor chaves)."""

@@ -48,6 +48,12 @@ VAPID_CLAIMS_EMAIL   = os.environ.get("VAPID_CLAIMS_EMAIL", "rodrigomorlin@gmail
 SUPABASE_URL              = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_ANON_KEY         = os.environ.get("SUPABASE_ANON_KEY", "")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
+ANA_DATA_BACKEND          = os.environ.get("ANA_DATA_BACKEND", "sqlite").lower()
+ANA_DEFAULT_GROUP_ID      = os.environ.get("ANA_DEFAULT_GROUP_ID", "")
+SB_DATA = ANA_DATA_BACKEND == "supabase"
+import sys as _sys
+_sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import data as ana_data
 
 USE_POSTGRES = bool(DATABASE_URL and DATABASE_URL.startswith("postgres"))
 
@@ -612,6 +618,7 @@ def _build_matrix_deslocamento(setores_ids: list, org_id: str) -> dict:
 # ── ROTAS DE DESLOCAMENTO ───────────────────────────────────
 @app.get("/api/deslocamentos")
 def list_deslocamentos(user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_list_deslocamentos(user)
     org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
     c.execute(f"SELECT * FROM deslocamentos WHERE org_id={P()} ORDER BY setor_origem,setor_destino", (org_id,))
@@ -619,6 +626,7 @@ def list_deslocamentos(user=Depends(auth)):
 
 @app.post("/api/deslocamentos/recalcular")
 def recalcular_deslocamentos(user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_recalcular_deslocamentos(user)
     """Limpa o cache e recalcula todos os pares de setores (admin apenas)."""
     if user["role"] != "admin":
         raise HTTPException(403, "Acesso negado.")
@@ -962,7 +970,8 @@ def find_overlap(c, doc: str, date: str, time: str, org_id: str, exclude_id: Opt
     return None
 
 @app.patch("/api/eventos/{ev_id}/status")
-def update_status(ev_id: int, user=Depends(auth), status: str = "aguardando"):
+def update_status(ev_id: str, user=Depends(auth), status: str = "aguardando"):
+    if SB_DATA: return ana_data.sb_update_status(user, ev_id, status)
     org_id = user.get("org_id","default")
     valid = ["aguardando","confirmado","realizado","cancelado"]
     if status not in valid:
@@ -977,6 +986,7 @@ def update_status(ev_id: int, user=Depends(auth), status: str = "aguardando"):
 
 @app.get("/api/pacientes")
 def list_pacientes(q: str = "", user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_list_pacientes(user, q)
     """Retorna pacientes únicos do histórico do grupo com último procedimento."""
     org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
@@ -1002,12 +1012,14 @@ def list_pacientes(q: str = "", user=Depends(auth)):
 
 @app.get("/api/eventos")
 def list_eventos(user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_list_eventos(user)
     conn = get_db(); c = conn.cursor()
     c.execute(f"SELECT * FROM eventos WHERE org_id={P()} ORDER BY date, time", (user.get("org_id","default"),))
     rows = fetchall(c); conn.close(); return rows
 
 @app.post("/api/eventos")
 async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_create_evento(user, ev)
     org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
     cf = find_overlap(c, ev.doc, ev.date, ev.time, org_id)
@@ -1104,7 +1116,8 @@ async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=
     return {"id": new_id, "aviso": aviso_final, **ev.dict()}
 
 @app.delete("/api/eventos/{ev_id}")
-async def delete_evento(ev_id: int, bg: BackgroundTasks, user=Depends(auth)):
+async def delete_evento(ev_id: str, bg: BackgroundTasks, user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_delete_evento(user, ev_id)
     org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
     c.execute(f"SELECT * FROM eventos WHERE id={P()} AND org_id={P()}", (ev_id, org_id))
@@ -1127,7 +1140,8 @@ def get_evento(ev_id: int, user=Depends(auth)):
     return ev
 
 @app.put("/api/eventos/{ev_id}")
-async def update_evento(ev_id: int, ev: EventoUpdate, bg: BackgroundTasks, user=Depends(auth)):
+async def update_evento(ev_id: str, ev: EventoUpdate, bg: BackgroundTasks, user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_update_evento(user, ev_id, ev)
     org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
     c.execute(f"SELECT * FROM eventos WHERE id={P()} AND org_id={P()}", (ev_id, org_id))
@@ -1188,12 +1202,14 @@ async def update_evento(ev_id: int, ev: EventoUpdate, bg: BackgroundTasks, user=
 # ── MÉDICOS ────────────────────────────────────────────────
 @app.get("/api/medicos")
 def list_medicos(user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_list_medicos(user)
     conn = get_db(); c = conn.cursor()
     c.execute(f"SELECT * FROM medicos WHERE org_id={P()} ORDER BY name", (user.get("org_id","default"),))
     rows = fetchall(c); conn.close(); return rows
 
 @app.post("/api/medicos")
 def create_medico(m: Medico, user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_create_medico(user, m)
     org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
     try:
@@ -1211,6 +1227,7 @@ def update_medico(mid: str, m: Medico, user=Depends(auth)):
 
 @app.delete("/api/medicos/{mid}")
 def delete_medico(mid: str, user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_delete_medico(user, mid)
     conn = get_db(); c = conn.cursor()
     c.execute(f"DELETE FROM medicos WHERE id={P()} AND org_id={P()}", (mid, user.get("org_id","default")))
     conn.commit(); conn.close(); return {"ok": True}
@@ -1218,12 +1235,14 @@ def delete_medico(mid: str, user=Depends(auth)):
 # ── SETORES ────────────────────────────────────────────────
 @app.get("/api/setores")
 def list_setores(user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_list_setores(user)
     conn = get_db(); c = conn.cursor()
     c.execute(f"SELECT * FROM setores WHERE org_id={P()} ORDER BY name", (user.get("org_id","default"),))
     rows = fetchall(c); conn.close(); return rows
 
 @app.post("/api/setores")
 def create_setor(s: Setor, user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_create_setor(user, s)
     org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
     try:
@@ -1235,6 +1254,7 @@ def create_setor(s: Setor, user=Depends(auth)):
 
 @app.put("/api/setores/{sid}")
 def update_setor(sid: str, s: Setor, user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_update_setor(user, sid, s)
     org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
     c.execute(f"UPDATE setores SET name={P()},color={P()},text_color={P()},endereco={P()},tempo_manual={P()} WHERE id={P()} AND org_id={P()}",
@@ -1246,6 +1266,7 @@ def update_setor(sid: str, s: Setor, user=Depends(auth)):
 
 @app.delete("/api/setores/{sid}")
 def delete_setor(sid: str, user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_delete_setor(user, sid)
     org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
     c.execute(f"DELETE FROM setores WHERE id={P()} AND org_id={P()}", (sid, org_id))
@@ -1256,12 +1277,14 @@ def delete_setor(sid: str, user=Depends(auth)):
 # ── MEMÓRIAS ───────────────────────────────────────────────
 @app.get("/api/memorias")
 def list_memorias(user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_list_memorias(user)
     conn = get_db(); c = conn.cursor()
     c.execute(f"SELECT * FROM memorias WHERE org_id={P()} ORDER BY uso DESC, created_at DESC LIMIT 40", (user.get("org_id","default"),))
     rows = fetchall(c); conn.close(); return rows
 
 @app.post("/api/memorias")
 def create_memoria(m: Memoria, user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_create_memoria(user, m)
     org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
     c.execute(f"SELECT id FROM memorias WHERE texto={P()} AND org_id={P()}", (m.texto, org_id))
@@ -1276,6 +1299,7 @@ def create_memoria(m: Memoria, user=Depends(auth)):
 
 @app.delete("/api/memorias/{mid}")
 def delete_memoria(mid: str, user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_delete_memoria(user, mid)
     conn = get_db(); c = conn.cursor()
     c.execute(f"DELETE FROM memorias WHERE id={P()} AND org_id={P()}", (mid, user.get("org_id","default")))
     conn.commit(); conn.close(); return {"ok": True}
@@ -1290,6 +1314,7 @@ def clear_memorias(user=Depends(auth)):
 # ── CORREÇÕES (aprendizado a partir de erros) ───────────────
 @app.post("/api/correcoes")
 def create_correcao(c_in: Correcao, user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_create_correcao(user, c_in)
     org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
     c.execute(f"""INSERT INTO correcoes (contexto,campo,valor_errado,valor_certo,usuario,org_id)
@@ -1302,6 +1327,7 @@ def create_correcao(c_in: Correcao, user=Depends(auth)):
 
 @app.get("/api/correcoes")
 def list_correcoes(user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_list_correcoes(user)
     conn = get_db(); c = conn.cursor()
     c.execute(f"SELECT * FROM correcoes WHERE org_id={P()} ORDER BY created_at DESC LIMIT 30", (user.get("org_id","default"),))
     rows = fetchall(c); conn.close(); return rows
@@ -1343,6 +1369,7 @@ def _calc_preferencias_medicos(c, org_id: str) -> dict:
 
 @app.get("/api/contexto-ia")
 def get_contexto(user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_contexto_ia(user)
     org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
     desde = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
@@ -1389,6 +1416,7 @@ def get_contexto(user=Depends(auth)):
 # ── RELATÓRIOS ─────────────────────────────────────────────
 @app.get("/api/relatorios/resumo")
 def relatorio_resumo(user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_relatorio_resumo(user)
     org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
     hoje = datetime.now().strftime("%Y-%m-%d")
@@ -1433,6 +1461,7 @@ def relatorio_resumo(user=Depends(auth)):
 # ── MAPA CIRÚRGICO (organizado por sala/setor) ──────────────
 @app.get("/api/mapa-cirurgico")
 def mapa_cirurgico(data: str, user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_mapa_cirurgico(user, data)
     """Retorna os procedimentos de uma data, agrupados por setor e ordenados por horário —
     formato de mapa cirúrgico clássico, uma seção por sala."""
     org_id = user.get("org_id","default")
@@ -1472,12 +1501,14 @@ def mapa_cirurgico(data: str, user=Depends(auth)):
 # ── HISTÓRICO E LOGS ───────────────────────────────────────
 @app.get("/api/historico")
 def list_historico(user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_list_historico(user)
     conn = get_db(); c = conn.cursor()
     c.execute(f"SELECT * FROM historico WHERE org_id={P()} ORDER BY created_at DESC LIMIT 100", (user.get("org_id","default"),))
     rows = fetchall(c); conn.close(); return rows
 
 @app.get("/api/logs")
 def list_logs(user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_list_logs(user)
     if user["role"]!="admin": raise HTTPException(403,"Acesso negado.")
     conn = get_db(); c = conn.cursor()
     c.execute(f"SELECT * FROM logs WHERE org_id={P()} ORDER BY created_at DESC LIMIT 300", (user.get("org_id","default"),))
@@ -1971,6 +2002,7 @@ class OrgInfo(BaseModel):
 
 @app.get("/api/org/info")
 def get_org_info(user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_get_org_info(user)
     org_id = user.get("org_id","default")
     conn = get_db(); c = conn.cursor()
     c.execute(f"SELECT id,nome FROM orgs WHERE id={P()}", (org_id,))
@@ -1979,6 +2011,7 @@ def get_org_info(user=Depends(auth)):
 
 @app.post("/api/org/info")
 def set_org_info(info: OrgInfo, user=Depends(auth)):
+    if SB_DATA: return ana_data.sb_set_org_info(user, info)
     if user["role"] != "admin":
         raise HTTPException(403, "Apenas administradores podem alterar essa configuração.")
     org_id = user.get("org_id","default")
@@ -2268,3 +2301,12 @@ def icon_svg():
 
 @app.get("/", response_class=HTMLResponse)
 def index(): return HTMLResponse(open("index.html", encoding="utf-8").read())
+
+# ── Inicializa a camada Supabase (feature flag ANA_DATA_BACKEND) ──
+ana_data.init(sb_rest=sb_rest, log=log,
+              routes_duration=_google_routes_duration,
+              default_group=ANA_DEFAULT_GROUP_ID)
+if SB_DATA:
+    log.info(f"Backend de dados: SUPABASE (grupo padrão p/ auth legado: {ANA_DEFAULT_GROUP_ID or 'NÃO CONFIGURADO'})")
+else:
+    log.info("Backend de dados: SQLite (legado)")

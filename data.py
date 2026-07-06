@@ -885,11 +885,14 @@ def sb_swap_cancel(user, swap_id):
     rows = _sb("GET", f"/shift_swap_requests?id=eq.{_q(swap_id)}&group_id=eq.{_q(gid)}&select=*")
     if not rows:
         raise HTTPException(404, "Não encontrada.")
+    if rows[0]["status"] != "pending":
+        raise HTTPException(400, "Só é possível cancelar solicitações pendentes.")
     meu_id, _ = _meu_doctor_id(user, gid)
     if user["role"] != "admin" and rows[0]["requester_doctor_id"] != meu_id:
         raise HTTPException(403, "Apenas quem propôs pode cancelar.")
-    _sb("PATCH", f"/shift_swap_requests?id=eq.{_q(swap_id)}",
-        {"status": "cancelled", "updated_at": "now()"})
+    # o CHECK de status da tabela não aceita 'cancelled' — cancelar remove a solicitação
+    _sb("DELETE", f"/shift_swap_requests?id=eq.{_q(swap_id)}")
+    _log(user, f"Troca/anúncio cancelado: {swap_id}")
     return {"ok": True}
 
 

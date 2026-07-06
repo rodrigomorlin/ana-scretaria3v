@@ -2286,6 +2286,31 @@ def criar_troca(s: SwapRequest, bg: BackgroundTasks, user=Depends(auth)):
                     f"{user['nome']} propôs uma troca — veja na aba Escala")
     return out
 
+class Anuncio(BaseModel):
+    shift_id: str
+    mensagem: str = ""
+
+@app.post("/api/escala/anunciar")
+def anunciar_plantao(a: Anuncio, bg: BackgroundTasks, user=Depends(auth)):
+    if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")
+    out = ana_data.sb_swap_announce(user, a.shift_id, a.mensagem)
+    if VAPID_PUBLIC_KEY:
+        TUR = {"morning": "manhã", "afternoon": "tarde", "night": "noite"}
+        bg.add_task(push_all_org, user.get("org_id", "default"),
+                    "📢 Plantão disponível",
+                    f"{user['nome']} anunciou o plantão de {fmtDate(out['data'])} ({TUR.get(out['turno'], out['turno'])}) — quem puder assumir, veja na Escala")
+    return out
+
+@app.post("/api/escala/troca/{swap_id}/assumir")
+def assumir_plantao(swap_id: str, bg: BackgroundTasks, user=Depends(auth)):
+    if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")
+    out = ana_data.sb_swap_assume(user, swap_id)
+    if VAPID_PUBLIC_KEY:
+        bg.add_task(push_all_org, user.get("org_id", "default"),
+                    "✅ Plantão assumido",
+                    f"{user['nome']} assumiu o plantão anunciado — escala atualizada")
+    return out
+
 @app.get("/api/escala/trocas")
 def listar_trocas(user=Depends(auth)):
     if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")

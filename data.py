@@ -840,14 +840,18 @@ def sb_swap_list(user):
         rs = _shift_info(gid, r["requester_shift_id"]) or {}
         ts = _shift_info(gid, r["target_shift_id"]) or {}
         TUR = {"morning": "Manhã", "afternoon": "Tarde", "night": "Noite"}
+        aberta = bool(r.get("is_open_offer"))
+        sou_autor = bool(meu_id and r["requester_doctor_id"] == meu_id) or user["role"] == "admin"
         out.append({
             "id": r["id"], "mensagem": r.get("message") or "",
+            "aberta": aberta,
             "de": docs.get(r["requester_doctor_id"], {}).get("name", "?"),
-            "para": docs.get(r["target_doctor_id"], {}).get("name", "?"),
+            "para": None if aberta else docs.get(r["target_doctor_id"], {}).get("name", "?"),
             "oferece": {"data": rs.get("shift_date", ""), "turno": TUR.get(rs.get("shift_type"), "")},
-            "pede": {"data": ts.get("shift_date", ""), "turno": TUR.get(ts.get("shift_type"), "")},
-            "sou_alvo": bool(meu_id and r["target_doctor_id"] == meu_id),
-            "sou_autor": bool(meu_id and r["requester_doctor_id"] == meu_id),
+            "pede": None if aberta else {"data": ts.get("shift_date", ""), "turno": TUR.get(ts.get("shift_type"), "")},
+            "sou_alvo": bool(meu_id and not aberta and r["target_doctor_id"] == meu_id),
+            "sou_autor": sou_autor,
+            "posso_assumir": bool(aberta and meu_id and r["requester_doctor_id"] != meu_id),
         })
     return out
 
@@ -857,6 +861,8 @@ def sb_swap_respond(user, swap_id, aceitar: bool):
     if not rows:
         raise HTTPException(404, "Solicitação não encontrada.")
     sw = rows[0]
+    if sw.get("is_open_offer"):
+        raise HTTPException(400, "Este é um anúncio aberto — use o botão Assumir plantão.")
     if sw["status"] != "pending":
         raise HTTPException(400, "Esta solicitação já foi respondida.")
     meu_id, _ = _meu_doctor_id(user, gid)
@@ -920,4 +926,52 @@ def sb_custom_types_delete(user, type_id):
     gid = _gid(user)
     _sb("PATCH", f"/custom_credit_types?id=eq.{_q(type_id)}&group_id=eq.{_q(gid)}", {"active": False})
     _log(user, f"Tipo de crédito desativado: {type_id}")
+    return {"ok": True}
+
+
+# ── OFERTA ABERTA: anunciar plantão / assumir ────────────────
+def sb_swap_announce(user, shift_id, mensagem=""):
+    """Anuncia um plantão para qualquer colega assumir (is_open_offer)."""
+    gid = _gid(user)
+    meu_id, _ = _meu_doctor_id(user, gid)
+    shift = _shift_info(gid, shift_id)
+    if not shift:
+        raise HTTPException(404, "Plantão não encontrado.")
+    if user["role"] != "admin" and shift["doctor_id"] != meu_id:
+        raise HTTPException(403, "Você só pode anunciar os seus próprios plantões.")
+    ja = _sb("GET", f"/shift_swap_requests?requester_shift_id=eq.{_q(shift_id)}"
+                    f"&status=eq.pending&is_open_offer=eq.true&select=id")
+    if ja:
+        raise HTTPException(400, "Este plantão já está anunciado.")
+    # colunas target são NOT NULL: em oferta aberta, auto-referência até alguém assumir
+    rows = _sb("POST", "/shift_swap_requests", {
+        "group_id": gid, "is_open_offer": True,
+        "requester_shift_id": shift["id"], "target_shift_id": shift["id"],
+        "requester_doctor_id": shift["doctor_id"], "target_doctor_id": shift["doctor_id"],
+        "message": (mensagem or "")[:300] or None, "status": "pending"})
+    _log(user, f"Plantão anunciado: {shift['shift_date']} {shift['shift_type']}")
+    return {"ok": True, "id": rows[0]["id"], "data": shift["shift_date"], "turno": shift["shift_type"]}
+
+
+def sb_swap_assume(user, swap_id):
+    """Assume um plantão anunciado (oferta aberta)."""
+    gid = _gid(user)
+    rows = _sb("GET", f"/shift_swap_requests?id=eq.{_q(swap_id)}&group_id=eq.{_q(gid)}&select=*")
+    if not rows:
+        raise HTTPException(404, "Anúncio não encontrado.")
+    sw = rows[0]
+    if not sw.get("is_open_offer"):
+        raise HTTPException(400, "Esta solicitação é uma troca direta — use aceitar/recusar.")
+    if sw["status"] != "pending":
+        raise HTTPException(400, "Este plantão já foi assumido ou o anúncio foi cancelado.")
+    meu_id, meu_nome = _meu_doctor_id(user, gid)
+    if not meu_id:
+        raise HTTPException(400, "Sua conta não está vinculada a um médico do grupo.")
+    if meu_id == sw["requester_doctor_id"]:
+        raise HTTPException(400, "Você não pode assumir o próprio plantão.")
+    _sb("PATCH", f"/shifts?id=eq.{_q(sw['requester_shift_id'])}",
+        {"doctor_id": meu_id, "updated_at": "now()"})
+    _sb("PATCH", f"/shift_swap_requests?id=eq.{_q(swap_id)}",
+        {"target_doctor_id": meu_id, "status": "accepted", "updated_at": "now()"})
+    _log(user, f"Plantão assumido por {meu_nome}: {swap_id}")
     return {"ok": True}

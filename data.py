@@ -61,7 +61,7 @@ def _hhmm(t) -> str:
 
 # ── caches simples por request-burst (nome de médico/setor) ──
 def _doctors_map(gid):
-    rows = _sb("GET", f"/doctors?group_id=eq.{_q(gid)}&select=id,name,specialty,phone")
+    rows = _sb("GET", f"/doctors?group_id=eq.{_q(gid)}&select=id,name,specialty,phone,user_id")
     return {r["id"]: r for r in rows}
 
 
@@ -614,8 +614,11 @@ def sb_escala(user, mes):
             "setor": secs.get(r.get("sector_id") or "", {}).get("name", ""),
         })
     medicos = sorted(docs.values(), key=lambda x: x["name"])
+    meu = next((d["name"] for d in docs.values()
+                if d.get("user_id") and str(d["user_id"]) == str(user.get("id"))), None)
     return {"mes": mes,
             "medicos": [m["name"] for m in medicos],
+            "meu_medico": meu,
             "plantoes": plantoes}
 
 

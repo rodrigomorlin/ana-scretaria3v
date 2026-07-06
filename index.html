@@ -544,6 +544,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
       <button class="btn sm" onclick="escalaMes(-1)"><i class="ti ti-chevron-left"></i></button>
       <span id="escala-mes-label" style="font-size:13px;font-weight:600;min-width:130px;text-align:center"></span>
       <button class="btn sm" onclick="escalaMes(1)"><i class="ti ti-chevron-right"></i></button>
+      <button class="btn sm" id="btn-meus-plantoes" onclick="toggleMeusPlantoes()" style="display:none"><i class="ti ti-user-circle"></i> Meus plantões</button>
       <button class="btn sm" id="btn-medss-ext" onclick="openMedSS()" style="display:none"><i class="ti ti-external-link"></i> Editar no MedSS</button>
     </div>
   </div>
@@ -554,6 +555,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:#fbbf24;opacity:.45;vertical-align:middle;margin-right:4px"></span>Meio turno</span>
     <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;border:2px solid #10b981;vertical-align:middle;margin-right:4px"></span>HNT ambulatório</span>
   </div>
+  <div id="meus-proximos" style="display:none;margin-bottom:12px"></div>
   <div class="ag-card" style="overflow-x:auto">
     <table class="ag-tbl" id="escala-grid" style="min-width:700px"><tr><td style="padding:22px;color:var(--hint);text-align:center">Carregando escala...</td></tr></table>
   </div>
@@ -855,7 +857,33 @@ async function afterLogin(){
   if(ms.length===1)setGroup(ms[0].group_id,false);
   showApp();
 }
-let escalaAtual=new Date().toISOString().slice(0,7);
+let escalaAtual=new Date().toISOString().slice(0,7),soMeus=false;
+function renderMeusProximos(e){
+  const box=document.getElementById('meus-proximos');
+  if(!box)return;
+  if(!soMeus||!e.meu_medico){box.style.display='none';return;}
+  const hoje=new Date().toISOString().slice(0,10);
+  const NOMES={morning:'🌅 Manhã',afternoon:'☀️ Tarde',night:'🌙 Noite'};
+  const DIAS=['dom','seg','ter','qua','qui','sex','sáb'];
+  const meus=Object.entries(e.plantoes[e.meu_medico]||{})
+    .filter(([d])=>d>=hoje).sort(([a],[b])=>a.localeCompare(b)).slice(0,6);
+  if(!meus.length){box.style.display='none';return;}
+  box.style.display='flex';box.style.gap='8px';box.style.flexWrap='wrap';
+  box.innerHTML=meus.map(([d,ps])=>{
+    const dt=new Date(d+'T12:00:00');
+    return `<div class="stat-card" style="padding:10px 14px;min-width:120px">
+      <div style="font-size:11px;color:var(--hint)">${DIAS[dt.getDay()]}, ${fmtD(d)}</div>
+      <div style="font-size:12px;font-weight:600;margin-top:3px">${ps.map(p=>NOMES[p.turno]||p.turno).join(' · ')}</div>
+      ${ps[0].setor?`<div style="font-size:10px;color:var(--hint);margin-top:2px">${ps[0].setor}</div>`:''}
+    </div>`;
+  }).join('');
+}
+function toggleMeusPlantoes(){
+  soMeus=!soMeus;
+  const b=document.getElementById('btn-meus-plantoes');
+  b.classList.toggle('primary',soMeus);
+  loadEscala();
+}
 function escalaMes(delta){
   let [a,m]=escalaAtual.split('-').map(Number);
   m+=delta; if(m<1){m=12;a--;} if(m>12){m=1;a++;}
@@ -872,7 +900,11 @@ async function loadEscala(){
   try{
     const e=await api('GET',`/api/escala?mes=${escalaAtual}`);
     escalaCache=e;
+    const bm=document.getElementById('btn-meus-plantoes');
+    if(bm)bm.style.display=e.meu_medico?'inline-flex':'none';
+    renderMeusProximos(e);
     if(!e.medicos.length){grid.innerHTML='<tr><td style="padding:22px;color:var(--hint);text-align:center">Nenhum médico no grupo ainda.</td></tr>';return;}
+    if(soMeus&&e.meu_medico)e={...e,medicos:e.medicos.filter(m=>m===e.meu_medico)};
     const dias=new Date(a,m,0).getDate();
     const DOW=['D','S','T','Q','Q','S','S'];
     const hoje=new Date().toISOString().slice(0,10);

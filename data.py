@@ -666,3 +666,193 @@ def sb_mapa_cirurgico(user, data):
         salas.append({"setor_id": "", "setor_nome": "Outros", "color": "#E5E5E5",
                       "text_color": "#444", "procedimentos": orfaos})
     return {"data": data, "nome_grupo": org["nome"], "total": len(evs), "salas": salas}
+
+
+# ── CRÉDITOS (credit_settings + custom_credit_types do MedSS) ──
+CS_DEFAULTS = {"morning_credit": 2.5, "afternoon_credit": 2.5, "night_credit": 3.0,
+               "saturday_credit": 6.0, "sunday_credit": 6.0, "hnt_ambulatory_credit": 3.5,
+               "morning_label": "Manhã", "afternoon_label": "Tarde", "night_label": "Noite",
+               "saturday_label": "Sábado", "sunday_label": "Domingo",
+               "hnt_ambulatory_label": "Ambulatório HNT"}
+
+def sb_credit_settings(user):
+    gid = _gid(user)
+    rows = _sb("GET", f"/credit_settings?group_id=eq.{_q(gid)}&select=*&limit=1")
+    if rows:
+        out = {k: rows[0].get(k, v) for k, v in CS_DEFAULTS.items()}
+        out["exists"] = True
+        return out
+    return {**CS_DEFAULTS, "exists": False}
+
+def sb_credit_settings_save(user, body: dict):
+    if user["role"] != "admin":
+        raise HTTPException(403, "Apenas administradores podem alterar os valores de crédito.")
+    gid = _gid(user)
+    patch = {k: body[k] for k in CS_DEFAULTS if k in body and body[k] is not None}
+    rows = _sb("GET", f"/credit_settings?group_id=eq.{_q(gid)}&select=id&limit=1")
+    if rows:
+        _sb("PATCH", f"/credit_settings?group_id=eq.{_q(gid)}", {**patch, "updated_at": "now()"})
+    else:
+        _sb("POST", "/credit_settings", {"group_id": gid, **patch})
+    _log(user, "Valores de crédito atualizados")
+    return {"ok": True}
+
+def _shift_base_credit(s, cs) -> float:
+    """Regra de crédito de um plantão (mesma derivação do MedSS):
+    HNT ambulatorial > fim de semana > valor do turno; meio turno = metade."""
+    from datetime import datetime as _dt
+    if s.get("is_hnt_ambulatory"):
+        base = float(cs["hnt_ambulatory_credit"])
+    else:
+        dow = _dt.strptime(s["shift_date"], "%Y-%m-%d").weekday()  # 5=sáb 6=dom
+        if dow == 5:
+            base = float(cs["saturday_credit"])
+        elif dow == 6:
+            base = float(cs["sunday_credit"])
+        else:
+            base = float(cs[{"morning": "morning_credit", "afternoon": "afternoon_credit",
+                             "night": "night_credit"}.get(s["shift_type"], "morning_credit")])
+    if s.get("is_half_shift"):
+        base = base / 2
+    return base
+
+def sb_creditos(user, mes):
+    """Créditos do mês por médico — derivados dos plantões, como no MedSS."""
+    gid = _gid(user)
+    cs = sb_credit_settings(user)
+    docs = _doctors_map(gid)
+    if not docs:
+        return {"mes": mes, "medicos": [], "labels": cs}
+    ids = ",".join(f'"{i}"' for i in docs)
+    ini = f"{mes}-01"
+    ano, m = int(mes[:4]), int(mes[5:7])
+    prox = f"{ano + 1}-01-01" if m == 12 else f"{ano}-{m + 1:02d}-01"
+    shifts = _sb("GET", f"/shifts?doctor_id=in.({ids})&shift_date=gte.{ini}&shift_date=lt.{prox}"
+                        f"&select=id,doctor_id,shift_date,shift_type,is_hnt_ambulatory,is_half_shift")
+    # créditos extras aplicados a plantões do mês
+    extras_by_shift = {}
+    if shifts:
+        sids = ",".join(f'"{s["id"]}"' for s in shifts)
+        scc = _sb("GET", f"/shift_custom_credits?shift_id=in.({sids})&select=shift_id,custom_credit_type_id")
+        if scc:
+            types = {t["id"]: t for t in _sb("GET",
+                     f"/custom_credit_types?group_id=eq.{_q(gid)}&active=eq.true&select=id,name,credit_value,is_additional")}
+            for x in scc:
+                t = types.get(x["custom_credit_type_id"])
+                if t:
+                    extras_by_shift.setdefault(x["shift_id"], []).append(t)
+    from datetime import datetime as _dt
+    por_medico = {}
+    meu = next((d["name"] for d in docs.values()
+                if d.get("user_id") and str(d["user_id"]) == str(user.get("id"))), None)
+    for s in shifts:
+        nome = docs.get(s["doctor_id"], {}).get("name", "?")
+        r = por_medico.setdefault(nome, {"total": 0.0, "plantoes": 0, "detalhe": {}})
+        base = _shift_base_credit(s, cs)
+        extra = 0.0
+        for t in extras_by_shift.get(s["id"], []):
+            if t.get("is_additional"):
+                extra += float(t["credit_value"])
+            else:
+                base = float(t["credit_value"])
+        r["total"] += base + extra
+        r["plantoes"] += 1
+        # rótulo do detalhe
+        if s.get("is_hnt_ambulatory"):
+            key = cs["hnt_ambulatory_label"]
+        else:
+            dow = _dt.strptime(s["shift_date"], "%Y-%m-%d").weekday()
+            key = cs["saturday_label"] if dow == 5 else cs["sunday_label"] if dow == 6 else \
+                  cs[{"morning": "morning_label", "afternoon": "afternoon_label",
+                      "night": "night_label"}.get(s["shift_type"], "morning_label")]
+        r["detalhe"][key] = r["detalhe"].get(key, 0) + 1
+    lista = [{"medico": k, **v, "total": round(v["total"], 2)} for k, v in por_medico.items()]
+    lista.sort(key=lambda x: -x["total"])
+    return {"mes": mes, "medicos": lista, "meu_medico": meu, "labels": cs}
+
+# ── TROCA DE PLANTÕES (shift_swap_requests) ──────────────────
+def _meu_doctor_id(user, gid):
+    rows = _sb("GET", f"/doctors?group_id=eq.{_q(gid)}&user_id=eq.{_q(user['id'])}&select=id,name&limit=1")
+    return (rows[0]["id"], rows[0]["name"]) if rows else (None, None)
+
+def _shift_info(gid, shift_id):
+    rows = _sb("GET", f"/shifts?id=eq.{_q(shift_id)}&group_id=eq.{_q(gid)}"
+                      f"&select=id,doctor_id,shift_date,shift_type")
+    return rows[0] if rows else None
+
+def sb_swap_create(user, body):
+    gid = _gid(user)
+    meu_id, meu_nome = _meu_doctor_id(user, gid)
+    if not meu_id and user["role"] != "admin":
+        raise HTTPException(400, "Sua conta não está vinculada a um médico do grupo.")
+    meu_shift = _shift_info(gid, body.meu_shift_id)
+    alvo_shift = _shift_info(gid, body.alvo_shift_id)
+    if not meu_shift or not alvo_shift:
+        raise HTTPException(404, "Plantão não encontrado.")
+    if user["role"] != "admin" and meu_shift["doctor_id"] != meu_id:
+        raise HTTPException(403, "Você só pode oferecer os seus próprios plantões.")
+    if meu_shift["doctor_id"] == alvo_shift["doctor_id"]:
+        raise HTTPException(400, "Os dois plantões são do mesmo médico.")
+    rows = _sb("POST", "/shift_swap_requests", {
+        "group_id": gid,
+        "requester_shift_id": meu_shift["id"], "target_shift_id": alvo_shift["id"],
+        "requester_doctor_id": meu_shift["doctor_id"], "target_doctor_id": alvo_shift["doctor_id"],
+        "message": (body.mensagem or "")[:300] or None, "status": "pending"})
+    _log(user, f"Troca proposta: {meu_shift['shift_date']} ⇄ {alvo_shift['shift_date']}")
+    return {"ok": True, "id": rows[0]["id"]}
+
+def sb_swap_list(user):
+    gid = _gid(user)
+    docs = _doctors_map(gid)
+    meu_id, _ = _meu_doctor_id(user, gid)
+    rows = _sb("GET", f"/shift_swap_requests?group_id=eq.{_q(gid)}&status=eq.pending"
+                      f"&select=*&order=created_at.desc&limit=50")
+    out = []
+    for r in rows:
+        rs = _shift_info(gid, r["requester_shift_id"]) or {}
+        ts = _shift_info(gid, r["target_shift_id"]) or {}
+        TUR = {"morning": "Manhã", "afternoon": "Tarde", "night": "Noite"}
+        out.append({
+            "id": r["id"], "mensagem": r.get("message") or "",
+            "de": docs.get(r["requester_doctor_id"], {}).get("name", "?"),
+            "para": docs.get(r["target_doctor_id"], {}).get("name", "?"),
+            "oferece": {"data": rs.get("shift_date", ""), "turno": TUR.get(rs.get("shift_type"), "")},
+            "pede": {"data": ts.get("shift_date", ""), "turno": TUR.get(ts.get("shift_type"), "")},
+            "sou_alvo": bool(meu_id and r["target_doctor_id"] == meu_id),
+            "sou_autor": bool(meu_id and r["requester_doctor_id"] == meu_id),
+        })
+    return out
+
+def sb_swap_respond(user, swap_id, aceitar: bool):
+    gid = _gid(user)
+    rows = _sb("GET", f"/shift_swap_requests?id=eq.{_q(swap_id)}&group_id=eq.{_q(gid)}&select=*")
+    if not rows:
+        raise HTTPException(404, "Solicitação não encontrada.")
+    sw = rows[0]
+    if sw["status"] != "pending":
+        raise HTTPException(400, "Esta solicitação já foi respondida.")
+    meu_id, _ = _meu_doctor_id(user, gid)
+    if user["role"] != "admin" and sw["target_doctor_id"] != meu_id:
+        raise HTTPException(403, "Apenas o médico alvo (ou admin) pode responder.")
+    if aceitar:
+        # troca efetiva: os dois plantões trocam de médico
+        _sb("PATCH", f"/shifts?id=eq.{_q(sw['requester_shift_id'])}",
+            {"doctor_id": sw["target_doctor_id"], "updated_at": "now()"})
+        _sb("PATCH", f"/shifts?id=eq.{_q(sw['target_shift_id'])}",
+            {"doctor_id": sw["requester_doctor_id"], "updated_at": "now()"})
+    _sb("PATCH", f"/shift_swap_requests?id=eq.{_q(swap_id)}",
+        {"status": "accepted" if aceitar else "rejected", "updated_at": "now()"})
+    _log(user, f"Troca {'aceita' if aceitar else 'recusada'}: {swap_id}")
+    return {"ok": True, "status": "accepted" if aceitar else "rejected"}
+
+def sb_swap_cancel(user, swap_id):
+    gid = _gid(user)
+    rows = _sb("GET", f"/shift_swap_requests?id=eq.{_q(swap_id)}&group_id=eq.{_q(gid)}&select=*")
+    if not rows:
+        raise HTTPException(404, "Não encontrada.")
+    meu_id, _ = _meu_doctor_id(user, gid)
+    if user["role"] != "admin" and rows[0]["requester_doctor_id"] != meu_id:
+        raise HTTPException(403, "Apenas quem propôs pode cancelar.")
+    _sb("PATCH", f"/shift_swap_requests?id=eq.{_q(swap_id)}",
+        {"status": "cancelled", "updated_at": "now()"})
+    return {"ok": True}

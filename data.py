@@ -602,6 +602,21 @@ def sb_escala(user, mes):
                       f"&select=id,doctor_id,shift_date,shift_type,is_hnt_ambulatory,is_half_shift,sector_id"
                       f"&order=shift_date")
     secs = _sectors_map(gid)
+    # especiais vinculados aos plantões do mês
+    especiais_por_shift = {}
+    if rows:
+        sids = ",".join(f'"{r["id"]}"' for r in rows)
+        try:
+            scc = _sb("GET", f"/shift_custom_credits?shift_id=in.({sids})&select=shift_id,custom_credit_type_id")
+            if scc:
+                types = {t["id"]: t["name"] for t in _sb("GET",
+                         f"/custom_credit_types?group_id=eq.{_q(gid)}&select=id,name")}
+                for x in scc:
+                    n = types.get(x["custom_credit_type_id"])
+                    if n:
+                        especiais_por_shift.setdefault(x["shift_id"], []).append(n)
+        except Exception:
+            pass
     plantoes = {}
     for r in rows:
         d = docs.get(r["doctor_id"], {}).get("name", "?")
@@ -612,6 +627,7 @@ def sb_escala(user, mes):
             "meio": bool(r.get("is_half_shift")),
             "hnt": bool(r.get("is_hnt_ambulatory")),
             "setor": secs.get(r.get("sector_id") or "", {}).get("name", ""),
+            "especiais": especiais_por_shift.get(r["id"], []),
         })
     medicos = sorted(docs.values(), key=lambda x: x["name"])
     meu = next((d["name"] for d in docs.values()
@@ -635,12 +651,24 @@ def sb_create_plantao(user, p):
             "is_half_shift": bool(p.meio), "is_hnt_ambulatory": bool(p.hnt),
             "sector_id": _find_sector_id(gid, p.setor) if p.setor else None}
     rows = _sb("POST", "/shifts", body)
+    shift_id = rows[0]["id"]
+    # vincula créditos especiais marcados
+    for tid in (getattr(p, "creditos_especiais", None) or []):
+        try:
+            _sb("POST", "/shift_custom_credits", {"shift_id": shift_id, "custom_credit_type_id": tid})
+        except Exception as e:
+            log_ = DEPS.get("log")
+            if log_: log_.warning(f"vínculo crédito especial falhou: {e}")
     _log(user, f"Plantão criado: {p.medico} {p.data} {p.turno}")
-    return {"ok": True, "id": rows[0]["id"]}
+    return {"ok": True, "id": shift_id}
 
 
 def sb_delete_plantao(user, shift_id):
     gid = _gid(user)
+    try:
+        _sb("DELETE", f"/shift_custom_credits?shift_id=eq.{_q(shift_id)}")
+    except Exception:
+        pass
     _sb("DELETE", f"/shifts?id=eq.{_q(shift_id)}&group_id=eq.{_q(gid)}")
     _log(user, f"Plantão removido: {shift_id}")
     return {"ok": True}

@@ -756,8 +756,12 @@ html,body{height:100%;background:var(--bg);color:var(--text);
       <button class="btn sm" style="flex:1;border-color:#6366f1;color:#4338ca" onclick="plTurno='night';plHighlight(this)">🌙 Noite</button>
     </div>
     <div style="display:flex;gap:14px;margin-bottom:10px;font-size:12px;color:var(--muted)">
-      <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" id="pl-meio"> Meio turno</label>
+      <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" id="pl-meio"> Meio turno <span style="font-size:10px;color:var(--hint)">(metade do crédito)</span></label>
       <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" id="pl-hnt"> HNT ambulatório</label>
+    </div>
+    <div id="pl-especiais-wrap" style="display:none;margin-bottom:10px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:5px"><i class="ti ti-star"></i> Créditos Especiais</div>
+      <div id="pl-especiais"></div>
     </div>
     <div class="fl"><label>Setor (opcional)</label><select id="pl-setor"><option value="">—</option></select></div>
     <div class="ma">
@@ -1085,6 +1089,7 @@ function plHighlight(btn){
   btn.parentElement.querySelectorAll('button').forEach(b=>b.style.background='');
   btn.style.background='var(--al)';
 }
+let cctCache=null;
 async function openPlantaoModal(doc,data){
   plCtx={doc,data};plTurno='morning';
   document.getElementById('pl-title').textContent=`${doc} — ${fmtD(data)}`;
@@ -1094,6 +1099,20 @@ async function openPlantaoModal(doc,data){
   sel.innerHTML='<option value="">—</option>'+setores.map(s=>`<option value="${s.id}">${s.name}</option>`).join('');
   renderPlList();
   document.getElementById('modal-plantao').classList.add('open');
+  // créditos especiais (cache por sessão)
+  try{
+    if(!cctCache)cctCache=await api('GET','/api/creditos/tipos');
+    const wrap=document.getElementById('pl-especiais-wrap');
+    if(cctCache.length){
+      wrap.style.display='block';
+      document.getElementById('pl-especiais').innerHTML=cctCache.map(t=>
+        `<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;padding:6px 9px;border:1px solid var(--border);border-radius:var(--rs);margin-bottom:4px">
+          <input type="checkbox" class="pl-cct" value="${t.id}">
+          <span style="flex:1">${t.name}</span>
+          <span style="font-size:10px;color:var(--hint);background:var(--faint);border-radius:10px;padding:2px 7px">${t.credit_value} crédito${t.credit_value===1?'':'s'}</span>
+        </label>`).join('');
+    }else wrap.style.display='none';
+  }catch{}
 }
 function renderPlList(){
   const ps=((escalaCache?.plantoes||{})[plCtx.doc]||{})[plCtx.data]||[];
@@ -1101,7 +1120,7 @@ function renderPlList(){
   document.getElementById('pl-list').innerHTML=ps.length
     ?ps.map(p=>{
       const podeTrocar=escalaCache?.meu_medico&&escalaCache.meu_medico!==plCtx.doc;
-      return `<div class="li" style="margin-bottom:5px"><span style="font-size:12px">${NOMES[p.turno]||p.turno}${p.meio?' <span style="font-size:10px;color:var(--hint)">(meio)</span>':''}${p.hnt?' <span style="font-size:10px;color:#10b981">HNT</span>':''}${p.setor?` <span style="font-size:10px;color:var(--hint)">· ${p.setor}</span>`:''}</span><span style="margin-left:auto;display:flex;gap:5px">${podeTrocar?`<button class="btn sm" title="Propor troca" onclick="openTrocaModal('${p.id}')"><i class="ti ti-arrows-exchange"></i></button>`:''}<button class="btn danger sm" onclick="delPlantao('${p.id}')"><i class="ti ti-trash"></i></button></span></div>`;
+      return `<div class="li" style="margin-bottom:5px"><span style="font-size:12px">${NOMES[p.turno]||p.turno}${p.meio?' <span style="font-size:10px;color:var(--hint)">(meio)</span>':''}${p.hnt?' <span style="font-size:10px;color:#10b981">HNT</span>':''}${p.setor?` <span style="font-size:10px;color:var(--hint)">· ${p.setor}</span>`:''}${(p.especiais||[]).map(n=>` <span style="font-size:9px;background:#FEF3C7;color:#92400E;border-radius:8px;padding:1px 6px">⭐ ${n}</span>`).join('')}</span><span style="margin-left:auto;display:flex;gap:5px">${podeTrocar?`<button class="btn sm" title="Propor troca" onclick="openTrocaModal('${p.id}')"><i class="ti ti-arrows-exchange"></i></button>`:''}<button class="btn danger sm" onclick="delPlantao('${p.id}')"><i class="ti ti-trash"></i></button></span></div>`;
     }).join('')
     :'<div style="font-size:11px;color:var(--hint);text-align:center;padding:8px">Nenhum plantão neste dia.</div>';
 }
@@ -1109,7 +1128,9 @@ async function savePlantao(){
   try{
     await api('POST','/api/escala/plantao',{medico:plCtx.doc,data:plCtx.data,turno:plTurno,
       meio:document.getElementById('pl-meio').checked,hnt:document.getElementById('pl-hnt').checked,
-      setor:document.getElementById('pl-setor').value});
+      setor:document.getElementById('pl-setor').value,
+      creditos_especiais:[...document.querySelectorAll('.pl-cct:checked')].map(c=>c.value)});
+    document.querySelectorAll('.pl-cct').forEach(c=>c.checked=false);
     toast('Plantão adicionado!');
     await loadEscala();renderPlList();
   }catch(e){toast(e.message,'err');}
@@ -2213,15 +2234,16 @@ async function saveCct(){
   if(!nome){toast('Informe o nome do tipo de crédito.','warn');return;}
   try{
     await api('POST','/api/creditos/tipos',{name:nome,credit_value:parseFloat(document.getElementById('cct-valor').value)||0,
-      applies_to_days:cctDias,applies_to_shifts:cctTurnos,is_additional:true});
+      applies_to_days:cctDias,applies_to_shifts:cctTurnos,is_additional:false});
     document.getElementById('cct-form').style.display='none';
     toast('Tipo de crédito criado!');
+    cctCache=null;
     loadCctList();
   }catch(e){toast(e.message,'err');}
 }
 async function delCct(id){
   if(!confirm('Remover este tipo de crédito?'))return;
-  try{await api('DELETE',`/api/creditos/tipos/${id}`);toast('Removido.');loadCctList();}catch(e){toast(e.message,'err');}
+  try{await api('DELETE',`/api/creditos/tipos/${id}`);toast('Removido.');cctCache=null;loadCctList();}catch(e){toast(e.message,'err');}
 }
 async function loadOrgInfo(){
   if(me?.role!=='admin'){document.getElementById('org-info-card').style.display='none';return;}

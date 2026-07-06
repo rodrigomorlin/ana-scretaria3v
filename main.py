@@ -2221,6 +2221,7 @@ class Plantao(BaseModel):
     meio: bool = False
     hnt: bool = False
     setor: str = ""
+    creditos_especiais: list = []
 
 @app.post("/api/escala/plantao")
 def criar_plantao(p: Plantao, user=Depends(auth)):

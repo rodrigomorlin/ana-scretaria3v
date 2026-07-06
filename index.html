@@ -358,32 +358,42 @@ html,body{height:100%;background:var(--bg);color:var(--text);
       </div>
     </div>
 
-    <!-- ONBOARDING: sem grupo ainda -->
-    <div id="onboarding" style="display:none">
-      <div class="login-hint" style="margin-top:0;margin-bottom:14px;text-align:left;background:var(--al);color:var(--ad);border-radius:var(--rs);padding:10px 12px;line-height:1.6">
-        <i class="ti ti-sparkles"></i> <b>Bem-vindo(a)!</b> Você ainda não participa de nenhum grupo.
-        Crie o seu — você será o administrador — ou aguarde um convite de um grupo existente.
+    <!-- HUB DE GRUPOS (estilo MedSS) -->
+    <div id="hub" style="display:none">
+      <div style="text-align:center;margin-bottom:14px">
+        <div style="font-size:13px;color:var(--muted)" id="hub-ola"></div>
       </div>
-      <div class="f">
-        <label>Nome do grupo / clínica</label>
-        <input id="ob-nome" placeholder="ex: Grupo de Anestesia POA" onkeydown="if(event.key==='Enter')doCreateGroup()">
+      <div style="display:flex;gap:8px;margin-bottom:14px">
+        <button class="btn-full" style="flex:1" onclick="hubShow('criar')"><i class="ti ti-plus"></i> Criar Grupo</button>
+        <button class="btn-full" style="flex:1;background:var(--surface);color:var(--text);border:1px solid var(--border)" onclick="hubShow('codigo')"><i class="ti ti-key"></i> Entrar em grupo</button>
       </div>
-      <button class="btn-full" onclick="doCreateGroup()" id="ob-btn"><i class="ti ti-plus"></i> Criar meu grupo</button>
+
+      <div id="hub-criar" style="display:none;margin-bottom:14px">
+        <div class="f"><label>Nome do grupo / clínica</label>
+          <input id="ob-nome" placeholder="ex: Grupo de Anestesia POA" onkeydown="if(event.key==='Enter')doCreateGroup()"></div>
+        <button class="btn-full" onclick="doCreateGroup()" id="ob-btn"><i class="ti ti-plus"></i> Criar — serei o administrador</button>
+      </div>
+
+      <div id="hub-codigo" style="display:none;margin-bottom:14px">
+        <div class="f"><label>Código de acesso do grupo</label>
+          <input id="hub-cod" placeholder="ex: DD222A94" style="text-transform:uppercase;letter-spacing:2px;text-align:center" onkeydown="if(event.key==='Enter')doSolicitar()"></div>
+        <button class="btn-full" onclick="doSolicitar()" id="hub-cod-btn"><i class="ti ti-send"></i> Solicitar entrada</button>
+        <div style="font-size:10px;color:var(--hint);margin-top:6px;text-align:center">Sua entrada precisa ser aprovada pelo administrador do grupo.</div>
+      </div>
+
       <div class="login-err" id="ob-err"></div>
-      <div style="text-align:center;margin-top:14px;display:flex;flex-direction:column;gap:6px">
-        <a href="#" onclick="event.preventDefault();recheckGroups()" style="font-size:11px;color:var(--accent);text-decoration:underline"><i class="ti ti-refresh"></i> Já fui convidado — verificar novamente</a>
+      <div id="hub-pendentes" style="display:none;font-size:11px;background:#FEF9EC;color:#92400E;border-radius:var(--rs);padding:8px 10px;margin-bottom:10px"></div>
+
+      <div id="hub-grupos-wrap" style="display:none">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.5px;color:var(--hint);margin-bottom:8px"><i class="ti ti-users-group"></i> SEUS GRUPOS</div>
+        <div id="hub-grupos"></div>
+      </div>
+
+      <div style="text-align:center;margin-top:12px">
         <a href="#" onclick="event.preventDefault();doLogout()" style="font-size:10px;color:var(--hint);text-decoration:underline">Sair</a>
       </div>
     </div>
-
-    <!-- SELETOR DE GRUPO (multi-grupo) -->
-    <div id="group-picker" style="display:none">
-      <div class="login-hint" style="margin-top:0;margin-bottom:12px;text-align:left;background:var(--al);color:var(--ad);border-radius:var(--rs);padding:8px 10px">
-        <i class="ti ti-users-group"></i> Você participa de mais de um grupo. Escolha com qual deseja trabalhar:
-      </div>
-      <div id="group-list"></div>
     </div>
-  </div>
 </div>
 
 <!-- APP -->
@@ -625,6 +635,21 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     </div>
   </div>
 
+  <div class="card" id="codigo-card" style="display:none">
+    <div class="card-title"><i class="ti ti-key"></i> Código de Acesso</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Compartilhe este código para que outros membros possam solicitar entrada no grupo</div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <div id="codigo-valor" style="flex:1;background:var(--faint);border:1px solid var(--border);border-radius:var(--rs);padding:12px;text-align:center;font-family:monospace;font-size:16px;letter-spacing:3px;font-weight:600"></div>
+      <button class="btn sm" onclick="copiarCodigo()" title="Copiar"><i class="ti ti-copy"></i></button>
+    </div>
+    <div style="font-size:10px;color:var(--hint);margin-top:8px">Os usuários que solicitarem entrada precisarão da sua aprovação antes de acessar o grupo.</div>
+  </div>
+
+  <div class="card" id="solicitacoes-card" style="display:none">
+    <div class="card-title"><i class="ti ti-user-plus"></i> Solicitações de entrada <span id="sol-badge" style="background:var(--err);color:#fff;border-radius:10px;font-size:10px;padding:1px 7px;margin-left:4px"></span></div>
+    <div id="sol-list"></div>
+  </div>
+
   <div class="card" id="creditos-config-card" style="display:none">
     <div class="card-title"><i class="ti ti-coin"></i> Valores de Créditos</div>
     <div style="font-size:11px;color:var(--muted);margin-bottom:12px">Defina os créditos para cada tipo de plantão. Os mesmos valores do MedSS — alterar aqui altera lá também.</div>
@@ -864,8 +889,7 @@ function showSignup(){
 }
 function showLoginForm(){
   document.getElementById('signup-form').style.display='none';
-  document.getElementById('onboarding').style.display='none';
-  document.getElementById('group-picker').style.display='none';
+  document.getElementById('hub').style.display='none';
   document.getElementById('login-form').style.display='block';
 }
 async function doSignup(){
@@ -900,24 +924,64 @@ async function doForgot(){
   showErr(error?error.message:'Email de recuperação enviado! Confira sua caixa de entrada.');
 }
 async function afterLogin(){
-  // Resolve identidade e grupos no backend
   const who=await api('GET','/api/supabase/whoami');
   me={id:who.id,nome:who.nome,role:who.role,org_id:who.group_id};
-  const ms=who.memberships||[];
-  if(ms.length===0){
-    // sem grupo: onboarding (criar ou aguardar convite)
-    document.getElementById('login-form').style.display='none';
-    document.getElementById('group-picker').style.display='none';
-    document.getElementById('onboarding').style.display='block';
-    return;
-  }
-  if(ms.length>1&&!ms.some(m=>m.group_id===groupId)){
-    await showGroupPicker(ms);
-    return;
-  }
-  if(ms.length===1)setGroup(ms[0].group_id,false);
+  await showHub();
+}
+async function showHub(){
+  document.getElementById('login-form').style.display='none';
+  document.getElementById('signup-form').style.display='none';
+  const hub=document.getElementById('hub');hub.style.display='block';
+  document.getElementById('hub-ola').textContent=`Logado como ${me.nome}`;
+  try{
+    const g=await api('GET','/api/grupos/meus');
+    const wrap=document.getElementById('hub-grupos-wrap');
+    const list=document.getElementById('hub-grupos');
+    if(g.grupos.length){
+      wrap.style.display='block';
+      list.innerHTML=g.grupos.map(x=>`
+        <div class="li" style="margin-bottom:6px;padding:10px 12px">
+          <div>
+            <div style="font-size:13px;font-weight:600">${x.nome}</div>
+            <span style="font-size:9px;background:${x.role==='admin'?'#1a202c':'var(--faint)'};color:${x.role==='admin'?'#fff':'var(--muted)'};border-radius:10px;padding:1px 8px">${x.role==='admin'?'👑 Admin':'Membro'}</span>
+          </div>
+          <button class="btn primary sm" style="margin-left:auto" onclick="entrarGrupo('${x.group_id}','${x.role}')"><i class="ti ti-arrow-right"></i> Entrar</button>
+        </div>`).join('');
+    }else wrap.style.display='none';
+    const pend=document.getElementById('hub-pendentes');
+    if(g.pendentes&&g.pendentes.length){
+      pend.style.display='block';
+      pend.innerHTML=`<i class="ti ti-hourglass"></i> Aguardando aprovação: <b>${g.pendentes.join(', ')}</b> — <a href="#" onclick="event.preventDefault();showHub()" style="color:inherit;text-decoration:underline">verificar de novo</a>`;
+    }else pend.style.display='none';
+  }catch(e){showObErr(e.message);}
+}
+function hubShow(qual){
+  document.getElementById('hub-criar').style.display=qual==='criar'?'block':'none';
+  document.getElementById('hub-codigo').style.display=qual==='codigo'?'block':'none';
+  if(qual==='criar')document.getElementById('ob-nome').focus();
+  else document.getElementById('hub-cod').focus();
+}
+function entrarGrupo(gid,role){
+  groupId=gid;localStorage.setItem('ana-group',gid);
+  me.org_id=gid;me.role=role==='admin'?'admin':'medico';
+  document.getElementById('hub').style.display='none';
   showApp();
 }
+async function doSolicitar(){
+  const cod=document.getElementById('hub-cod').value.trim();
+  if(!cod){showObErr('Digite o código de acesso.');return;}
+  const btn=document.getElementById('hub-cod-btn');btn.disabled=true;
+  try{
+    const r=await api('POST','/api/grupos/solicitar',{codigo:cod});
+    document.getElementById('hub-cod').value='';
+    document.getElementById('hub-codigo').style.display='none';
+    showObErr('');
+    toast(r.mensagem||'Solicitação enviada!');
+    await showHub();
+  }catch(e){showObErr(e.message);}
+  btn.disabled=false;
+}
+function showObErr(m){const e=document.getElementById('ob-err');e.textContent=m;e.style.display=m?'block':'none';}
 let escalaAtual=new Date().toISOString().slice(0,7),soMeus=false;
 let showCreditos=false,trocaAlvoId=null;
 function toggleCreditos(){
@@ -1148,54 +1212,16 @@ function openMedSS(){
 }
 async function doCreateGroup(){
   const nome=document.getElementById('ob-nome').value.trim();
-  const err=document.getElementById('ob-err');
-  if(!nome){err.textContent='Digite o nome do grupo.';err.style.display='block';return;}
+  if(!nome){showObErr('Digite o nome do grupo.');return;}
   const btn=document.getElementById('ob-btn');btn.disabled=true;
   try{
     const r=await api('POST','/api/grupos',{nome});
-    setGroup(r.group_id,false);
-    document.getElementById('onboarding').style.display='none';
-    document.getElementById('login-form').style.display='block';
-    me.role='admin';me.org_id=r.group_id;
     toast(`Grupo "${r.nome}" criado! Você é o administrador.`);
-    showApp();
-  }catch(e){err.textContent=e.message||'Erro ao criar grupo.';err.style.display='block';}
+    document.getElementById('ob-nome').value='';
+    document.getElementById('hub-criar').style.display='none';
+    entrarGrupo(r.group_id,'admin');
+  }catch(e){showObErr(e.message||'Erro ao criar grupo.');}
   btn.disabled=false;
-}
-async function recheckGroups(){
-  document.getElementById('onboarding').style.display='none';
-  document.getElementById('login-form').style.display='block';
-  await afterLogin();
-}
-async function showGroupPicker(ms){
-  document.getElementById('login-form').style.display='none';
-  const gp=document.getElementById('group-picker');gp.style.display='block';
-  const list=document.getElementById('group-list');
-  list.innerHTML='<div style="text-align:center;color:var(--hint);font-size:11px">Carregando grupos...</div>';
-  // Busca nomes dos grupos
-  const names={};
-  try{
-    for(const m of ms){
-      try{
-        groupId=m.group_id;
-        const info=await api('GET','/api/org/info');
-        names[m.group_id]=info.nome;
-      }catch{names[m.group_id]=m.group_id.slice(0,8);}
-    }
-  }finally{groupId='';}
-  list.innerHTML=ms.map(m=>
-    `<button class="btn-full" style="margin-bottom:8px" onclick="setGroup('${m.group_id}',true)">
-      <i class="ti ti-building-hospital"></i> ${names[m.group_id]||m.group_id.slice(0,8)}
-      <span style="font-size:10px;opacity:.7;margin-left:6px">${m.role==='admin'?'Admin':'Membro'}</span>
-    </button>`).join('');
-}
-function setGroup(gid,enter){
-  groupId=gid;localStorage.setItem('ana-group',gid);
-  if(enter){
-    document.getElementById('group-picker').style.display='none';
-    document.getElementById('login-form').style.display='block';
-    afterLogin();
-  }
 }
 function showErr(m){const e=document.getElementById('lerr');e.textContent=m;e.style.display='block';}
 async function doLogout(){
@@ -1204,7 +1230,7 @@ async function doLogout(){
   document.getElementById('app').classList.remove('on');
   document.getElementById('lwrap').style.display='flex';
   document.getElementById('login-form').style.display='block';
-  document.getElementById('group-picker').style.display='none';
+  document.getElementById('hub').style.display='none';
   document.getElementById('msgs').innerHTML='<div class="typing" id="typ"><span></span><span></span><span></span></div>';
 }
 async function showApp(){
@@ -1272,7 +1298,7 @@ function tab(n){
   if(n==='escala')loadEscala();
   if(n==='relatorios')loadRelatorios();
   if(n==='logs')loadLogs();
-  if(n==='config'){loadCorrecoes();loadGcalCurrent();loadGcalPessoal();loadOrgInfo();loadPushStatus();loadCreditConfig();}
+  if(n==='config'){loadCorrecoes();loadGcalCurrent();loadGcalPessoal();loadOrgInfo();loadPushStatus();loadCreditConfig();loadCodigoAcesso();loadSolicitacoes();}
 }
 
 // ── MEMÓRIA ──────────────────────────────────────────────
@@ -2167,6 +2193,45 @@ const CCT_DIAS=[['all','Todos os dias'],['monday','Segunda'],['tuesday','Terça'
 const CCT_TURNOS=[['all','Todos os turnos'],['morning','Manhã'],['afternoon','Tarde'],['night','Noite']];
 let cctDias=['all'],cctTurnos=['all'];
 
+async function loadCodigoAcesso(){
+  const card=document.getElementById('codigo-card');
+  if(!card)return;
+  if(me?.role!=='admin'){card.style.display='none';return;}
+  try{
+    const r=await api('GET','/api/grupos/codigo');
+    if(r.codigo){card.style.display='block';document.getElementById('codigo-valor').textContent=r.codigo;}
+  }catch{card.style.display='none';}
+}
+function copiarCodigo(){
+  const c=document.getElementById('codigo-valor').textContent;
+  navigator.clipboard.writeText(c).then(()=>toast('Código copiado!')).catch(()=>toast(c,'info',6000));
+}
+async function loadSolicitacoes(){
+  const card=document.getElementById('solicitacoes-card');
+  if(!card)return;
+  if(me?.role!=='admin'){card.style.display='none';return;}
+  try{
+    const sols=await api('GET','/api/grupos/solicitacoes');
+    if(!sols.length){card.style.display='none';return;}
+    card.style.display='block';
+    document.getElementById('sol-badge').textContent=sols.length;
+    document.getElementById('sol-list').innerHTML=sols.map(s=>`
+      <div class="li" style="margin-bottom:6px">
+        <div><div style="font-size:12px;font-weight:600">${s.nome}</div><div style="font-size:10px;color:var(--hint)">${s.email}</div></div>
+        <span style="margin-left:auto;display:flex;gap:5px">
+          <button class="btn sm" style="border-color:#6ee7b7;color:#065f46" onclick="responderSolicitacao('${s.id}',true)"><i class="ti ti-check"></i> Aprovar</button>
+          <button class="btn sm danger" onclick="responderSolicitacao('${s.id}',false)"><i class="ti ti-x"></i> Recusar</button>
+        </span>
+      </div>`).join('');
+  }catch{card.style.display='none';}
+}
+async function responderSolicitacao(id,aprovar){
+  try{
+    await api('POST',`/api/grupos/solicitacoes/${id}/responder`,{aprovar});
+    toast(aprovar?'Membro aprovado! Ele já pode acessar o grupo.':'Solicitação recusada.');
+    loadSolicitacoes();
+  }catch(e){toast(e.message,'err');}
+}
 async function loadCreditConfig(){
   const card=document.getElementById('creditos-config-card');
   if(!card)return;

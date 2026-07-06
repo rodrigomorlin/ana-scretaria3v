@@ -626,10 +626,44 @@ html,body{height:100%;background:var(--bg);color:var(--text);
   </div>
 
   <div class="card" id="creditos-config-card" style="display:none">
-    <div class="card-title"><i class="ti ti-coin"></i> Valores de crédito por plantão</div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Os mesmos valores usados pelo MedSS — alterar aqui altera lá também.</div>
-    <div class="grid2" id="cc-fields"></div>
-    <div style="margin-top:10px"><button class="btn primary sm" onclick="saveCreditConfig()"><i class="ti ti-device-floppy"></i> Salvar valores</button></div>
+    <div class="card-title"><i class="ti ti-coin"></i> Valores de Créditos</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:12px">Defina os créditos para cada tipo de plantão. Os mesmos valores do MedSS — alterar aqui altera lá também.</div>
+
+    <div style="font-size:10px;font-weight:700;letter-spacing:.5px;color:var(--hint);margin-bottom:8px">DIAS DE SEMANA</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">
+      <div><div class="fl"><label>🌅 Nome do Turno</label><input id="cc-lbl-morning"></div><div class="fl"><label>Créditos</label><input type="number" step="0.5" min="0" id="cc-morning"></div></div>
+      <div><div class="fl"><label>☀️ Nome do Turno</label><input id="cc-lbl-afternoon"></div><div class="fl"><label>Créditos</label><input type="number" step="0.5" min="0" id="cc-afternoon"></div></div>
+      <div><div class="fl"><label>🌙 Nome do Turno</label><input id="cc-lbl-night"></div><div class="fl"><label>Créditos</label><input type="number" step="0.5" min="0" id="cc-night"></div></div>
+    </div>
+
+    <div style="font-size:10px;font-weight:700;letter-spacing:.5px;color:var(--hint);margin-bottom:8px">FINAIS DE SEMANA</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">
+      <div><div class="fl"><label>📅 Nome</label><input id="cc-lbl-saturday"></div><div class="fl"><label>Créditos</label><input type="number" step="0.5" min="0" id="cc-saturday"></div></div>
+      <div><div class="fl"><label>📅 Nome</label><input id="cc-lbl-sunday"></div><div class="fl"><label>Créditos</label><input type="number" step="0.5" min="0" id="cc-sunday"></div></div>
+    </div>
+
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+      <div style="font-size:10px;font-weight:700;letter-spacing:.5px;color:var(--hint)">TIPOS DE CRÉDITO PERSONALIZADOS</div>
+      <button class="btn sm" onclick="showCctForm()"><i class="ti ti-plus"></i> Adicionar</button>
+    </div>
+    <div id="cct-list" style="margin-bottom:8px"></div>
+
+    <div id="cct-form" style="display:none;border:1px solid var(--border);border-radius:var(--rs);padding:12px;margin-bottom:12px">
+      <div class="grid2" style="margin-bottom:8px">
+        <div class="fl"><label>Nome</label><input id="cct-nome" placeholder="Ex: Plantão Extra"></div>
+        <div class="fl"><label>Créditos</label><input type="number" step="0.5" id="cct-valor" value="0"></div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:5px">Aplica-se aos dias:</div>
+      <div id="cct-dias" style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px"></div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:5px">Aplica-se aos turnos:</div>
+      <div id="cct-turnos" style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:12px"></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn primary sm" onclick="saveCct()"><i class="ti ti-plus"></i> Adicionar</button>
+        <button class="btn sm" onclick="document.getElementById('cct-form').style.display='none'"><i class="ti ti-x"></i> Cancelar</button>
+      </div>
+    </div>
+
+    <div style="margin-top:6px"><button class="btn primary sm" onclick="saveCreditConfig()"><i class="ti ti-device-floppy"></i> Salvar Configurações</button></div>
   </div>
 
   <div class="card" id="usec" style="display:none">
@@ -2108,6 +2142,10 @@ async function testPush(){
   }catch(e){toast(e.message,'err');}
 }
 
+const CCT_DIAS=[['all','Todos os dias'],['monday','Segunda'],['tuesday','Terça'],['wednesday','Quarta'],['thursday','Quinta'],['friday','Sexta'],['saturday','Sábado'],['sunday','Domingo']];
+const CCT_TURNOS=[['all','Todos os turnos'],['morning','Manhã'],['afternoon','Tarde'],['night','Noite']];
+let cctDias=['all'],cctTurnos=['all'];
+
 async function loadCreditConfig(){
   const card=document.getElementById('creditos-config-card');
   if(!card)return;
@@ -2115,19 +2153,75 @@ async function loadCreditConfig(){
   try{
     const c=await api('GET','/api/creditos/config');
     card.style.display='block';
-    const campos=[['morning','Manhã'],['afternoon','Tarde'],['night','Noite'],['saturday','Sábado'],['sunday','Domingo'],['hnt_ambulatory','HNT Ambulatório']];
-    document.getElementById('cc-fields').innerHTML=campos.map(([k,fallback])=>`
-      <div class="fl"><label>${c[k+'_label']||fallback}</label>
-        <input type="number" step="0.5" min="0" id="cc-${k}" value="${c[k+'_credit']}">
-      </div>`).join('');
+    ['morning','afternoon','night','saturday','sunday'].forEach(k=>{
+      document.getElementById('cc-'+k).value=c[k+'_credit'];
+      document.getElementById('cc-lbl-'+k).value=c[k+'_label']||'';
+    });
+    loadCctList();
   }catch{card.style.display='none';}
 }
 async function saveCreditConfig(){
   const body={};
-  ['morning','afternoon','night','saturday','sunday','hnt_ambulatory'].forEach(k=>{
+  ['morning','afternoon','night','saturday','sunday'].forEach(k=>{
     body[k+'_credit']=parseFloat(document.getElementById('cc-'+k).value)||0;
+    body[k+'_label']=document.getElementById('cc-lbl-'+k).value.trim()||undefined;
   });
-  try{await api('POST','/api/creditos/config',body);toast('Valores de crédito salvos!');}catch(e){toast(e.message,'err');}
+  try{await api('POST','/api/creditos/config',body);toast('Configurações salvas!');}catch(e){toast(e.message,'err');}
+}
+async function loadCctList(){
+  const box=document.getElementById('cct-list');
+  try{
+    const tipos=await api('GET','/api/creditos/tipos');
+    const D=Object.fromEntries(CCT_DIAS),T=Object.fromEntries(CCT_TURNOS);
+    box.innerHTML=tipos.length
+      ?tipos.map(t=>`<div class="li" style="margin-bottom:5px">
+          <span style="font-size:12px"><b>${t.name}</b> — ${t.credit_value} crédito${t.credit_value===1?'':'s'}
+          <span style="font-size:10px;color:var(--hint)">· ${(t.applies_to_days||['all']).map(d=>D[d]||d).join(', ')} · ${(t.applies_to_shifts||['all']).map(s=>T[s]||s).join(', ')}</span></span>
+          <button class="btn danger sm" style="margin-left:auto" onclick="delCct('${t.id}')"><i class="ti ti-trash"></i></button>
+        </div>`).join('')
+      :'<div style="font-size:11px;color:var(--hint);text-align:center;padding:8px">Nenhum tipo de crédito personalizado. Clique em "Adicionar" para criar.</div>';
+  }catch{box.innerHTML='';}
+}
+function cctChip(val,label,selArr,groupId){
+  const on=selArr.includes(val);
+  return `<button type="button" onclick="toggleCctChip('${groupId}','${val}')" style="border:1px solid var(--border);border-radius:20px;padding:4px 11px;font-size:11px;cursor:pointer;background:${on?'var(--text)':'var(--surface)'};color:${on?'var(--surface)':'var(--text)'}">${label}</button>`;
+}
+function renderCctChips(){
+  document.getElementById('cct-dias').innerHTML=CCT_DIAS.map(([v,l])=>cctChip(v,l,cctDias,'dias')).join('');
+  document.getElementById('cct-turnos').innerHTML=CCT_TURNOS.map(([v,l])=>cctChip(v,l,cctTurnos,'turnos')).join('');
+}
+function toggleCctChip(group,val){
+  let arr=group==='dias'?cctDias:cctTurnos;
+  if(val==='all'){arr=['all'];}
+  else{
+    arr=arr.filter(x=>x!=='all');
+    if(arr.includes(val))arr=arr.filter(x=>x!==val);else arr.push(val);
+    if(!arr.length)arr=['all'];
+  }
+  if(group==='dias')cctDias=arr;else cctTurnos=arr;
+  renderCctChips();
+}
+function showCctForm(){
+  cctDias=['all'];cctTurnos=['all'];
+  document.getElementById('cct-nome').value='';
+  document.getElementById('cct-valor').value='0';
+  renderCctChips();
+  document.getElementById('cct-form').style.display='block';
+}
+async function saveCct(){
+  const nome=document.getElementById('cct-nome').value.trim();
+  if(!nome){toast('Informe o nome do tipo de crédito.','warn');return;}
+  try{
+    await api('POST','/api/creditos/tipos',{name:nome,credit_value:parseFloat(document.getElementById('cct-valor').value)||0,
+      applies_to_days:cctDias,applies_to_shifts:cctTurnos,is_additional:true});
+    document.getElementById('cct-form').style.display='none';
+    toast('Tipo de crédito criado!');
+    loadCctList();
+  }catch(e){toast(e.message,'err');}
+}
+async function delCct(id){
+  if(!confirm('Remover este tipo de crédito?'))return;
+  try{await api('DELETE',`/api/creditos/tipos/${id}`);toast('Removido.');loadCctList();}catch(e){toast(e.message,'err');}
 }
 async function loadOrgInfo(){
   if(me?.role!=='admin'){document.getElementById('org-info-card').style.display='none';return;}

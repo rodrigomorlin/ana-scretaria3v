@@ -2306,6 +2306,107 @@ def cancelar_troca(swap_id: str, user=Depends(auth)):
     if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")
     return ana_data.sb_swap_cancel(user, swap_id)
 
+class CodigoAcesso(BaseModel):
+    codigo: str
+
+class SolicitacaoResposta(BaseModel):
+    aprovar: bool
+
+@app.get("/api/grupos/meus")
+def meus_grupos(request: Request):
+    """Grupos do usuário com nomes — para o hub pós-login."""
+    u = auth_jwt_only(request)
+    memberships = get_memberships(u["id"])
+    # solicitações pendentes que eu fiz (importante também para quem ainda não tem grupo)
+    pend = sb_rest("GET", f"/group_join_requests?user_id=eq.{u['id']}&status=eq.pending&select=group_id")
+    pend_nomes = []
+    if pend:
+        pids = ",".join(f'"{p["group_id"]}"' for p in pend)
+        pend_nomes = [g["name"] for g in sb_rest("GET", f"/groups?id=in.({pids})&select=name")]
+    if not memberships:
+        return {"grupos": [], "nome": u["nome"], "pendentes": pend_nomes}
+    ids = ",".join(f'"{m["group_id"]}"' for m in memberships)
+    grupos = {g["id"]: g["name"] for g in sb_rest("GET", f"/groups?id=in.({ids})&select=id,name")}
+    return {"nome": u["nome"],
+            "grupos": [{"group_id": m["group_id"], "role": m["role"],
+                        "nome": grupos.get(m["group_id"], m["group_id"][:8])} for m in memberships],
+            "pendentes": pend_nomes}
+
+@app.post("/api/grupos/solicitar")
+def solicitar_entrada(c: CodigoAcesso, request: Request, bg: BackgroundTasks):
+    """Solicita entrada em um grupo via código de acesso — aguarda aprovação do admin."""
+    u = auth_jwt_only(request)
+    codigo = c.codigo.strip().lower()
+    if not codigo:
+        raise HTTPException(400, "Informe o código de acesso.")
+    grupos = sb_rest("GET", f"/groups?invite_code=ilike.{codigo}&select=id,name")
+    if not grupos:
+        raise HTTPException(404, "Código não encontrado. Confira com o administrador do grupo.")
+    grupo = grupos[0]
+    if any(m["group_id"] == grupo["id"] for m in get_memberships(u["id"])):
+        raise HTTPException(400, f"Você já é membro do grupo {grupo['name']}.")
+    pend = sb_rest("GET", f"/group_join_requests?user_id=eq.{u['id']}&group_id=eq.{grupo['id']}&status=eq.pending&select=id")
+    if pend:
+        raise HTTPException(400, "Você já tem uma solicitação pendente para esse grupo. Aguarde a aprovação.")
+    # garante profile
+    try:
+        if not sb_rest("GET", f"/profiles?id=eq.{u['id']}&select=id"):
+            sb_rest("POST", "/profiles", {"id": u["id"], "email": u.get("email", ""), "full_name": u["nome"]})
+    except Exception as e:
+        log.warning(f"profiles no solicitar: {e}")
+    sb_rest("POST", "/group_join_requests",
+            {"group_id": grupo["id"], "user_id": u["id"], "requested_role": "member", "status": "pending"})
+    if VAPID_PUBLIC_KEY:
+        bg.add_task(push_all_org, grupo["id"], "👤 Solicitação de entrada",
+                    f"{u['nome']} pediu para entrar no grupo {grupo['name']}")
+    log.info(f"Solicitação de entrada: {u['nome']} → {grupo['name']}")
+    return {"ok": True, "grupo": grupo["name"],
+            "mensagem": f"Solicitação enviada! Aguarde a aprovação do administrador de {grupo['name']}."}
+
+@app.get("/api/grupos/solicitacoes")
+def listar_solicitacoes(user=Depends(auth)):
+    """Solicitações pendentes do grupo ativo (admin)."""
+    if user["role"] != "admin":
+        return []
+    gid = user.get("org_id")
+    rows = sb_rest("GET", f"/group_join_requests?group_id=eq.{gid}&status=eq.pending&select=*&order=created_at")
+    if not rows:
+        return []
+    uids = ",".join(f'"{r["user_id"]}"' for r in rows)
+    perfis = {p["id"]: p for p in sb_rest("GET", f"/profiles?id=in.({uids})&select=id,full_name,email")}
+    return [{"id": r["id"],
+             "nome": perfis.get(r["user_id"], {}).get("full_name") or "—",
+             "email": perfis.get(r["user_id"], {}).get("email") or "",
+             "role": r.get("requested_role", "member")} for r in rows]
+
+@app.post("/api/grupos/solicitacoes/{req_id}/responder")
+def responder_solicitacao(req_id: str, r: SolicitacaoResposta, user=Depends(auth)):
+    if user["role"] != "admin":
+        raise HTTPException(403, "Apenas administradores podem aprovar solicitações.")
+    gid = user.get("org_id")
+    rows = sb_rest("GET", f"/group_join_requests?id=eq.{req_id}&group_id=eq.{gid}&select=*")
+    if not rows:
+        raise HTTPException(404, "Solicitação não encontrada.")
+    req = rows[0]
+    if req.get("status") != "pending":
+        raise HTTPException(400, "Solicitação já respondida.")
+    if r.aprovar:
+        sb_rest("POST", "/group_members",
+                {"user_id": req["user_id"], "group_id": gid, "role": req.get("requested_role", "member")})
+        _membership_cache.pop(req["user_id"], None)
+    sb_rest("PATCH", f"/group_join_requests?id=eq.{req_id}",
+            {"status": "approved" if r.aprovar else "rejected"})
+    log.info(f"Solicitação {'aprovada' if r.aprovar else 'recusada'}: {req_id}")
+    return {"ok": True}
+
+@app.get("/api/grupos/codigo")
+def codigo_acesso(user=Depends(auth)):
+    """Código de acesso do grupo ativo (admin) — para compartilhar."""
+    if user["role"] != "admin":
+        raise HTTPException(403, "Apenas administradores.")
+    rows = sb_rest("GET", f"/groups?id=eq.{user.get('org_id')}&select=invite_code")
+    return {"codigo": (rows[0].get("invite_code") or "").upper() if rows else ""}
+
 @app.get("/api/supabase/status")
 def supabase_status():
     """Diagnóstico da integração Supabase (sem expor chaves)."""

@@ -545,6 +545,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
       <span id="escala-mes-label" style="font-size:13px;font-weight:600;min-width:130px;text-align:center"></span>
       <button class="btn sm" onclick="escalaMes(1)"><i class="ti ti-chevron-right"></i></button>
       <button class="btn sm" id="btn-meus-plantoes" onclick="toggleMeusPlantoes()" style="display:none"><i class="ti ti-user-circle"></i> Meus plantões</button>
+      <button class="btn sm" id="btn-creditos" onclick="toggleCreditos()"><i class="ti ti-coin"></i> Créditos</button>
       <button class="btn sm" id="btn-medss-ext" onclick="openMedSS()" style="display:none"><i class="ti ti-external-link"></i> Editar no MedSS</button>
     </div>
   </div>
@@ -555,6 +556,8 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:#fbbf24;opacity:.45;vertical-align:middle;margin-right:4px"></span>Meio turno</span>
     <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;border:2px solid #10b981;vertical-align:middle;margin-right:4px"></span>HNT ambulatório</span>
   </div>
+  <div id="trocas-box" style="display:none;margin-bottom:12px"></div>
+  <div id="creditos-box" style="display:none;margin-bottom:12px"></div>
   <div id="meus-proximos" style="display:none;margin-bottom:12px"></div>
   <div class="ag-card" style="overflow-x:auto">
     <table class="ag-tbl" id="escala-grid" style="min-width:700px"><tr><td style="padding:22px;color:var(--hint);text-align:center">Carregando escala...</td></tr></table>
@@ -620,6 +623,13 @@ html,body{height:100%;background:var(--bg);color:var(--text);
       <div class="fl" style="margin-bottom:8px"><label>Tempo manual de deslocamento (min) — usado quando sem endereço ou dentro do mesmo prédio</label><input type="number" id="nstempo" min="0" step="5" value="0" style="max-width:100px"></div>
       <button class="btn primary" onclick="addSetor()"><i class="ti ti-plus"></i> Adicionar</button>
     </div>
+  </div>
+
+  <div class="card" id="creditos-config-card" style="display:none">
+    <div class="card-title"><i class="ti ti-coin"></i> Valores de crédito por plantão</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Os mesmos valores usados pelo MedSS — alterar aqui altera lá também.</div>
+    <div class="grid2" id="cc-fields"></div>
+    <div style="margin-top:10px"><button class="btn primary sm" onclick="saveCreditConfig()"><i class="ti ti-device-floppy"></i> Salvar valores</button></div>
   </div>
 
   <div class="card" id="usec" style="display:none">
@@ -719,6 +729,19 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <div class="ma">
       <button class="btn" onclick="closePlantaoModal()">Fechar</button>
       <button class="btn primary" onclick="savePlantao()"><i class="ti ti-plus"></i> Adicionar</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-bg" id="modal-troca">
+  <div class="modal">
+    <h3><i class="ti ti-arrows-exchange"></i> Propor troca de plantão</h3>
+    <div style="font-size:12px;color:var(--muted);margin-bottom:10px" id="troca-alvo-info"></div>
+    <div class="fl"><label>Qual dos seus plantões você oferece em troca?</label><select id="troca-meu"></select></div>
+    <div class="fl"><label>Mensagem (opcional)</label><input id="troca-msg" placeholder="ex: tenho compromisso nesse dia"></div>
+    <div class="ma">
+      <button class="btn" onclick="document.getElementById('modal-troca').classList.remove('open')">Cancelar</button>
+      <button class="btn primary" onclick="enviarTroca()"><i class="ti ti-send"></i> Enviar proposta</button>
     </div>
   </div>
 </div>
@@ -858,6 +881,87 @@ async function afterLogin(){
   showApp();
 }
 let escalaAtual=new Date().toISOString().slice(0,7),soMeus=false;
+let showCreditos=false,trocaAlvoId=null;
+function toggleCreditos(){
+  showCreditos=!showCreditos;
+  document.getElementById('btn-creditos').classList.toggle('primary',showCreditos);
+  renderCreditos();
+}
+async function renderCreditos(){
+  const box=document.getElementById('creditos-box');
+  if(!showCreditos){box.style.display='none';return;}
+  box.style.display='block';
+  box.innerHTML='<div class="card" style="margin-bottom:0"><div style="font-size:11px;color:var(--hint)">Calculando créditos...</div></div>';
+  try{
+    const c=await api('GET',`/api/creditos?mes=${escalaAtual}`);
+    if(!c.medicos.length){box.innerHTML='<div class="card" style="margin-bottom:0"><div style="font-size:11px;color:var(--hint)">Nenhum plantão neste mês.</div></div>';return;}
+    box.innerHTML=`<div class="card" style="margin-bottom:0">
+      <div class="card-title"><i class="ti ti-coin"></i> Créditos de ${escalaAtual.split('-').reverse().join('/')}</div>
+      <table class="ag-tbl" style="font-size:12px">
+        <tr><th>Médico</th><th style="text-align:center">Plantões</th><th>Detalhe</th><th style="text-align:right">Créditos</th></tr>
+        ${c.medicos.map(m=>`<tr${m.medico===c.meu_medico?' style="background:var(--al)"':''}>
+          <td style="font-weight:500">${m.medico}${m.medico===c.meu_medico?' <span style="font-size:9px;color:var(--accent)">(você)</span>':''}</td>
+          <td style="text-align:center">${m.plantoes}</td>
+          <td style="font-size:10px;color:var(--hint)">${Object.entries(m.detalhe).map(([k,v])=>`${v}× ${k}`).join(' · ')}</td>
+          <td style="text-align:right;font-weight:700;color:var(--accent)">${m.total.toFixed(1)}</td>
+        </tr>`).join('')}
+      </table>
+    </div>`;
+  }catch(e){box.innerHTML=`<div class="card" style="margin-bottom:0;color:var(--err);font-size:12px">${e.message}</div>`;}
+}
+async function loadTrocas(){
+  const box=document.getElementById('trocas-box');
+  try{
+    const ts=await api('GET','/api/escala/trocas');
+    if(!ts.length){box.style.display='none';return;}
+    box.style.display='block';
+    box.innerHTML=`<div class="card" style="margin-bottom:0;border-color:#C7D2FE">
+      <div class="card-title"><i class="ti ti-arrows-exchange"></i> Trocas pendentes (${ts.length})</div>
+      ${ts.map(t=>`<div class="li" style="margin-bottom:6px;flex-wrap:wrap">
+        <span style="font-size:12px;line-height:1.5"><b>${t.de}</b> oferece <b>${fmtD(t.oferece.data)} ${t.oferece.turno}</b> pelo plantão de <b>${t.para}</b> em <b>${fmtD(t.pede.data)} ${t.pede.turno}</b>${t.mensagem?`<br><span style="font-size:10px;color:var(--hint)">"${t.mensagem}"</span>`:''}</span>
+        <span style="margin-left:auto;display:flex;gap:5px">
+          ${t.sou_alvo||me.role==='admin'?`<button class="btn sm" style="border-color:#6ee7b7;color:#065f46" onclick="responderTroca('${t.id}',true)"><i class="ti ti-check"></i> Aceitar</button>
+          <button class="btn sm danger" onclick="responderTroca('${t.id}',false)"><i class="ti ti-x"></i> Recusar</button>`:''}
+          ${t.sou_autor?`<button class="btn sm" onclick="cancelarTroca('${t.id}')"><i class="ti ti-trash"></i> Cancelar</button>`:''}
+        </span>
+      </div>`).join('')}
+    </div>`;
+  }catch{box.style.display='none';}
+}
+function openTrocaModal(alvoShiftId){
+  trocaAlvoId=alvoShiftId;
+  const meu=escalaCache?.meu_medico;
+  if(!meu){toast('Sua conta não está vinculada a um médico.','warn');return;}
+  document.getElementById('troca-alvo-info').innerHTML=`Você quer o plantão de <b>${plCtx.doc}</b> em <b>${fmtD(plCtx.data)}</b>. Escolha qual dos seus oferece no lugar:`;
+  const meus=[];
+  const NOMES={morning:'Manhã',afternoon:'Tarde',night:'Noite'};
+  Object.entries(escalaCache.plantoes[meu]||{}).sort(([a],[b])=>a.localeCompare(b)).forEach(([d,ps])=>{
+    ps.forEach(p=>meus.push({id:p.id,label:`${fmtD(d)} — ${NOMES[p.turno]||p.turno}${p.setor?' · '+p.setor:''}`}));
+  });
+  if(!meus.length){toast('Você não tem plantões neste mês para oferecer.','warn');return;}
+  document.getElementById('troca-meu').innerHTML=meus.map(m=>`<option value="${m.id}">${m.label}</option>`).join('');
+  document.getElementById('troca-msg').value='';
+  closePlantaoModal();
+  document.getElementById('modal-troca').classList.add('open');
+}
+async function enviarTroca(){
+  try{
+    await api('POST','/api/escala/troca',{meu_shift_id:document.getElementById('troca-meu').value,alvo_shift_id:trocaAlvoId,mensagem:document.getElementById('troca-msg').value});
+    document.getElementById('modal-troca').classList.remove('open');
+    toast('Proposta de troca enviada!');
+    loadTrocas();
+  }catch(e){toast(e.message,'err');}
+}
+async function responderTroca(id,aceitar){
+  try{
+    await api('POST',`/api/escala/troca/${id}/responder`,{aceitar});
+    toast(aceitar?'Troca aceita — escala atualizada!':'Troca recusada.');
+    loadTrocas();loadEscala();
+  }catch(e){toast(e.message,'err');}
+}
+async function cancelarTroca(id){
+  try{await api('DELETE',`/api/escala/troca/${id}`);toast('Proposta cancelada.');loadTrocas();}catch(e){toast(e.message,'err');}
+}
 function renderMeusProximos(e){
   const box=document.getElementById('meus-proximos');
   if(!box)return;
@@ -903,6 +1007,8 @@ async function loadEscala(){
     const bm=document.getElementById('btn-meus-plantoes');
     if(bm)bm.style.display=e.meu_medico?'inline-flex':'none';
     renderMeusProximos(e);
+    loadTrocas();
+    if(showCreditos)renderCreditos();
     if(!e.medicos.length){grid.innerHTML='<tr><td style="padding:22px;color:var(--hint);text-align:center">Nenhum médico no grupo ainda.</td></tr>';return;}
     if(soMeus&&e.meu_medico)e={...e,medicos:e.medicos.filter(m=>m===e.meu_medico)};
     const dias=new Date(a,m,0).getDate();
@@ -959,7 +1065,10 @@ function renderPlList(){
   const ps=((escalaCache?.plantoes||{})[plCtx.doc]||{})[plCtx.data]||[];
   const NOMES={morning:'🌅 Manhã',afternoon:'☀️ Tarde',night:'🌙 Noite'};
   document.getElementById('pl-list').innerHTML=ps.length
-    ?ps.map(p=>`<div class="li" style="margin-bottom:5px"><span style="font-size:12px">${NOMES[p.turno]||p.turno}${p.meio?' <span style="font-size:10px;color:var(--hint)">(meio)</span>':''}${p.hnt?' <span style="font-size:10px;color:#10b981">HNT</span>':''}${p.setor?` <span style="font-size:10px;color:var(--hint)">· ${p.setor}</span>`:''}</span><button class="btn danger sm" style="margin-left:auto" onclick="delPlantao('${p.id}')"><i class="ti ti-trash"></i></button></div>`).join('')
+    ?ps.map(p=>{
+      const podeTrocar=escalaCache?.meu_medico&&escalaCache.meu_medico!==plCtx.doc;
+      return `<div class="li" style="margin-bottom:5px"><span style="font-size:12px">${NOMES[p.turno]||p.turno}${p.meio?' <span style="font-size:10px;color:var(--hint)">(meio)</span>':''}${p.hnt?' <span style="font-size:10px;color:#10b981">HNT</span>':''}${p.setor?` <span style="font-size:10px;color:var(--hint)">· ${p.setor}</span>`:''}</span><span style="margin-left:auto;display:flex;gap:5px">${podeTrocar?`<button class="btn sm" title="Propor troca" onclick="openTrocaModal('${p.id}')"><i class="ti ti-arrows-exchange"></i></button>`:''}<button class="btn danger sm" onclick="delPlantao('${p.id}')"><i class="ti ti-trash"></i></button></span></div>`;
+    }).join('')
     :'<div style="font-size:11px;color:var(--hint);text-align:center;padding:8px">Nenhum plantão neste dia.</div>';
 }
 async function savePlantao(){
@@ -1108,7 +1217,7 @@ function tab(n){
   if(n==='escala')loadEscala();
   if(n==='relatorios')loadRelatorios();
   if(n==='logs')loadLogs();
-  if(n==='config'){loadCorrecoes();loadGcalCurrent();loadGcalPessoal();loadOrgInfo();loadPushStatus();}
+  if(n==='config'){loadCorrecoes();loadGcalCurrent();loadGcalPessoal();loadOrgInfo();loadPushStatus();loadCreditConfig();}
 }
 
 // ── MEMÓRIA ──────────────────────────────────────────────
@@ -1999,6 +2108,27 @@ async function testPush(){
   }catch(e){toast(e.message,'err');}
 }
 
+async function loadCreditConfig(){
+  const card=document.getElementById('creditos-config-card');
+  if(!card)return;
+  if(me?.role!=='admin'){card.style.display='none';return;}
+  try{
+    const c=await api('GET','/api/creditos/config');
+    card.style.display='block';
+    const campos=[['morning','Manhã'],['afternoon','Tarde'],['night','Noite'],['saturday','Sábado'],['sunday','Domingo'],['hnt_ambulatory','HNT Ambulatório']];
+    document.getElementById('cc-fields').innerHTML=campos.map(([k,fallback])=>`
+      <div class="fl"><label>${c[k+'_label']||fallback}</label>
+        <input type="number" step="0.5" min="0" id="cc-${k}" value="${c[k+'_credit']}">
+      </div>`).join('');
+  }catch{card.style.display='none';}
+}
+async function saveCreditConfig(){
+  const body={};
+  ['morning','afternoon','night','saturday','sunday','hnt_ambulatory'].forEach(k=>{
+    body[k+'_credit']=parseFloat(document.getElementById('cc-'+k).value)||0;
+  });
+  try{await api('POST','/api/creditos/config',body);toast('Valores de crédito salvos!');}catch(e){toast(e.message,'err');}
+}
 async function loadOrgInfo(){
   if(me?.role!=='admin'){document.getElementById('org-info-card').style.display='none';return;}
   document.getElementById('org-info-card').style.display='block';

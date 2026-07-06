@@ -24,7 +24,6 @@ log = logging.getLogger("ana")
 app = FastAPI(title="Ana v3", version="3.0.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-DATABASE_URL   = os.environ.get("DATABASE_URL", "")
 SECRET         = os.environ.get("SECRET_KEY", "ana-secretaria-default-secret-change-me")
 GROQ_KEY       = os.environ.get("GROQ_API_KEY", "")
 SMTP_HOST      = os.environ.get("SMTP_HOST", "")
@@ -48,278 +47,25 @@ VAPID_CLAIMS_EMAIL   = os.environ.get("VAPID_CLAIMS_EMAIL", "rodrigomorlin@gmail
 SUPABASE_URL              = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SUPABASE_ANON_KEY         = os.environ.get("SUPABASE_ANON_KEY", "")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
-ANA_DATA_BACKEND          = os.environ.get("ANA_DATA_BACKEND", "sqlite").lower()
-ANA_DEFAULT_GROUP_ID      = os.environ.get("ANA_DEFAULT_GROUP_ID", "")
-SB_DATA = ANA_DATA_BACKEND == "supabase"
+if not (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY and SUPABASE_ANON_KEY):
+    raise RuntimeError("Configure SUPABASE_URL, SUPABASE_ANON_KEY e SUPABASE_SERVICE_ROLE_KEY no Railway.")
 import sys as _sys
 _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import data as ana_data
 
-USE_POSTGRES = bool(DATABASE_URL and DATABASE_URL.startswith("postgres"))
-
-def hash_pin(pin): return hashlib.sha256(f"{pin}{SECRET}".encode()).hexdigest()
-
-import sqlite3
-if USE_POSTGRES:
-    try:
-        import psycopg2, psycopg2.extras
-        log.info("Usando PostgreSQL")
-    except ImportError:
-        log.warning("psycopg2 nao disponivel — usando SQLite como fallback")
-        USE_POSTGRES = False
-else:
-    log.info("Usando SQLite")
-
-# ── DB CONNECTION ──────────────────────────────────────────
-def get_db():
-    if USE_POSTGRES:
-        conn = psycopg2.connect(DATABASE_URL)
-        return conn
-    conn = sqlite3.connect(os.environ.get("DB_PATH", "ana.db"))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    return conn
-
-def fetchall(cursor):
-    if USE_POSTGRES:
-        cols = [d[0] for d in cursor.description]
-        return [dict(zip(cols, row)) for row in cursor.fetchall()]
-    return [dict(r) for r in cursor.fetchall()]
-
-def fetchone(cursor):
-    if USE_POSTGRES:
-        row = cursor.fetchone()
-        if not row: return None
-        cols = [d[0] for d in cursor.description]
-        return dict(zip(cols, row))
-    row = cursor.fetchone()
-    return dict(row) if row else None
-
-def P():
-    return "%s" if USE_POSTGRES else "?"
-
-def Ps(n):
-    return ",".join([P()] * n)
-
-# ── INIT DB ────────────────────────────────────────────────
-def init_db():
-    conn = get_db()
-    c = conn.cursor()
-
-    if USE_POSTGRES:
-        stmts = [
-            """CREATE TABLE IF NOT EXISTS orgs (
-                id TEXT PRIMARY KEY, nome TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT NOW())""",
-            """CREATE TABLE IF NOT EXISTS usuarios (
-                id TEXT PRIMARY KEY, nome TEXT NOT NULL, pin_hash TEXT NOT NULL,
-                role TEXT DEFAULT 'medico', email TEXT DEFAULT '', medico_id TEXT DEFAULT '',
-                org_id TEXT DEFAULT 'default',
-                created_at TIMESTAMP DEFAULT NOW())""",
-            """CREATE TABLE IF NOT EXISTS sessoes (
-                token TEXT PRIMARY KEY, usuario_id TEXT NOT NULL,
-                expires_at TIMESTAMP NOT NULL)""",
-            """CREATE TABLE IF NOT EXISTS eventos (
-                id SERIAL PRIMARY KEY, doc TEXT NOT NULL, setor TEXT NOT NULL,
-                proc TEXT NOT NULL, paciente TEXT DEFAULT '', date TEXT NOT NULL,
-                time TEXT NOT NULL, obs TEXT DEFAULT '', ai INTEGER DEFAULT 0,
-                criado_por TEXT DEFAULT '', gcal_event_id TEXT DEFAULT '',
-                pdf_filename TEXT DEFAULT '', pdf_data TEXT DEFAULT '',
-                duracao_min INTEGER DEFAULT 60, org_id TEXT DEFAULT 'default',
-                created_at TIMESTAMP DEFAULT NOW())""",
-            """CREATE TABLE IF NOT EXISTS medicos (
-                id TEXT PRIMARY KEY, name TEXT NOT NULL,
-                spec TEXT DEFAULT '', email TEXT DEFAULT '', org_id TEXT DEFAULT 'default')""",
-            """CREATE TABLE IF NOT EXISTS setores (
-                id TEXT PRIMARY KEY, name TEXT NOT NULL,
-                color TEXT DEFAULT '#CECBF6', text_color TEXT DEFAULT '#3C3489',
-                org_id TEXT DEFAULT 'default')""",
-            """CREATE TABLE IF NOT EXISTS memorias (
-                id TEXT PRIMARY KEY, texto TEXT NOT NULL,
-                icone TEXT DEFAULT 'ti-brain', tipo TEXT DEFAULT 'aprendido',
-                uso INTEGER DEFAULT 0, org_id TEXT DEFAULT 'default',
-                created_at TIMESTAMP DEFAULT NOW())""",
-            """CREATE TABLE IF NOT EXISTS historico (
-                id SERIAL PRIMARY KEY, doc TEXT, setor TEXT, proc TEXT,
-                paciente TEXT, date TEXT, time TEXT, obs TEXT,
-                criado_por TEXT DEFAULT '', org_id TEXT DEFAULT 'default',
-                created_at TIMESTAMP DEFAULT NOW())""",
-            """CREATE TABLE IF NOT EXISTS logs (
-                id SERIAL PRIMARY KEY, nivel TEXT, mensagem TEXT,
-                usuario TEXT DEFAULT '', ip TEXT DEFAULT '', org_id TEXT DEFAULT 'default',
-                created_at TIMESTAMP DEFAULT NOW())""",
-            """CREATE TABLE IF NOT EXISTS correcoes (
-                id SERIAL PRIMARY KEY, contexto TEXT, campo TEXT,
-                valor_errado TEXT, valor_certo TEXT,
-                usuario TEXT DEFAULT '', org_id TEXT DEFAULT 'default',
-                created_at TIMESTAMP DEFAULT NOW())""",
-            """CREATE TABLE IF NOT EXISTS config (
-                chave TEXT NOT NULL, valor TEXT DEFAULT '', org_id TEXT DEFAULT 'default',
-                PRIMARY KEY (chave, org_id))""",
-        ]
-        for s in stmts:
-            c.execute(s)
-    else:
-        c.executescript("""
-CREATE TABLE IF NOT EXISTS orgs (
-    id TEXT PRIMARY KEY, nome TEXT NOT NULL,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS usuarios (
-    id TEXT PRIMARY KEY, nome TEXT NOT NULL, pin_hash TEXT NOT NULL,
-    role TEXT DEFAULT 'medico', email TEXT DEFAULT '', medico_id TEXT DEFAULT '',
-    org_id TEXT DEFAULT 'default',
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS sessoes (
-    token TEXT PRIMARY KEY, usuario_id TEXT NOT NULL, expires_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS eventos (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, doc TEXT NOT NULL, setor TEXT NOT NULL,
-    proc TEXT NOT NULL, paciente TEXT DEFAULT '', date TEXT NOT NULL,
-    time TEXT NOT NULL, obs TEXT DEFAULT '', ai INTEGER DEFAULT 0,
-    criado_por TEXT DEFAULT '', gcal_event_id TEXT DEFAULT '',
-    pdf_filename TEXT DEFAULT '', pdf_data TEXT DEFAULT '',
-    duracao_min INTEGER DEFAULT 60, org_id TEXT DEFAULT 'default',
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS medicos (
-    id TEXT PRIMARY KEY, name TEXT NOT NULL, spec TEXT DEFAULT '', email TEXT DEFAULT '',
-    org_id TEXT DEFAULT 'default');
-CREATE TABLE IF NOT EXISTS setores (
-    id TEXT PRIMARY KEY, name TEXT NOT NULL,
-    color TEXT DEFAULT '#CECBF6', text_color TEXT DEFAULT '#3C3489',
-    org_id TEXT DEFAULT 'default',
-    endereco TEXT DEFAULT '',
-    tempo_manual INTEGER DEFAULT 0);
-CREATE TABLE IF NOT EXISTS deslocamentos (
-    id TEXT PRIMARY KEY,
-    setor_origem TEXT NOT NULL, setor_destino TEXT NOT NULL,
-    org_id TEXT DEFAULT 'default',
-    minutos INTEGER NOT NULL,
-    fonte TEXT DEFAULT 'manual',
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS push_subscriptions (
-    id TEXT PRIMARY KEY,
-    usuario_id TEXT NOT NULL,
-    org_id TEXT DEFAULT 'default',
-    subscription TEXT NOT NULL,
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS memorias (
-    id TEXT PRIMARY KEY, texto TEXT NOT NULL,
-    icone TEXT DEFAULT 'ti-brain', tipo TEXT DEFAULT 'aprendido',
-    uso INTEGER DEFAULT 0, org_id TEXT DEFAULT 'default',
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS historico (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, doc TEXT, setor TEXT, proc TEXT,
-    paciente TEXT, date TEXT, time TEXT, obs TEXT, criado_por TEXT DEFAULT '',
-    org_id TEXT DEFAULT 'default',
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, nivel TEXT, mensagem TEXT,
-    usuario TEXT DEFAULT '', ip TEXT DEFAULT '', org_id TEXT DEFAULT 'default',
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS correcoes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, contexto TEXT, campo TEXT,
-    valor_errado TEXT, valor_certo TEXT, usuario TEXT DEFAULT '',
-    org_id TEXT DEFAULT 'default',
-    created_at TEXT DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS config (
-    chave TEXT NOT NULL, valor TEXT DEFAULT '', org_id TEXT DEFAULT 'default',
-    PRIMARY KEY (chave, org_id));
-""")
-
-    # Índices
-    for idx in [
-        "CREATE INDEX IF NOT EXISTS idx_ev_date ON eventos(date)",
-        "CREATE INDEX IF NOT EXISTS idx_hist ON historico(created_at)",
-        "CREATE INDEX IF NOT EXISTS idx_ev_org ON eventos(org_id, date)",
-        "CREATE INDEX IF NOT EXISTS idx_ev_org_doc ON eventos(org_id, doc)",
-        "CREATE INDEX IF NOT EXISTS idx_medicos_org ON medicos(org_id)",
-        "CREATE INDEX IF NOT EXISTS idx_setores_org ON setores(org_id)",
-        "CREATE INDEX IF NOT EXISTS idx_memorias_org ON memorias(org_id)",
-        "CREATE INDEX IF NOT EXISTS idx_usuarios_org ON usuarios(org_id)",
-        "CREATE INDEX IF NOT EXISTS idx_logs_org ON logs(org_id, created_at)",
-        "CREATE INDEX IF NOT EXISTS idx_correcoes_org ON correcoes(org_id, created_at)",
-        "CREATE INDEX IF NOT EXISTS idx_sessoes_token ON sessoes(token)",
-    ]:
-        try: c.execute(idx)
-        except: pass
-
-    # Migrações — adiciona colunas novas em bancos já existentes (ignora erro se já existir)
-    for alter in [
-        "ALTER TABLE eventos ADD COLUMN pdf_filename TEXT DEFAULT ''",
-        "ALTER TABLE eventos ADD COLUMN pdf_data TEXT DEFAULT ''",
-        "ALTER TABLE eventos ADD COLUMN duracao_min INTEGER DEFAULT 60",
-        "ALTER TABLE eventos ADD COLUMN status TEXT DEFAULT 'aguardando'",
-        "ALTER TABLE usuarios ADD COLUMN medico_id TEXT DEFAULT ''",
-        "ALTER TABLE usuarios ADD COLUMN gcal_access_token TEXT DEFAULT ''",
-        "ALTER TABLE usuarios ADD COLUMN gcal_refresh_token TEXT DEFAULT ''",
-        "ALTER TABLE usuarios ADD COLUMN gcal_token_expiry TEXT DEFAULT ''",
-        "ALTER TABLE usuarios ADD COLUMN gcal_email TEXT DEFAULT ''",
-        "ALTER TABLE usuarios ADD COLUMN org_id TEXT DEFAULT 'default'",
-        "ALTER TABLE eventos ADD COLUMN org_id TEXT DEFAULT 'default'",
-        "ALTER TABLE medicos ADD COLUMN org_id TEXT DEFAULT 'default'",
-        "ALTER TABLE setores ADD COLUMN org_id TEXT DEFAULT 'default'",
-        "ALTER TABLE setores ADD COLUMN endereco TEXT DEFAULT ''",
-        "ALTER TABLE setores ADD COLUMN tempo_manual INTEGER DEFAULT 0",
-        """CREATE TABLE IF NOT EXISTS deslocamentos (
-            id TEXT PRIMARY KEY, setor_origem TEXT NOT NULL, setor_destino TEXT NOT NULL,
-            org_id TEXT DEFAULT 'default', minutos INTEGER NOT NULL,
-            fonte TEXT DEFAULT 'manual', updated_at TEXT DEFAULT CURRENT_TIMESTAMP)""",
-        "ALTER TABLE memorias ADD COLUMN org_id TEXT DEFAULT 'default'",
-        "ALTER TABLE historico ADD COLUMN org_id TEXT DEFAULT 'default'",
-        "ALTER TABLE logs ADD COLUMN org_id TEXT DEFAULT 'default'",
-        "ALTER TABLE correcoes ADD COLUMN org_id TEXT DEFAULT 'default'",
-    ]:
-        try:
-            c.execute(alter); conn.commit()
-        except Exception:
-            pass
-
-    # Garante que existe a organização "default" (para onde vai todo dado pré-existente)
-    c.execute(f"SELECT id FROM orgs WHERE id={P()}", ("default",))
-    if not fetchone(c):
-        c.execute(f"INSERT INTO orgs (id,nome) VALUES ({Ps(2)})", ("default", "Grupo Principal"))
-        conn.commit()
-
-    p = P()
-    # Nenhum admin é criado automaticamente — o primeiro acesso é feito
-    # pela tela de "setup" (ver /api/setup-needed e /api/setup)
-    # Médicos, setores e memórias NÃO são mais pré-populados automaticamente:
-    # cada nova organização começa vazia e o admin cadastra o que for relevante para o grupo dela.
-
-    conn.commit(); conn.close()
-    log.info("Banco inicializado com sucesso")
-
-init_db()
-
 # ── AUTH ───────────────────────────────────────────────────
-def create_token(uid):
-    token = secrets.token_urlsafe(32)
-    expires = (datetime.now() + timedelta(hours=12)).isoformat()
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"DELETE FROM sessoes WHERE expires_at < {P()}", (datetime.now().isoformat(),))
-    c.execute(f"INSERT INTO sessoes VALUES ({Ps(3)})", (token, uid, expires))
-    conn.commit(); conn.close(); return token
-
-def get_user(token):
-    if not token: return None
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"""SELECT u.* FROM sessoes s JOIN usuarios u ON s.usuario_id=u.id
-                  WHERE s.token={P()} AND s.expires_at > {P()}""",
-              (token, datetime.now().isoformat()))
-    row = fetchone(c); conn.close(); return row
-
 def auth(request: Request):
-    # 1. Tenta JWT do Supabase (Authorization: Bearer <token>)
+    """Autenticação: JWT do Supabase (Authorization: Bearer <token>)."""
     authz = request.headers.get("Authorization", "")
     if authz.startswith("Bearer ") and SUPABASE_URL:
         user = _auth_supabase(request, authz[7:])
         if user:
             return user
-    # 2. Auth legado (X-Token / cookie)
-    token = request.headers.get("X-Token","") or request.cookies.get("ana_token","")
-    user = get_user(token)
-    if not user: raise HTTPException(401, "Não autorizado.")
-    return user
+    raise HTTPException(401, "Não autorizado.")
+
+def db_log(nivel, msg, usuario="", ip="", org_id=""):
+    """Log de aplicação (o log persistente por grupo é o ana_logs, via data.py)."""
+    log.info(f"[{nivel}] {msg}" + (f" · user={usuario}" if usuario else ""))
 
 # ── SUPABASE AUTH (JWT via JWKS) ─────────────────────────────
 _jwks_client = None
@@ -414,32 +160,25 @@ def _auth_supabase(request: Request, token: str) -> Optional[dict]:
             "auth_source": "supabase", "jwt": token,
             "memberships": memberships}
 
-def db_log(nivel, msg, usuario="", ip="", org_id="default"):
-    try:
-        conn = get_db(); c = conn.cursor()
-        c.execute(f"INSERT INTO logs (nivel,mensagem,usuario,ip,org_id) VALUES ({Ps(5)})",
-                  (nivel, msg, usuario, ip, org_id))
-        conn.commit(); conn.close()
-    except: pass
-
 # ── CONFIG PERSISTENTE (chave/valor no banco, por organização) ──
-def get_config(chave: str, default: str = "", org_id: str = "default") -> str:
+def get_config(chave: str, default: str = "", org_id: str = "") -> str:
+    """Config por grupo — ana_gcal_config no Supabase (calendar_id)."""
+    if chave != "gcal_calendar_id" or not org_id:
+        return default
     try:
-        conn = get_db(); c = conn.cursor()
-        c.execute(f"SELECT valor FROM config WHERE chave={P()} AND org_id={P()}", (chave, org_id))
-        row = fetchone(c); conn.close()
-        return row["valor"] if row and row.get("valor") else default
+        rows = sb_rest("GET", f"/ana_gcal_config?group_id=eq.{org_id}&select=calendar_id")
+        return (rows[0].get("calendar_id") or default) if rows else default
     except Exception:
         return default
 
-def set_config(chave: str, valor: str, org_id: str = "default"):
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT chave FROM config WHERE chave={P()} AND org_id={P()}", (chave, org_id))
-    if fetchone(c):
-        c.execute(f"UPDATE config SET valor={P()} WHERE chave={P()} AND org_id={P()}", (valor, chave, org_id))
+def set_config(chave: str, valor: str, org_id: str = ""):
+    if chave != "gcal_calendar_id" or not org_id:
+        return
+    rows = sb_rest("GET", f"/ana_gcal_config?group_id=eq.{org_id}&select=group_id")
+    if rows:
+        sb_rest("PATCH", f"/ana_gcal_config?group_id=eq.{org_id}", {"calendar_id": valor, "updated_at": "now()"})
     else:
-        c.execute(f"INSERT INTO config (chave,valor,org_id) VALUES ({Ps(3)})", (chave, valor, org_id))
-    conn.commit(); conn.close()
+        sb_rest("POST", "/ana_gcal_config", {"group_id": org_id, "calendar_id": valor})
 
 def get_gcal_id(org_id: str = "default") -> str:
     """Prioriza o valor configurado pelo usuário no app; cai para a env var como fallback."""
@@ -495,44 +234,6 @@ def fmtDate(d: str) -> str:
 def _cache_key(setor_a: str, setor_b: str, org_id: str) -> str:
     return f"{org_id}:{setor_a}:{setor_b}"
 
-def get_deslocamento(setor_a: str, setor_b: str, org_id: str) -> Optional[int]:
-    """Retorna minutos de deslocamento entre dois setores (cache → HERE API → tempo_manual → None).
-    Retorna 0 se forem o mesmo setor."""
-    if setor_a == setor_b:
-        return 0
-    conn = get_db(); c = conn.cursor()
-    # 1. Tenta cache bilateral (a→b ou b→a, pois o tempo de deslocamento é simétrico)
-    cid1 = _cache_key(setor_a, setor_b, org_id)
-    cid2 = _cache_key(setor_b, setor_a, org_id)
-    c.execute(f"SELECT minutos FROM deslocamentos WHERE id IN ({P()},{P()})", (cid1, cid2))
-    cached = c.fetchone()
-    if cached:
-        conn.close()
-        return cached[0]
-    # 2. Busca endereços e tempo manual dos setores
-    c.execute(f"SELECT id,endereco,tempo_manual FROM setores WHERE id IN ({P()},{P()}) AND org_id={P()}",
-              (setor_a, setor_b, org_id))
-    rows = {r[0]: {"endereco": r[1], "tempo_manual": r[2]} for r in c.fetchall()}
-    conn.close()
-    sa = rows.get(setor_a, {})
-    sb = rows.get(setor_b, {})
-    end_a = (sa.get("endereco") or "").strip()
-    end_b = (sb.get("endereco") or "").strip()
-    # 3. Se ambos têm endereço, tenta Google Routes API
-    if end_a and end_b and GOOGLE_ROUTES_API_KEY:
-        minutos = _google_routes_duration(end_a, end_b)
-        if minutos is not None:
-            _save_deslocamento(setor_a, setor_b, org_id, minutos, "google_routes")
-            return minutos
-    # 4. Fallback: tempo manual (máximo dos dois setores envolvidos)
-    tm_a = sa.get("tempo_manual") or 0
-    tm_b = sb.get("tempo_manual") or 0
-    manual = max(tm_a, tm_b)
-    if manual > 0:
-        _save_deslocamento(setor_a, setor_b, org_id, manual, "manual")
-        return manual
-    return None
-
 def _google_routes_duration(origem: str, destino: str) -> Optional[int]:
     """Chama a Google Routes API v2 e retorna tempo em minutos com trânsito histórico.
     Usa TRAFFIC_AWARE_OPTIMAL para considerar padrões históricos de tráfego."""
@@ -587,57 +288,14 @@ def _google_routes_duration(origem: str, destino: str) -> Optional[int]:
         log.error(f"Google Routes API erro: {e}")
         return None
 
-def _save_deslocamento(setor_a: str, setor_b: str, org_id: str, minutos: int, fonte: str):
-    try:
-        conn = get_db(); c = conn.cursor()
-        cid = _cache_key(setor_a, setor_b, org_id)
-        now = datetime.now().isoformat()
-        c.execute(f"SELECT id FROM deslocamentos WHERE id={P()}", (cid,))
-        if c.fetchone():
-            c.execute(f"UPDATE deslocamentos SET minutos={P()},fonte={P()},updated_at={P()} WHERE id={P()}",
-                      (minutos, fonte, now, cid))
-        else:
-            c.execute(f"INSERT INTO deslocamentos (id,setor_origem,setor_destino,org_id,minutos,fonte,updated_at) VALUES ({Ps(7)})",
-                      (cid, setor_a, setor_b, org_id, minutos, fonte, now))
-        conn.commit(); conn.close()
-    except Exception as e:
-        log.error(f"Erro ao salvar cache de deslocamento: {e}")
-
-def _build_matrix_deslocamento(setores_ids: list, org_id: str) -> dict:
-    """Constrói a matrix completa de deslocamentos entre todos os pares de setores.
-    Retorna dict {(a,b): minutos} para todos os pares com deslocamento conhecido."""
-    matrix = {}
-    for i, a in enumerate(setores_ids):
-        for b in setores_ids[i+1:]:
-            minutos = get_deslocamento(a, b, org_id)
-            if minutos is not None:
-                matrix[(a, b)] = minutos
-                matrix[(b, a)] = minutos
-    return matrix
-
 # ── ROTAS DE DESLOCAMENTO ───────────────────────────────────
 @app.get("/api/deslocamentos")
 def list_deslocamentos(user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_list_deslocamentos(user)
-    org_id = user.get("org_id","default")
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT * FROM deslocamentos WHERE org_id={P()} ORDER BY setor_origem,setor_destino", (org_id,))
-    rows = fetchall(c); conn.close(); return rows
+    return ana_data.sb_list_deslocamentos(user)
 
 @app.post("/api/deslocamentos/recalcular")
 def recalcular_deslocamentos(user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_recalcular_deslocamentos(user)
-    """Limpa o cache e recalcula todos os pares de setores (admin apenas)."""
-    if user["role"] != "admin":
-        raise HTTPException(403, "Acesso negado.")
-    org_id = user.get("org_id","default")
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"DELETE FROM deslocamentos WHERE org_id={P()}", (org_id,))
-    conn.commit()
-    c.execute(f"SELECT id FROM setores WHERE org_id={P()}", (org_id,))
-    ids = [r[0] for r in c.fetchall()]; conn.close()
-    matrix = _build_matrix_deslocamento(ids, org_id)
-    return {"ok": True, "pares_calculados": len(matrix) // 2}
+    return ana_data.sb_recalcular_deslocamentos(user)
 
 # ── GOOGLE CALENDAR ────────────────────────────────────────
 GOOGLE_OAUTH_SCOPES = "https://www.googleapis.com/auth/calendar email"
@@ -684,52 +342,26 @@ def refresh_oauth_token(refresh_token: str) -> dict:
 
 def _gtok_get(uid: str) -> dict:
     """Tokens Google do usuário — Supabase (ana_user_google_tokens) ou SQLite."""
-    if SB_DATA:
-        try:
-            rows = sb_rest("GET", f"/ana_user_google_tokens?user_id=eq.{uid}&select=credentials")
-            return rows[0]["credentials"] if rows else {}
-        except Exception:
-            return {}
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT gcal_access_token,gcal_refresh_token,gcal_token_expiry,gcal_email FROM usuarios WHERE id={P()}", (uid,))
-    row = fetchone(c); conn.close()
-    if not row: return {}
-    return {"access_token": row.get("gcal_access_token") or "",
-            "refresh_token": row.get("gcal_refresh_token") or "",
-            "expiry": row.get("gcal_token_expiry") or "",
-            "email": row.get("gcal_email") or ""}
+    try:
+        rows = sb_rest("GET", f"/ana_user_google_tokens?user_id=eq.{uid}&select=credentials")
+        return rows[0]["credentials"] if rows else {}
+    except Exception:
+        return {}
 
 def _gtok_save(uid: str, **patch):
-    if SB_DATA:
-        cur = _gtok_get(uid)
-        cur.update({k: v for k, v in patch.items() if v is not None})
-        try:
-            sb_rest("DELETE", f"/ana_user_google_tokens?user_id=eq.{uid}")
-            sb_rest("POST", "/ana_user_google_tokens", {"user_id": uid, "credentials": cur})
-        except Exception as e:
-            log.error(f"_gtok_save supabase: {e}")
-        return
-    sets, vals = [], []
-    mapping = {"access_token": "gcal_access_token", "refresh_token": "gcal_refresh_token",
-               "expiry": "gcal_token_expiry", "email": "gcal_email"}
-    for k, col in mapping.items():
-        if k in patch and patch[k] is not None:
-            sets.append(f"{col}={P()}"); vals.append(patch[k])
-    if not sets: return
-    vals.append(uid)
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"UPDATE usuarios SET {', '.join(sets)} WHERE id={P()}", tuple(vals))
-    conn.commit(); conn.close()
+    cur = _gtok_get(uid)
+    cur.update({k: v for k, v in patch.items() if v is not None})
+    try:
+        sb_rest("DELETE", f"/ana_user_google_tokens?user_id=eq.{uid}")
+        sb_rest("POST", "/ana_user_google_tokens", {"user_id": uid, "credentials": cur})
+    except Exception as e:
+        log.error(f"_gtok_save supabase: {e}")
+    return
 
 def _gtok_clear(uid: str):
-    if SB_DATA:
-        try: sb_rest("DELETE", f"/ana_user_google_tokens?user_id=eq.{uid}")
-        except Exception: pass
-        return
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"""UPDATE usuarios SET gcal_access_token='', gcal_refresh_token='',
-                  gcal_token_expiry='', gcal_email='' WHERE id={P()}""", (uid,))
-    conn.commit(); conn.close()
+    try: sb_rest("DELETE", f"/ana_user_google_tokens?user_id=eq.{uid}")
+    except Exception: pass
+    return
 
 def get_user_google_token(usuario_id: str) -> Optional[str]:
     """Retorna um access_token válido para o usuário, renovando se necessário. None se não conectado."""
@@ -862,709 +494,128 @@ class SetupData(BaseModel):
     usuario_id: str; nome: str; pin: str
     gcal_calendar_id: Optional[str] = ""
 
-@app.get("/api/setup-needed")
-def setup_needed():
-    """Indica se ainda não há nenhum usuário cadastrado (primeiro acesso)."""
-    conn = get_db(); c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM usuarios")
-    count = c.fetchone()[0]
-    conn.close()
-    return {"needed": count == 0}
-
-@app.post("/api/setup")
-def setup(data: SetupData, request: Request):
-    """Cria o primeiro usuário admin. Se já houver usuários, requer X-Emergency-Key para limpar e recriar."""
-    conn = get_db(); c = conn.cursor()
-    c.execute("SELECT COUNT(*) FROM usuarios")
-    count = c.fetchone()[0]
-    if count > 0:
-        key = request.headers.get("X-Emergency-Key", "")
-        if key != "reset-ana-2026":
-            conn.close()
-            raise HTTPException(400, "Já existe pelo menos um usuário. Use a tela de login normal.")
-        # limpa usuários e sessões existentes
-        c.execute("DELETE FROM sessoes")
-        c.execute("DELETE FROM usuarios")
-    uid = data.usuario_id.lower().strip()
-    if not uid or not data.pin or len(data.pin) < 4:
-        conn.close()
-        raise HTTPException(400, "ID e PIN (mínimo 4 dígitos) são obrigatórios.")
-    c.execute(f"INSERT INTO usuarios (id,nome,pin_hash,role,email) VALUES ({Ps(5)})",
-              (uid, data.nome or uid, hash_pin(data.pin), "admin", ""))
-    conn.commit(); conn.close()
-    if data.gcal_calendar_id and data.gcal_calendar_id.strip():
-        set_config("gcal_calendar_id", data.gcal_calendar_id.strip())
-        log.info(f"Setup inicial: Google Calendar definido como {data.gcal_calendar_id.strip()}")
-    db_log("INFO", f"Primeiro usuário criado via setup: {uid}")
-    log.info(f"Setup inicial: usuário {uid} criado como admin")
-    return {"ok": True}
-
 class SignupData(BaseModel):
     usuario_id: str; nome: str; pin: str
     org_nome: Optional[str] = ""
-
-@app.post("/api/signup")
-def signup(data: SignupData, request: Request):
-    """Cadastro público — cria um NOVO grupo (organização) isolado, e o usuário vira admin desse grupo."""
-    uid = data.usuario_id.lower().strip().replace(" ", "")
-    nome = data.nome.strip()
-    if not uid or not nome or not data.pin or len(data.pin) < 4:
-        raise HTTPException(400, "Nome, ID e PIN (mínimo 4 dígitos) são obrigatórios.")
-    if not uid.replace("_","").replace("-","").isalnum():
-        raise HTTPException(400, "ID de acesso deve conter apenas letras, números, - ou _.")
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT id FROM usuarios WHERE id={P()}", (uid,))
-    if fetchone(c):
-        conn.close()
-        raise HTTPException(400, "Esse ID de acesso já está em uso. Escolha outro.")
-
-    org_id = f"org_{secrets.token_hex(6)}"
-    org_nome = data.org_nome.strip() if data.org_nome else f"Grupo de {nome}"
-    c.execute(f"INSERT INTO orgs (id,nome) VALUES ({Ps(2)})", (org_id, org_nome))
-    # Cada nova conta criada pelo cadastro público vira ADMIN do seu próprio grupo,
-    # já que ela está fundando uma organização nova e isolada.
-    c.execute(f"INSERT INTO usuarios (id,nome,pin_hash,role,email,org_id) VALUES ({Ps(6)})",
-              (uid, nome, hash_pin(data.pin), "admin", "", org_id))
-    conn.commit(); conn.close()
-    db_log("INFO", f"Novo grupo criado via cadastro público: {org_nome} ({org_id})", usuario=uid, org_id=org_id)
-    log.info(f"Cadastro público: usuário {uid} ({nome}) criou o grupo {org_id}")
-    return {"ok": True}
-
-@app.post("/api/login")
-def login(data: LoginData, request: Request):
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT * FROM usuarios WHERE id={P()} AND pin_hash={P()}",
-              (data.usuario_id.lower(), hash_pin(data.pin)))
-    user = fetchone(c); conn.close()
-    if not user:
-        db_log("WARN", f"Login inválido: {data.usuario_id}",
-               ip=request.client.host if request.client else "")
-        raise HTTPException(401, "Usuário ou PIN incorretos.")
-    token = create_token(user["id"])
-    db_log("INFO", f"Login: {user['nome']}", usuario=user["id"],
-           ip=request.client.host if request.client else "")
-    return {"token": token, "usuario": {k:v for k,v in user.items() if k!="pin_hash"}}
-
-@app.post("/api/logout")
-def logout(request: Request):
-    token = request.headers.get("X-Token","")
-    if token:
-        conn = get_db(); c = conn.cursor()
-        c.execute(f"DELETE FROM sessoes WHERE token={P()}", (token,))
-        conn.commit(); conn.close()
-    return {"ok": True}
 
 @app.get("/api/me")
 def me(user=Depends(auth)):
     return {k:v for k,v in user.items() if k!="pin_hash"}
 
-@app.post("/api/change-pin")
-def change_pin(data: ChangePin, user=Depends(auth)):
-    if hash_pin(data.pin_atual) != user["pin_hash"]:
-        raise HTTPException(400, "PIN atual incorreto.")
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"UPDATE usuarios SET pin_hash={P()} WHERE id={P()}",
-              (hash_pin(data.pin_novo), user["id"]))
-    conn.commit(); conn.close()
-    return {"ok": True}
-
-@app.get("/api/usuarios")
-def list_usuarios(user=Depends(auth)):
-    if user["role"]!="admin": raise HTTPException(403,"Acesso negado.")
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT id,nome,role,email,medico_id,created_at FROM usuarios WHERE org_id={P()} ORDER BY nome", (user.get("org_id","default"),))
-    rows = fetchall(c); conn.close(); return rows
-
-@app.post("/api/usuarios")
-def create_usuario(u: Usuario, user=Depends(auth)):
-    if user["role"]!="admin": raise HTTPException(403,"Acesso negado.")
-    conn = get_db(); c = conn.cursor()
-    try:
-        c.execute(f"INSERT INTO usuarios (id,nome,pin_hash,role,email,medico_id,org_id) VALUES ({Ps(7)})",
-                  (u.id.lower(), u.nome, hash_pin(u.pin), u.role or "medico", u.email or "", u.medico_id or "", user.get("org_id","default")))
-        conn.commit()
-    except Exception: raise HTTPException(400,"ID já existe.")
-    conn.close(); return {"ok": True}
-
-@app.delete("/api/usuarios/{uid}")
-def delete_usuario(uid: str, user=Depends(auth)):
-    if user["role"]!="admin": raise HTTPException(403,"Acesso negado.")
-    if uid==user["id"]: raise HTTPException(400,"Não pode remover a si mesmo.")
-    org_id = user.get("org_id","default")
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT id FROM usuarios WHERE id={P()} AND org_id={P()}", (uid, org_id))
-    if not fetchone(c):
-        conn.close()
-        raise HTTPException(404, "Usuário não encontrado neste grupo.")
-    c.execute(f"DELETE FROM usuarios WHERE id={P()} AND org_id={P()}", (uid, org_id))
-    conn.commit(); conn.close(); return {"ok": True}
-
 # ── EVENTOS ────────────────────────────────────────────────
-def find_overlap(c, doc: str, date: str, time: str, org_id: str, exclude_id: Optional[int] = None):
-    """Retorna o evento com mesmo médico, data e horário exato. Usado como aviso, não bloqueio."""
-    c.execute(f"SELECT id,proc,time,paciente FROM eventos WHERE doc={P()} AND date={P()} AND time={P()} AND org_id={P()}", (doc, date, time, org_id))
-    rows = fetchall(c)
-    for e in rows:
-        if exclude_id is not None and e["id"] == exclude_id:
-            continue
-        return e
-    return None
-
 @app.patch("/api/eventos/{ev_id}/status")
 def update_status(ev_id: str, user=Depends(auth), status: str = "aguardando"):
-    if SB_DATA: return ana_data.sb_update_status(user, ev_id, status)
-    org_id = user.get("org_id","default")
-    valid = ["aguardando","confirmado","realizado","cancelado"]
-    if status not in valid:
-        raise HTTPException(400, f"Status inválido. Use: {', '.join(valid)}")
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT id FROM eventos WHERE id={P()} AND org_id={P()}", (ev_id, org_id))
-    if not fetchone(c): conn.close(); raise HTTPException(404, "Não encontrado.")
-    c.execute(f"UPDATE eventos SET status={P()} WHERE id={P()} AND org_id={P()}", (status, ev_id, org_id))
-    conn.commit(); conn.close()
-    db_log("INFO", f"Status atualizado: evento #{ev_id} → {status}", usuario=user["id"], org_id=org_id)
-    return {"ok": True, "status": status}
+    return ana_data.sb_update_status(user, ev_id, status)
 
 @app.get("/api/pacientes")
 def list_pacientes(q: str = "", user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_list_pacientes(user, q)
-    """Retorna pacientes únicos do histórico do grupo com último procedimento."""
-    org_id = user.get("org_id","default")
-    conn = get_db(); c = conn.cursor()
-    if q:
-        pattern = f"%{q}%"
-        c.execute(f"""SELECT paciente, doc, proc, date, time, setor
-                     FROM eventos WHERE org_id={P()} AND paciente LIKE {P()} AND paciente != ''
-                     ORDER BY date DESC, time DESC""", (org_id, pattern))
-    else:
-        c.execute(f"""SELECT paciente, doc, proc, date, time, setor
-                     FROM eventos WHERE org_id={P()} AND paciente != ''
-                     ORDER BY date DESC, time DESC""", (org_id,))
-    rows = fetchall(c); conn.close()
-    # Deduplica por paciente, mantendo o registro mais recente
-    seen = {}
-    for r in rows:
-        name = r["paciente"]
-        if name not in seen:
-            seen[name] = r
-    # Retorna ordenado por nome
-    result = sorted(seen.values(), key=lambda x: x["paciente"].lower())
-    return result[:50]
+    return ana_data.sb_list_pacientes(user, q)
 
 @app.get("/api/eventos")
 def list_eventos(user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_list_eventos(user)
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT * FROM eventos WHERE org_id={P()} ORDER BY date, time", (user.get("org_id","default"),))
-    rows = fetchall(c); conn.close(); return rows
+    return ana_data.sb_list_eventos(user)
 
 @app.post("/api/eventos")
 async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=Depends(auth)):
-    if SB_DATA:
-        out = ana_data.sb_create_evento(user, ev)
-        org_id = user.get("org_id", "default")
-        try:
-            if get_user_google_token(user["id"]) or GCAL_CREDS:
-                await gcal_create(ev.dict(), out.get("setor_nome") or "", criado_por_id=user["id"], org_id=org_id)
-        except Exception as e:
-            log.warning(f"GCal sync (modo supabase): {e}")
-        if VAPID_PUBLIC_KEY:
-            bg.add_task(push_all_org, org_id, "📅 Novo agendamento",
-                        f"{ev.proc} — {ev.doc} · {fmtDate(ev.date)} {ev.time}")
-        return out
-    org_id = user.get("org_id","default")
-    conn = get_db(); c = conn.cursor()
-    cf = find_overlap(c, ev.doc, ev.date, ev.time, org_id)
-    aviso_conflito = None
-    if cf:
-        aviso_conflito = f"⚠️ Atenção: {ev.doc} já tem '{cf['proc']}' às {cf['time']} (paciente: {cf.get('paciente') or '—'}). Agendado mesmo assim."
-        db_log("WARN", f"Conflito de horário: {ev.doc} às {ev.time} — {ev.proc} e {cf['proc']}", usuario=user["id"], org_id=org_id)
-
-    # Verifica deslocamento: busca outros procedimentos do mesmo médico no mesmo dia
-    aviso_desl = None
+    out = ana_data.sb_create_evento(user, ev)
+    org_id = user.get("org_id", "default")
     try:
-        c.execute(f"SELECT id,proc,setor,time FROM eventos WHERE doc={P()} AND date={P()} AND org_id={P()} ORDER BY time",
-                  (ev.doc, ev.date, org_id))
-        outros = fetchall(c)
-        novo_min = _time_to_min(ev.time)
-        for outro in outros:
-            if outro["setor"] == ev.setor:
-                continue  # mesmo setor, sem deslocamento relevante
-            outro_min = _time_to_min(outro["time"])
-            intervalo = abs(novo_min - outro_min)
-            if intervalo == 0:
-                continue
-            mins_desl = get_deslocamento(ev.setor, outro["setor"], org_id)
-            if mins_desl and mins_desl > 0:
-                # Qual vem antes e qual depois
-                if novo_min < outro_min:
-                    anterior_proc, anterior_setor, posterior_proc, posterior_setor = ev.proc, ev.setor, outro["proc"], outro["setor"]
-                else:
-                    anterior_proc, anterior_setor, posterior_proc, posterior_setor = outro["proc"], outro["setor"], ev.proc, ev.setor
-                c2 = get_db().cursor()
-                c2.execute(f"SELECT name FROM setores WHERE id={P()} AND org_id={P()}", (ev.setor, org_id))
-                r1 = fetchone(c2)
-                c2.execute(f"SELECT name FROM setores WHERE id={P()} AND org_id={P()}", (outro["setor"], org_id))
-                r2 = fetchone(c2)
-                nome_setor_novo = r1["name"] if r1 else ev.setor
-                nome_setor_outro = r2["name"] if r2 else outro["setor"]
-                if intervalo < mins_desl:
-                    aviso_desl = (f"🚗 Deslocamento apertado: {ev.doc} tem apenas {intervalo}min entre "
-                                  f"'{anterior_proc}' ({nome_setor_novo if novo_min < outro_min else nome_setor_outro}) "
-                                  f"e '{posterior_proc}' ({nome_setor_outro if novo_min < outro_min else nome_setor_novo}), "
-                                  f"mas o deslocamento estimado é {mins_desl}min.")
-                elif intervalo < mins_desl + 10:
-                    aviso_desl = (f"⏱️ Deslocamento justo: {intervalo}min de intervalo, "
-                                  f"deslocamento estimado {mins_desl}min entre {nome_setor_novo} e {nome_setor_outro}.")
-                break  # avisa só o par mais crítico
+        if get_user_google_token(user["id"]) or GCAL_CREDS:
+            await gcal_create(ev.dict(), out.get("setor_nome") or "", criado_por_id=user["id"], org_id=org_id)
     except Exception as e:
-        log.warning(f"Erro ao verificar deslocamento: {e}")
-
-    # Busca setor e email do médico (dentro do mesmo grupo)
-    c.execute(f"SELECT name FROM setores WHERE id={P()} AND org_id={P()}", (ev.setor, org_id))
-    sr = fetchone(c); sname = sr["name"] if sr else ev.setor
-    c.execute(f"SELECT email FROM medicos WHERE name={P()} AND org_id={P()}", (ev.doc, org_id))
-    mr = fetchone(c); med_email = mr["email"] if mr else ""
-
-    gcal_id = ""
-    if get_user_google_token(user["id"]) or GCAL_CREDS:
-        gcal_id = await gcal_create(ev.dict(), sname, criado_por_id=user["id"], org_id=org_id)
-
-    c.execute(f"""INSERT INTO eventos (doc,setor,proc,paciente,date,time,obs,ai,criado_por,gcal_event_id,pdf_filename,pdf_data,duracao_min,org_id)
-                  VALUES ({Ps(14)})""",
-              (ev.doc, ev.setor, ev.proc, ev.paciente or "", ev.date, ev.time,
-               ev.obs or "", int(ev.ai or 1), user["id"], gcal_id,
-               (ev.pdf_filename or "")[:200], (ev.pdf_data or "")[:3000000],
-               0, org_id))
-
-    if USE_POSTGRES:
-        c.execute("SELECT lastval()"); new_id = c.fetchone()[0]
-    else:
-        new_id = c.lastrowid
-
-    c.execute(f"""INSERT INTO historico (doc,setor,proc,paciente,date,time,obs,criado_por,org_id)
-                  VALUES ({Ps(9)})""",
-              (ev.doc, ev.setor, ev.proc, ev.paciente or "",
-               ev.date, ev.time, ev.obs or "", user["id"], org_id))
-    conn.commit(); conn.close()
-
-    db_log("INFO", f"Agendado: {ev.proc} | {ev.paciente} | {ev.date} {ev.time} | {ev.doc}",
-           usuario=user["id"], org_id=org_id)
-
-    if SMTP_HOST and med_email:
-        bg.add_task(send_email, med_email,
-                    f"Ana · {ev.proc} — {ev.date} {ev.time}",
-                    email_html(ev.dict(), sname))
-
-    # Push notification para o grupo
+        log.warning(f"GCal sync (modo supabase): {e}")
     if VAPID_PUBLIC_KEY:
-        bg.add_task(push_all_org, org_id,
-                    f"📅 Novo agendamento",
+        bg.add_task(push_all_org, org_id, "📅 Novo agendamento",
                     f"{ev.proc} — {ev.doc} · {fmtDate(ev.date)} {ev.time}")
-
-    # Consolida avisos
-    avisos = [a for a in [aviso_conflito, aviso_desl] if a]
-    aviso_final = " | ".join(avisos) if avisos else None
-    return {"id": new_id, "aviso": aviso_final, **ev.dict()}
+    return out
 
 @app.delete("/api/eventos/{ev_id}")
 async def delete_evento(ev_id: str, bg: BackgroundTasks, user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_delete_evento(user, ev_id)
-    org_id = user.get("org_id","default")
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT * FROM eventos WHERE id={P()} AND org_id={P()}", (ev_id, org_id))
-    ev = fetchone(c)
-    if not ev: conn.close(); raise HTTPException(404,"Não encontrado.")
-    gcal_id = ev.get("gcal_event_id","")
-    criado_por = ev.get("criado_por","")
-    c.execute(f"DELETE FROM eventos WHERE id={P()} AND org_id={P()}", (ev_id, org_id))
-    conn.commit(); conn.close()
-    db_log("INFO", f"Cancelado: {ev['proc']} | {ev['date']}", usuario=user["id"], org_id=org_id)
-    if gcal_id: bg.add_task(gcal_delete, gcal_id, criado_por, org_id)
-    return {"ok": True}
-
-@app.get("/api/eventos/{ev_id}")
-def get_evento(ev_id: int, user=Depends(auth)):
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT * FROM eventos WHERE id={P()} AND org_id={P()}", (ev_id, user.get("org_id","default")))
-    ev = fetchone(c); conn.close()
-    if not ev: raise HTTPException(404,"Não encontrado.")
-    return ev
+    return ana_data.sb_delete_evento(user, ev_id)
 
 @app.put("/api/eventos/{ev_id}")
 async def update_evento(ev_id: str, ev: EventoUpdate, bg: BackgroundTasks, user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_update_evento(user, ev_id, ev)
-    org_id = user.get("org_id","default")
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT * FROM eventos WHERE id={P()} AND org_id={P()}", (ev_id, org_id))
-    current = fetchone(c)
-    if not current: conn.close(); raise HTTPException(404,"Não encontrado.")
-
-    merged = {
-        "doc": ev.doc if ev.doc is not None else current["doc"],
-        "setor": ev.setor if ev.setor is not None else current["setor"],
-        "proc": ev.proc if ev.proc is not None else current["proc"],
-        "paciente": ev.paciente if ev.paciente is not None else current["paciente"],
-        "date": ev.date if ev.date is not None else current["date"],
-        "time": ev.time if ev.time is not None else current["time"],
-        "obs": ev.obs if ev.obs is not None else current["obs"],
-    }
-
-    # Verifica horário exato duplicado (aviso, não bloqueio)
-    cf = find_overlap(c, merged["doc"], merged["date"], merged["time"], org_id, exclude_id=ev_id)
-    aviso_conflito = None
-    if cf:
-        aviso_conflito = f"⚠️ {merged['doc']} já tem '{cf['proc']}' às {cf['time']} (paciente: {cf.get('paciente') or '—'}). Editado mesmo assim."
-        db_log("WARN", f"Conflito de horário na edição: {merged['doc']} às {merged['time']}", usuario=user["id"], org_id=org_id)
-
-    c.execute(f"""UPDATE eventos SET doc={P()},setor={P()},proc={P()},paciente={P()},
-                  date={P()},time={P()},obs={P()} WHERE id={P()} AND org_id={P()}""",
-              (merged["doc"], merged["setor"], merged["proc"], merged["paciente"] or "",
-               merged["date"], merged["time"], merged["obs"] or "", ev_id, org_id))
-    conn.commit(); conn.close()
-    db_log("INFO", f"Editado: evento #{ev_id} → {merged['proc']} | {merged['date']} {merged['time']}",
-           usuario=user["id"], org_id=org_id)
-
-    c.execute(f"""UPDATE eventos SET doc={P()},setor={P()},proc={P()},paciente={P()},
-                  date={P()},time={P()},obs={P()},duracao_min={P()} WHERE id={P()} AND org_id={P()}""",
-              (merged["doc"], merged["setor"], merged["proc"], merged["paciente"] or "",
-               merged["date"], merged["time"], merged["obs"] or "", merged["duracao_min"], ev_id, org_id))
-    conn.commit(); conn.close()
-    db_log("INFO", f"Editado: evento #{ev_id} → {merged['proc']} | {merged['date']} {merged['time']}",
-           usuario=user["id"], org_id=org_id)
-
-    # Atualiza Google Calendar: remove o antigo e cria novo (mais simples e confiável)
-    old_gcal = current.get("gcal_event_id","")
-    criado_por = current.get("criado_por","")
-    usa_gcal = bool(get_user_google_token(criado_por) or GCAL_CREDS)
-    if usa_gcal and old_gcal:
-        bg.add_task(gcal_delete, old_gcal, criado_por, org_id)
-    if usa_gcal:
-        conn2 = get_db(); c2 = conn2.cursor()
-        c2.execute(f"SELECT name FROM setores WHERE id={P()} AND org_id={P()}", (merged["setor"], org_id))
-        sr = fetchone(c2); conn2.close()
-        sname = sr["name"] if sr else merged["setor"]
-        new_gcal = await gcal_create(merged, sname, criado_por_id=criado_por, org_id=org_id)
-        conn3 = get_db(); c3 = conn3.cursor()
-        c3.execute(f"UPDATE eventos SET gcal_event_id={P()} WHERE id={P()} AND org_id={P()}", (new_gcal, ev_id, org_id))
-        conn3.commit(); conn3.close()
-
-    return {"id": ev_id, "aviso": aviso_conflito, **merged}
+    return ana_data.sb_update_evento(user, ev_id, ev)
 
 # ── MÉDICOS ────────────────────────────────────────────────
 @app.get("/api/medicos")
 def list_medicos(user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_list_medicos(user)
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT * FROM medicos WHERE org_id={P()} ORDER BY name", (user.get("org_id","default"),))
-    rows = fetchall(c); conn.close(); return rows
+    return ana_data.sb_list_medicos(user)
 
 @app.post("/api/medicos")
 def create_medico(m: Medico, user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_create_medico(user, m)
-    org_id = user.get("org_id","default")
-    conn = get_db(); c = conn.cursor()
-    try:
-        c.execute(f"INSERT INTO medicos (id,name,spec,email,org_id) VALUES ({Ps(5)})", (m.id, m.name, m.spec or "", m.email or "", org_id))
-        conn.commit()
-    except: raise HTTPException(400,"ID já existe.")
-    conn.close(); return m
-
-@app.put("/api/medicos/{mid}")
-def update_medico(mid: str, m: Medico, user=Depends(auth)):
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"UPDATE medicos SET name={P()},spec={P()},email={P()} WHERE id={P()} AND org_id={P()}",
-              (m.name, m.spec or "", m.email or "", mid, user.get("org_id","default")))
-    conn.commit(); conn.close(); return m
+    return ana_data.sb_create_medico(user, m)
 
 @app.delete("/api/medicos/{mid}")
 def delete_medico(mid: str, user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_delete_medico(user, mid)
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"DELETE FROM medicos WHERE id={P()} AND org_id={P()}", (mid, user.get("org_id","default")))
-    conn.commit(); conn.close(); return {"ok": True}
+    return ana_data.sb_delete_medico(user, mid)
 
 # ── SETORES ────────────────────────────────────────────────
 @app.get("/api/setores")
 def list_setores(user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_list_setores(user)
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT * FROM setores WHERE org_id={P()} ORDER BY name", (user.get("org_id","default"),))
-    rows = fetchall(c); conn.close(); return rows
+    return ana_data.sb_list_setores(user)
 
 @app.post("/api/setores")
 def create_setor(s: Setor, user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_create_setor(user, s)
-    org_id = user.get("org_id","default")
-    conn = get_db(); c = conn.cursor()
-    try:
-        c.execute(f"INSERT INTO setores (id,name,color,text_color,org_id,endereco,tempo_manual) VALUES ({Ps(7)})",
-                  (s.id, s.name, s.color, s.text_color, org_id, s.endereco or "", s.tempo_manual or 0))
-        conn.commit()
-    except: raise HTTPException(400,"Código já existe.")
-    conn.close(); return s
+    return ana_data.sb_create_setor(user, s)
 
 @app.put("/api/setores/{sid}")
 def update_setor(sid: str, s: Setor, user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_update_setor(user, sid, s)
-    org_id = user.get("org_id","default")
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"UPDATE setores SET name={P()},color={P()},text_color={P()},endereco={P()},tempo_manual={P()} WHERE id={P()} AND org_id={P()}",
-              (s.name, s.color, s.text_color, s.endereco or "", s.tempo_manual or 0, sid, org_id))
-    # Invalida cache de deslocamentos do setor alterado
-    c.execute(f"DELETE FROM deslocamentos WHERE (setor_origem={P()} OR setor_destino={P()}) AND org_id={P()}",
-              (sid, sid, org_id))
-    conn.commit(); conn.close(); return s
+    return ana_data.sb_update_setor(user, sid, s)
 
 @app.delete("/api/setores/{sid}")
 def delete_setor(sid: str, user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_delete_setor(user, sid)
-    org_id = user.get("org_id","default")
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"DELETE FROM setores WHERE id={P()} AND org_id={P()}", (sid, org_id))
-    c.execute(f"DELETE FROM deslocamentos WHERE (setor_origem={P()} OR setor_destino={P()}) AND org_id={P()}",
-              (sid, sid, org_id))
-    conn.commit(); conn.close(); return {"ok": True}
+    return ana_data.sb_delete_setor(user, sid)
 
 # ── MEMÓRIAS ───────────────────────────────────────────────
 @app.get("/api/memorias")
 def list_memorias(user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_list_memorias(user)
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT * FROM memorias WHERE org_id={P()} ORDER BY uso DESC, created_at DESC LIMIT 40", (user.get("org_id","default"),))
-    rows = fetchall(c); conn.close(); return rows
+    return ana_data.sb_list_memorias(user)
 
 @app.post("/api/memorias")
 def create_memoria(m: Memoria, user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_create_memoria(user, m)
-    org_id = user.get("org_id","default")
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT id FROM memorias WHERE texto={P()} AND org_id={P()}", (m.texto, org_id))
-    existing = fetchone(c)
-    if existing:
-        c.execute(f"UPDATE memorias SET uso=uso+1 WHERE id={P()}", (existing["id"],))
-    else:
-        c.execute(f"INSERT INTO memorias (id,texto,icone,tipo,org_id) VALUES ({Ps(5)})",
-                  (m.id, m.texto, m.icone or "ti-brain", m.tipo or "aprendido", org_id))
-    conn.commit()
-    conn.close(); return m
+    return ana_data.sb_create_memoria(user, m)
 
 @app.delete("/api/memorias/{mid}")
 def delete_memoria(mid: str, user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_delete_memoria(user, mid)
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"DELETE FROM memorias WHERE id={P()} AND org_id={P()}", (mid, user.get("org_id","default")))
-    conn.commit(); conn.close(); return {"ok": True}
+    return ana_data.sb_delete_memoria(user, mid)
 
 @app.delete("/api/memorias")
 def clear_memorias(user=Depends(auth)):
-    if user["role"]!="admin": raise HTTPException(403,"Acesso negado.")
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"DELETE FROM memorias WHERE tipo != {P()} AND org_id={P()}", ("padrao", user.get("org_id","default")))
-    conn.commit(); conn.close(); return {"ok": True}
+    return ana_data.sb_delete_memoria(user, "all")
 
 # ── CORREÇÕES (aprendizado a partir de erros) ───────────────
 @app.post("/api/correcoes")
 def create_correcao(c_in: Correcao, user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_create_correcao(user, c_in)
-    org_id = user.get("org_id","default")
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"""INSERT INTO correcoes (contexto,campo,valor_errado,valor_certo,usuario,org_id)
-                  VALUES ({Ps(6)})""",
-              (c_in.contexto[:300], c_in.campo[:50], (c_in.valor_errado or "")[:200],
-               c_in.valor_certo[:200], user["id"], org_id))
-    conn.commit(); conn.close()
-    db_log("INFO", f"Correção registrada: {c_in.campo} → {c_in.valor_certo}", usuario=user["id"], org_id=org_id)
-    return {"ok": True}
+    return ana_data.sb_create_correcao(user, c_in)
 
 @app.get("/api/correcoes")
 def list_correcoes(user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_list_correcoes(user)
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT * FROM correcoes WHERE org_id={P()} ORDER BY created_at DESC LIMIT 30", (user.get("org_id","default"),))
-    rows = fetchall(c); conn.close(); return rows
+    return ana_data.sb_list_correcoes(user)
 
 # ── CONTEXTO IA ────────────────────────────────────────────
-def _calc_preferencias_medicos(c, org_id: str) -> dict:
-    """Analisa o histórico e extrai padrões por médico: setor mais comum,
-    horário mais comum, duração média — para a IA usar como sugestão default."""
-    c.execute(f"""SELECT doc, setor, time, duracao_min FROM eventos
-                 WHERE org_id={P()} ORDER BY created_at DESC LIMIT 300""", (org_id,))
-    rows = fetchall(c)
-    por_medico = {}
-    for r in rows:
-        doc = r.get("doc")
-        if not doc:
-            continue
-        por_medico.setdefault(doc, {"setores": {}, "horarios": {}, "duracoes": []})
-        s = r.get("setor") or ""
-        if s:
-            por_medico[doc]["setores"][s] = por_medico[doc]["setores"].get(s, 0) + 1
-        t = r.get("time") or ""
-        if t:
-            por_medico[doc]["horarios"][t] = por_medico[doc]["horarios"].get(t, 0) + 1
-        d = r.get("duracao_min")
-        if d:
-            por_medico[doc]["duracoes"].append(d)
-
-    resultado = {}
-    for doc, dados in por_medico.items():
-        setor_top = max(dados["setores"], key=dados["setores"].get) if dados["setores"] else None
-        horario_top = max(dados["horarios"], key=dados["horarios"].get) if dados["horarios"] else None
-        dur_media = round(sum(dados["duracoes"]) / len(dados["duracoes"])) if dados["duracoes"] else None
-        resultado[doc] = {
-            "setor_frequente": setor_top,
-            "horario_frequente": horario_top,
-            "duracao_media": dur_media,
-        }
-    return resultado
-
 @app.get("/api/contexto-ia")
 def get_contexto(user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_contexto_ia(user)
-    org_id = user.get("org_id","default")
-    conn = get_db(); c = conn.cursor()
-    desde = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
-    c.execute(f"""SELECT id,doc,setor,proc,paciente,date,time,obs,duracao_min FROM eventos
-                  WHERE date >= {P()} AND org_id={P()} ORDER BY date,time LIMIT 80""", (desde, org_id))
-    eventos = fetchall(c)
-    c.execute(f"SELECT texto FROM memorias WHERE org_id={P()} ORDER BY uso DESC LIMIT 25", (org_id,))
-    memorias = [r["texto"] for r in fetchall(c)]
-    c.execute(f"SELECT doc,setor,proc,paciente,date,time FROM historico WHERE org_id={P()} ORDER BY created_at DESC LIMIT 15", (org_id,))
-    historico = fetchall(c)
-    c.execute(f"SELECT name FROM medicos WHERE org_id={P()} ORDER BY name", (org_id,))
-    medicos = [r["name"] for r in fetchall(c)]
-    c.execute(f"SELECT id,name FROM setores WHERE org_id={P()}", (org_id,))
-    setores = {r["id"]:r["name"] for r in fetchall(c)}
-    preferencias_medicos = _calc_preferencias_medicos(c, org_id)
-    c.execute(f"SELECT campo,valor_errado,valor_certo FROM correcoes WHERE org_id={P()} ORDER BY created_at DESC LIMIT 15", (org_id,))
-    correcoes = fetchall(c)
-    # Histórico de pacientes (últimos 30 únicos) para sugestão automática
-    c.execute(f"""SELECT paciente, doc, proc, date FROM eventos
-                  WHERE org_id={P()} AND paciente != '' ORDER BY date DESC, time DESC""", (org_id,))
-    todos_ev = fetchall(c)
-    pacientes_hist = {}
-    for r in todos_ev:
-        if r["paciente"] and r["paciente"] not in pacientes_hist:
-            pacientes_hist[r["paciente"]] = {"doc": r["doc"], "proc": r["proc"], "date": r["date"]}
-    pacientes_lista = [{"nome": k, **v} for k, v in list(pacientes_hist.items())[:30]]
-    # Matrix de deslocamentos entre setores
-    setores_ids = list(setores.keys())
-    conn.close()
-    matrix_raw = _build_matrix_deslocamento(setores_ids, org_id)
-    # Converte chaves tuple para string serializable e adiciona nomes legíveis
-    matrix = {}
-    for (a, b), mins in matrix_raw.items():
-        nome_a = setores.get(a, a)
-        nome_b = setores.get(b, b)
-        matrix[f"{nome_a} → {nome_b}"] = f"{mins} min"
-    return {"eventos":eventos,"memorias":memorias,"historico":historico,
-            "medicos":medicos,"setores":setores,
-            "preferencias_medicos":preferencias_medicos,
-            "correcoes":correcoes,
-            "deslocamentos":matrix,
-            "pacientes":pacientes_lista}
+    return ana_data.sb_contexto_ia(user)
 
 # ── RELATÓRIOS ─────────────────────────────────────────────
 @app.get("/api/relatorios/resumo")
 def relatorio_resumo(user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_relatorio_resumo(user)
-    org_id = user.get("org_id","default")
-    conn = get_db(); c = conn.cursor()
-    hoje = datetime.now().strftime("%Y-%m-%d")
-    mes_ini = datetime.now().strftime("%Y-%m-01")
-
-    c.execute(f"SELECT COUNT(*) FROM eventos WHERE org_id={P()}", (org_id,)); total = c.fetchone()[0]
-    c.execute(f"SELECT COUNT(*) FROM eventos WHERE date={P()} AND org_id={P()}", (hoje, org_id)); hoje_n = c.fetchone()[0]
-    c.execute(f"SELECT COUNT(*) FROM eventos WHERE date>={P()} AND org_id={P()}", (hoje, org_id)); futuros = c.fetchone()[0]
-    c.execute(f"SELECT COUNT(*) FROM eventos WHERE date>={P()} AND org_id={P()}", (mes_ini, org_id)); mes_n = c.fetchone()[0]
-
-    c.execute(f"SELECT doc, COUNT(*) as total FROM eventos WHERE org_id={P()} GROUP BY doc ORDER BY total DESC", (org_id,))
-    por_medico = fetchall(c)
-
-    c.execute(f"SELECT setor, COUNT(*) as total FROM eventos WHERE org_id={P()} GROUP BY setor ORDER BY total DESC", (org_id,))
-    por_setor = fetchall(c)
-
-    if USE_POSTGRES:
-        c.execute(f"""SELECT EXTRACT(DOW FROM date::date)::int as dow, COUNT(*) as total
-                     FROM eventos WHERE date >= NOW()::date - 90 AND org_id={P()}
-                     GROUP BY dow ORDER BY dow""", (org_id,))
-    else:
-        c.execute(f"""SELECT CAST(strftime('%w', date) AS INTEGER) as dow, COUNT(*) as total
-                     FROM eventos WHERE date >= date('now','-90 days') AND org_id={P()}
-                     GROUP BY dow ORDER BY dow""", (org_id,))
-    por_dia = fetchall(c)
-
-    if USE_POSTGRES:
-        c.execute(f"""SELECT TO_CHAR(date::date,'YYYY-MM') as mes, COUNT(*) as total
-                     FROM eventos WHERE date >= NOW()::date - 365 AND org_id={P()}
-                     GROUP BY mes ORDER BY mes""", (org_id,))
-    else:
-        c.execute(f"""SELECT strftime('%Y-%m', date) as mes, COUNT(*) as total
-                     FROM eventos WHERE date >= date('now','-365 days') AND org_id={P()}
-                     GROUP BY mes ORDER BY mes""", (org_id,))
-    por_mes = fetchall(c)
-    conn.close()
-
-    return {"total":total,"hoje":hoje_n,"futuros":futuros,"mes":mes_n,
-            "por_medico":por_medico,"por_setor":por_setor,
-            "por_dia":por_dia,"por_mes":por_mes}
+    return ana_data.sb_relatorio_resumo(user)
 
 # ── MAPA CIRÚRGICO (organizado por sala/setor) ──────────────
 @app.get("/api/mapa-cirurgico")
 def mapa_cirurgico(data: str, user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_mapa_cirurgico(user, data)
-    """Retorna os procedimentos de uma data, agrupados por setor e ordenados por horário —
-    formato de mapa cirúrgico clássico, uma seção por sala."""
-    org_id = user.get("org_id","default")
-    conn = get_db(); c = conn.cursor()
-
-    c.execute(f"SELECT id,nome FROM orgs WHERE id={P()}", (org_id,))
-    org_row = fetchone(c)
-    nome_grupo = org_row["nome"] if org_row else "Grupo de Anestesia"
-
-    c.execute(f"SELECT id,name,color,text_color FROM setores WHERE org_id={P()} ORDER BY name", (org_id,))
-    setores = fetchall(c)
-
-    c.execute(f"""SELECT doc,setor,proc,paciente,time,obs,duracao_min FROM eventos
-                  WHERE date={P()} AND org_id={P()} ORDER BY setor, time""", (data, org_id))
-    eventos = fetchall(c)
-    conn.close()
-
-    mapa = []
-    for s in setores:
-        evs_setor = [e for e in eventos if e["setor"] == s["id"]]
-        if not evs_setor:
-            continue
-        mapa.append({
-            "setor_id": s["id"], "setor_nome": s["name"],
-            "color": s.get("color") or "#CECBF6", "text_color": s.get("text_color") or "#3C3489",
-            "procedimentos": evs_setor,
-        })
-
-    # Eventos cujo setor não bate com nenhum setor cadastrado (setor excluído depois, por exemplo)
-    setores_ids = {s["id"] for s in setores}
-    orfaos = [e for e in eventos if e["setor"] not in setores_ids]
-    if orfaos:
-        mapa.append({"setor_id": "", "setor_nome": "Outros", "color": "#E5E5E5", "text_color": "#444", "procedimentos": orfaos})
-
-    return {"data": data, "nome_grupo": nome_grupo, "total": len(eventos), "salas": mapa}
+    return ana_data.sb_mapa_cirurgico(user, data)
 
 # ── HISTÓRICO E LOGS ───────────────────────────────────────
 @app.get("/api/historico")
 def list_historico(user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_list_historico(user)
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT * FROM historico WHERE org_id={P()} ORDER BY created_at DESC LIMIT 100", (user.get("org_id","default"),))
-    rows = fetchall(c); conn.close(); return rows
+    return ana_data.sb_list_historico(user)
 
 @app.get("/api/logs")
 def list_logs(user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_list_logs(user)
-    if user["role"]!="admin": raise HTTPException(403,"Acesso negado.")
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT * FROM logs WHERE org_id={P()} ORDER BY created_at DESC LIMIT 300", (user.get("org_id","default"),))
-    rows = fetchall(c); conn.close(); return rows
+    return ana_data.sb_list_logs(user)
 
 # ── LEMBRETE DIÁRIO ──────────────────────────────────────────
 def reminder_email_html(eventos_dia, data_str):
@@ -1595,53 +646,49 @@ def reminder_email_html(eventos_dia, data_str):
       </div></div>"""
 
 async def run_daily_reminder(org_id: Optional[str] = None):
-    """Envia email de resumo do dia seguinte para cada médico com email cadastrado.
-    Se org_id for None, roda para TODAS as organizações (usado pelo scheduler automático)."""
-    if not SMTP_HOST:
-        return {"sent": 0, "reason": "SMTP não configurado"}
-
-    conn = get_db(); c = conn.cursor()
-    if org_id:
-        orgs_alvo = [org_id]
-    else:
-        c.execute("SELECT id FROM orgs")
-        orgs_alvo = [r["id"] for r in fetchall(c)]
-    conn.close()
-
+    """Resumo da agenda de amanhã por grupo: push para os dispositivos registrados
+    e email para médicos com email (quando SMTP configurado)."""
     amanha = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
     amanha_str = (datetime.now() + timedelta(days=1)).strftime("%d/%m/%Y")
-    total_sent = 0
-
-    for oid in orgs_alvo:
-        conn = get_db(); c = conn.cursor()
-        c.execute(f"SELECT e.*, s.name as setor_nome FROM eventos e LEFT JOIN setores s ON e.setor=s.id AND s.org_id={P()} WHERE e.date={P()} AND e.org_id={P()} ORDER BY e.time", (oid, amanha, oid))
-        eventos_amanha = fetchall(c)
-        for ev in eventos_amanha:
-            ev["setor"] = ev.get("setor_nome") or ev.get("setor")
-        c.execute(f"SELECT name, email FROM medicos WHERE email != '' AND org_id={P()}", (oid,))
-        medicos_com_email = fetchall(c)
-        conn.close()
-
-        sent = 0
-        for m in medicos_com_email:
-            evs_medico = [e for e in eventos_amanha if e["doc"] == m["name"]]
-            if not evs_medico:
-                continue
-            await send_email(m["email"], f"Ana · Sua agenda de {amanha_str}",
-                             reminder_email_html(evs_medico, amanha_str))
-            sent += 1
-        if sent:
-            db_log("INFO", f"Lembrete diário enviado para {sent} médico(s) — {amanha_str}", org_id=oid)
-        # Push notification para todos da org
-        if total_sent > 0 or True:  # sempre envia push, mesmo sem email
-            total_ev = len(eventos_amanha)
-            await push_all_org(oid,
-                f"🩺 Ana · Agenda de {amanha_str}",
-                f"{total_ev} procedimento{'s' if total_ev!=1 else ''} agendado{'s' if total_ev!=1 else ''} para amanhã",
-                "/")
-        total_sent += sent
-
-    return {"sent": total_sent, "date": amanha}
+    if org_id:
+        grupos = [{"id": org_id}]
+    else:
+        # só grupos com alguém inscrito em push (evita varrer grupos inativos)
+        subs = sb_rest("GET", "/ana_push_subscriptions?select=group_id")
+        grupos = [{"id": g} for g in {s["group_id"] for s in subs}]
+    total_push, total_email = 0, 0
+    for g in grupos:
+        gid = g["id"]
+        appts = sb_rest("GET", f"/appointments?group_id=eq.{gid}&appointment_date=eq.{amanha}"
+                               f"&status=neq.cancelled&select=*&order=appointment_time")
+        if not appts:
+            continue
+        n = len(appts)
+        await push_all_org(gid, f"🩺 Ana · Agenda de {amanha_str}",
+                           f"{n} procedimento{'s' if n != 1 else ''} agendado{'s' if n != 1 else ''} para amanhã", "/")
+        total_push += 1
+        # email por médico (opcional, requer SMTP e doctors.phone/email não existe — via profiles dos vinculados)
+        if SMTP_HOST:
+            docs = sb_rest("GET", f"/doctors?group_id=eq.{gid}&user_id=not.is.null&select=id,name,user_id")
+            if docs:
+                uids = ",".join(f'"{d["user_id"]}"' for d in docs)
+                emails = {p["id"]: p.get("email") for p in sb_rest("GET", f"/profiles?id=in.({uids})&select=id,email")}
+                secs = {s["id"]: s["name"] for s in sb_rest("GET", f"/sectors?group_id=eq.{gid}&select=id,name")}
+                for d in docs:
+                    meus = [a for a in appts if a.get("doctor_id") == d["id"]]
+                    email = emails.get(d["user_id"])
+                    if not meus or not email:
+                        continue
+                    evs = [{"time": str(a.get("appointment_time") or "")[:5], "proc": a.get("procedure") or "",
+                            "paciente": a.get("patient_name") or "", "setor": secs.get(a.get("sector_id") or "", ""),
+                            "doc": d["name"], "obs": a.get("notes") or ""} for a in meus]
+                    try:
+                        await send_email(email, f"Ana · Sua agenda de {amanha_str}",
+                                         reminder_email_html(evs, amanha_str))
+                        total_email += 1
+                    except Exception as e:
+                        log.warning(f"email lembrete: {e}")
+    return {"sent": total_email, "push_groups": total_push}
 
 @app.post("/api/lembrete-diario")
 async def trigger_daily_reminder(user=Depends(auth)):
@@ -1960,14 +1007,9 @@ def send_push(subscription_info: dict, title: str, body: str, url: str = "/") ->
         return False
 
 async def push_all_org(org_id: str, title: str, body: str, url: str = "/"):
-    """Envia push para todos os usuários de uma org/grupo com subscription ativa."""
-    if SB_DATA:
-        rows = sb_rest("GET", f"/ana_push_subscriptions?group_id=eq.{org_id}&select=id,subscription")
-        subs = [{"id": r["id"], "subscription": json.dumps(r["subscription"])} for r in rows]
-    else:
-        conn = get_db(); c = conn.cursor()
-        c.execute(f"SELECT id, subscription FROM push_subscriptions WHERE org_id={P()}", (org_id,))
-        subs = fetchall(c); conn.close()
+    """Envia push para todos os usuários do grupo com subscription ativa."""
+    rows = sb_rest("GET", f"/ana_push_subscriptions?group_id=eq.{org_id}&select=id,subscription")
+    subs = [{"id": r["id"], "subscription": json.dumps(r["subscription"])} for r in rows]
     sent = 0
     for sub in subs:
         try:
@@ -1992,53 +1034,28 @@ async def push_subscribe(request: Request, user=Depends(auth)):
     sub_json = json.dumps(body)
     sub_id = secrets.token_hex(16)
     org_id = user.get("org_id", "default")
-    if SB_DATA:
-        # remove inscrições anteriores do usuário e insere a nova
-        sb_rest("DELETE", f"/ana_push_subscriptions?user_id=eq.{user['id']}")
-        sb_rest("POST", "/ana_push_subscriptions",
-                {"user_id": user["id"], "group_id": org_id, "subscription": body})
-    else:
-        conn = get_db(); c = conn.cursor()
-        endpoint = body.get("endpoint", "")
-        if endpoint:
-            c.execute("DELETE FROM push_subscriptions WHERE subscription LIKE ?", (f'%{endpoint[:80]}%',))
-        c.execute(f"INSERT INTO push_subscriptions (id,usuario_id,org_id,subscription) VALUES ({Ps(4)})",
-                  (sub_id, user["id"], org_id, sub_json))
-        conn.commit(); conn.close()
-    db_log("INFO", "Push subscription registrada", usuario=user["id"], org_id=org_id)
+    # remove inscrições anteriores do usuário e insere a nova
+    sb_rest("DELETE", f"/ana_push_subscriptions?user_id=eq.{user['id']}")
+    sb_rest("POST", "/ana_push_subscriptions",
+            {"user_id": user["id"], "group_id": org_id, "subscription": body})
     return {"ok": True}
 
 @app.delete("/api/push/subscribe")
 def push_unsubscribe(user=Depends(auth)):
     """Remove todas as subscriptions do usuário."""
-    if SB_DATA:
-        sb_rest("DELETE", f"/ana_push_subscriptions?user_id=eq.{user['id']}")
-        return {"ok": True}
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"DELETE FROM push_subscriptions WHERE usuario_id={P()}", (user["id"],))
-    conn.commit(); conn.close()
+    sb_rest("DELETE", f"/ana_push_subscriptions?user_id=eq.{user['id']}")
     return {"ok": True}
 
 @app.get("/api/push/status")
 def push_status(user=Depends(auth)):
-    if SB_DATA:
-        rows = sb_rest("GET", f"/ana_push_subscriptions?user_id=eq.{user['id']}&select=id")
-        return {"enabled": len(rows) > 0, "vapid_configured": bool(VAPID_PUBLIC_KEY)}
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT COUNT(*) FROM push_subscriptions WHERE usuario_id={P()}", (user["id"],))
-    count = c.fetchone()[0]; conn.close()
-    return {"enabled": count > 0, "vapid_configured": bool(VAPID_PUBLIC_KEY)}
+    rows = sb_rest("GET", f"/ana_push_subscriptions?user_id=eq.{user['id']}&select=id")
+    return {"enabled": len(rows) > 0, "vapid_configured": bool(VAPID_PUBLIC_KEY)}
 
 @app.post("/api/push/test")
 async def push_test(user=Depends(auth)):
     """Envia uma notificação de teste para o usuário atual."""
-    if SB_DATA:
-        rows = sb_rest("GET", f"/ana_push_subscriptions?user_id=eq.{user['id']}&select=subscription")
-        subs = [{"subscription": json.dumps(r["subscription"])} for r in rows]
-    else:
-        conn = get_db(); c = conn.cursor()
-        c.execute(f"SELECT subscription FROM push_subscriptions WHERE usuario_id={P()}", (user["id"],))
-        subs = fetchall(c); conn.close()
+    rows = sb_rest("GET", f"/ana_push_subscriptions?user_id=eq.{user['id']}&select=subscription")
+    subs = [{"subscription": json.dumps(r["subscription"])} for r in rows]
     if not subs:
         raise HTTPException(400, "Nenhum dispositivo registrado para este usuário.")
     sent = 0
@@ -2072,25 +1089,11 @@ class OrgInfo(BaseModel):
 
 @app.get("/api/org/info")
 def get_org_info(user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_get_org_info(user)
-    org_id = user.get("org_id","default")
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"SELECT id,nome FROM orgs WHERE id={P()}", (org_id,))
-    row = fetchone(c); conn.close()
-    return {"id": org_id, "nome": row["nome"] if row else "Grupo de Anestesia"}
+    return ana_data.sb_get_org_info(user)
 
 @app.post("/api/org/info")
 def set_org_info(info: OrgInfo, user=Depends(auth)):
-    if SB_DATA: return ana_data.sb_set_org_info(user, info)
-    if user["role"] != "admin":
-        raise HTTPException(403, "Apenas administradores podem alterar essa configuração.")
-    org_id = user.get("org_id","default")
-    nome = info.nome.strip()[:120] or "Grupo de Anestesia"
-    conn = get_db(); c = conn.cursor()
-    c.execute(f"UPDATE orgs SET nome={P()} WHERE id={P()}", (nome, org_id))
-    conn.commit(); conn.close()
-    db_log("INFO", f"Nome do grupo alterado para: {nome}", usuario=user["id"], org_id=org_id)
-    return {"ok": True, "nome": nome}
+    return ana_data.sb_set_org_info(user, info)
 
 @app.get("/api/config/gcal/list")
 def list_gcal_calendars(user=Depends(auth)):
@@ -2139,23 +1142,13 @@ def oauth_google_start(request: Request, user=Depends(auth)):
 def oauth_google_callback(code: str = "", state: str = "", error: str = ""):
     if error:
         return HTMLResponse(f"<html><body style='font-family:sans-serif;text-align:center;padding:40px'><h3>Autorização cancelada</h3><p>{error}</p><script>setTimeout(()=>window.close(),2000)</script></body></html>")
-    user = get_user(state)
-    if not user and SUPABASE_URL:
-        # state pode ser um JWT do Supabase (login novo)
-        claims = validate_supabase_jwt(state)
-        if claims and claims.get("sub"):
-            uid = claims["sub"]
-            meta = claims.get("user_metadata") or {}
-            nome = meta.get("full_name") or meta.get("name") or (claims.get("email","").split("@")[0] or uid[:8])
-            conn = get_db(); c = conn.cursor()
-            c.execute(f"SELECT id FROM usuarios WHERE id={P()}", (uid,))
-            if not fetchone(c):
-                # linha-sombra: só para armazenar os tokens Google deste usuário
-                c.execute(f"INSERT INTO usuarios (id,nome,pin_hash,role) VALUES ({Ps(4)})",
-                          (uid, nome, "!supabase!", "medico"))
-                conn.commit()
-            conn.close()
-            user = {"id": uid, "nome": nome}
+    # state = JWT do Supabase do usuário que iniciou a conexão
+    user = None
+    claims = validate_supabase_jwt(state)
+    if claims and claims.get("sub"):
+        meta = claims.get("user_metadata") or {}
+        nome = meta.get("full_name") or meta.get("name") or (claims.get("email", "").split("@")[0] or claims["sub"][:8])
+        user = {"id": claims["sub"], "nome": nome}
     if not user:
         return HTMLResponse("<html><body style='font-family:sans-serif;text-align:center;padding:40px'><h3>Sessão inválida ou expirada</h3><p>Volte ao app e tente novamente.</p></body></html>")
     try:
@@ -2208,8 +1201,6 @@ def public_config():
 @app.get("/api/escala")
 def get_escala(mes: str = "", user=Depends(auth)):
     """Escala mensal (shifts do MedSS) — disponível apenas no backend Supabase."""
-    if not SB_DATA:
-        raise HTTPException(400, "Escala disponível apenas com o banco compartilhado (Supabase).")
     if not mes:
         mes = datetime.now().strftime("%Y-%m")
     return ana_data.sb_escala(user, mes)
@@ -2225,14 +1216,10 @@ class Plantao(BaseModel):
 
 @app.post("/api/escala/plantao")
 def criar_plantao(p: Plantao, user=Depends(auth)):
-    if not SB_DATA:
-        raise HTTPException(400, "Escala disponível apenas com o banco compartilhado (Supabase).")
     return ana_data.sb_create_plantao(user, p)
 
 @app.delete("/api/escala/plantao/{shift_id}")
 def remover_plantao(shift_id: str, user=Depends(auth)):
-    if not SB_DATA:
-        raise HTTPException(400, "Escala disponível apenas com o banco compartilhado (Supabase).")
     return ana_data.sb_delete_plantao(user, shift_id)
 
 class SwapRequest(BaseModel):
@@ -2245,40 +1232,33 @@ class SwapResposta(BaseModel):
 
 @app.get("/api/creditos")
 def get_creditos(mes: str = "", user=Depends(auth)):
-    if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")
     if not mes: mes = datetime.now().strftime("%Y-%m")
     return ana_data.sb_creditos(user, mes)
 
 @app.get("/api/creditos/config")
 def get_credit_config(user=Depends(auth)):
-    if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")
     return ana_data.sb_credit_settings(user)
 
 @app.post("/api/creditos/config")
 async def save_credit_config(request: Request, user=Depends(auth)):
-    if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")
     body = await request.json()
     return ana_data.sb_credit_settings_save(user, body)
 
 @app.get("/api/creditos/tipos")
 def list_credit_types(user=Depends(auth)):
-    if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")
     return ana_data.sb_custom_types_list(user)
 
 @app.post("/api/creditos/tipos")
 async def create_credit_type(request: Request, user=Depends(auth)):
-    if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")
     body = await request.json()
     return ana_data.sb_custom_types_create(user, body)
 
 @app.delete("/api/creditos/tipos/{type_id}")
 def delete_credit_type(type_id: str, user=Depends(auth)):
-    if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")
     return ana_data.sb_custom_types_delete(user, type_id)
 
 @app.post("/api/escala/troca")
 def criar_troca(s: SwapRequest, bg: BackgroundTasks, user=Depends(auth)):
-    if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")
     out = ana_data.sb_swap_create(user, s)
     if VAPID_PUBLIC_KEY:
         bg.add_task(push_all_org, user.get("org_id", "default"),
@@ -2292,7 +1272,6 @@ class Anuncio(BaseModel):
 
 @app.post("/api/escala/anunciar")
 def anunciar_plantao(a: Anuncio, bg: BackgroundTasks, user=Depends(auth)):
-    if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")
     out = ana_data.sb_swap_announce(user, a.shift_id, a.mensagem)
     if VAPID_PUBLIC_KEY:
         TUR = {"morning": "manhã", "afternoon": "tarde", "night": "noite"}
@@ -2303,7 +1282,6 @@ def anunciar_plantao(a: Anuncio, bg: BackgroundTasks, user=Depends(auth)):
 
 @app.post("/api/escala/troca/{swap_id}/assumir")
 def assumir_plantao(swap_id: str, bg: BackgroundTasks, user=Depends(auth)):
-    if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")
     out = ana_data.sb_swap_assume(user, swap_id)
     if VAPID_PUBLIC_KEY:
         bg.add_task(push_all_org, user.get("org_id", "default"),
@@ -2313,12 +1291,10 @@ def assumir_plantao(swap_id: str, bg: BackgroundTasks, user=Depends(auth)):
 
 @app.get("/api/escala/trocas")
 def listar_trocas(user=Depends(auth)):
-    if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")
     return ana_data.sb_swap_list(user)
 
 @app.post("/api/escala/troca/{swap_id}/responder")
 def responder_troca(swap_id: str, r: SwapResposta, bg: BackgroundTasks, user=Depends(auth)):
-    if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")
     out = ana_data.sb_swap_respond(user, swap_id, r.aceitar)
     if VAPID_PUBLIC_KEY:
         bg.add_task(push_all_org, user.get("org_id", "default"),
@@ -2328,7 +1304,6 @@ def responder_troca(swap_id: str, r: SwapResposta, bg: BackgroundTasks, user=Dep
 
 @app.delete("/api/escala/troca/{swap_id}")
 def cancelar_troca(swap_id: str, user=Depends(auth)):
-    if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")
     return ana_data.sb_swap_cancel(user, swap_id)
 
 class CodigoAcesso(BaseModel):
@@ -2497,13 +1472,6 @@ def criar_grupo(g: NovoGrupo, request: Request):
 @app.get("/api/supabase/whoami")
 def supabase_whoami(request: Request):
     """Identidade + grupos — funciona mesmo sem grupo (para onboarding)."""
-    # Tenta legado primeiro para não quebrar diagnóstico antigo
-    token = request.headers.get("X-Token", "")
-    if token:
-        legacy = get_user(token)
-        if legacy:
-            return {"id": legacy["id"], "nome": legacy["nome"], "role": legacy["role"],
-                    "group_id": legacy.get("org_id"), "auth_source": "legado", "memberships": []}
     u = auth_jwt_only(request)
     memberships = get_memberships(u["id"])
     wanted = request.headers.get("X-Group-Id", "")
@@ -2518,7 +1486,7 @@ def supabase_whoami(request: Request):
 @app.get("/api/health")
 def health():
     return {"status":"ok","version":"3.0.0",
-            "db":"postgres" if USE_POSTGRES else "sqlite",
+            "db":"supabase",
             "email":bool(SMTP_HOST),"gcal":bool(GCAL_CREDS),
             "ai":bool(GROQ_KEY),
             "oauth_google":bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET and APP_BASE_URL),
@@ -2669,8 +1637,5 @@ def index(): return HTMLResponse(open("index.html", encoding="utf-8").read())
 # ── Inicializa a camada Supabase (feature flag ANA_DATA_BACKEND) ──
 ana_data.init(sb_rest=sb_rest, log=log,
               routes_duration=_google_routes_duration,
-              default_group=ANA_DEFAULT_GROUP_ID)
-if SB_DATA:
-    log.info(f"Backend de dados: SUPABASE (grupo padrão p/ auth legado: {ANA_DEFAULT_GROUP_ID or 'NÃO CONFIGURADO'})")
-else:
-    log.info("Backend de dados: SQLite (legado)")
+              default_group="")
+log.info("Ana · backend Supabase (banco compartilhado com o MedSS)")

@@ -2234,6 +2234,61 @@ def remover_plantao(shift_id: str, user=Depends(auth)):
         raise HTTPException(400, "Escala disponível apenas com o banco compartilhado (Supabase).")
     return ana_data.sb_delete_plantao(user, shift_id)
 
+class SwapRequest(BaseModel):
+    meu_shift_id: str
+    alvo_shift_id: str
+    mensagem: str = ""
+
+class SwapResposta(BaseModel):
+    aceitar: bool
+
+@app.get("/api/creditos")
+def get_creditos(mes: str = "", user=Depends(auth)):
+    if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")
+    if not mes: mes = datetime.now().strftime("%Y-%m")
+    return ana_data.sb_creditos(user, mes)
+
+@app.get("/api/creditos/config")
+def get_credit_config(user=Depends(auth)):
+    if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")
+    return ana_data.sb_credit_settings(user)
+
+@app.post("/api/creditos/config")
+async def save_credit_config(request: Request, user=Depends(auth)):
+    if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")
+    body = await request.json()
+    return ana_data.sb_credit_settings_save(user, body)
+
+@app.post("/api/escala/troca")
+def criar_troca(s: SwapRequest, bg: BackgroundTasks, user=Depends(auth)):
+    if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")
+    out = ana_data.sb_swap_create(user, s)
+    if VAPID_PUBLIC_KEY:
+        bg.add_task(push_all_org, user.get("org_id", "default"),
+                    "🔄 Proposta de troca de plantão",
+                    f"{user['nome']} propôs uma troca — veja na aba Escala")
+    return out
+
+@app.get("/api/escala/trocas")
+def listar_trocas(user=Depends(auth)):
+    if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")
+    return ana_data.sb_swap_list(user)
+
+@app.post("/api/escala/troca/{swap_id}/responder")
+def responder_troca(swap_id: str, r: SwapResposta, bg: BackgroundTasks, user=Depends(auth)):
+    if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")
+    out = ana_data.sb_swap_respond(user, swap_id, r.aceitar)
+    if VAPID_PUBLIC_KEY:
+        bg.add_task(push_all_org, user.get("org_id", "default"),
+                    "🔄 Troca de plantão " + ("aceita ✅" if r.aceitar else "recusada"),
+                    f"Resposta de {user['nome']} — escala atualizada" if r.aceitar else f"{user['nome']} recusou a proposta")
+    return out
+
+@app.delete("/api/escala/troca/{swap_id}")
+def cancelar_troca(swap_id: str, user=Depends(auth)):
+    if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")
+    return ana_data.sb_swap_cancel(user, swap_id)
+
 @app.get("/api/supabase/status")
 def supabase_status():
     """Diagnóstico da integração Supabase (sem expor chaves)."""

@@ -1019,7 +1019,15 @@ async function loadTrocas(){
     box.style.display='block';
     box.innerHTML=`<div class="card" style="margin-bottom:0;border-color:#C7D2FE">
       <div class="card-title"><i class="ti ti-arrows-exchange"></i> Trocas pendentes (${ts.length})</div>
-      ${ts.map(t=>`<div class="li" style="margin-bottom:6px;flex-wrap:wrap">
+      ${ts.map(t=>t.aberta
+        ?`<div class="li" style="margin-bottom:6px;flex-wrap:wrap;background:#FEF9EC;border-radius:var(--rs)">
+          <span style="font-size:12px;line-height:1.5">📢 <b>${t.de}</b> anunciou o plantão de <b>${fmtD(t.oferece.data)} ${t.oferece.turno}</b> — disponível para quem assumir${t.mensagem?`<br><span style="font-size:10px;color:var(--hint)">"${t.mensagem}"</span>`:''}</span>
+          <span style="margin-left:auto;display:flex;gap:5px">
+            ${t.posso_assumir?`<button class="btn sm" style="border-color:#6ee7b7;color:#065f46" onclick="assumirPlantao('${t.id}')"><i class="ti ti-hand-grab"></i> Assumir plantão</button>`:''}
+            ${t.sou_autor?`<button class="btn sm" onclick="cancelarTroca('${t.id}')"><i class="ti ti-trash"></i> Cancelar</button>`:''}
+          </span>
+        </div>`
+        :`<div class="li" style="margin-bottom:6px;flex-wrap:wrap">
         <span style="font-size:12px;line-height:1.5"><b>${t.de}</b> oferece <b>${fmtD(t.oferece.data)} ${t.oferece.turno}</b> pelo plantão de <b>${t.para}</b> em <b>${fmtD(t.pede.data)} ${t.pede.turno}</b>${t.mensagem?`<br><span style="font-size:10px;color:var(--hint)">"${t.mensagem}"</span>`:''}</span>
         <span style="margin-left:auto;display:flex;gap:5px">
           ${t.sou_alvo||me.role==='admin'?`<button class="btn sm" style="border-color:#6ee7b7;color:#065f46" onclick="responderTroca('${t.id}',true)"><i class="ti ti-check"></i> Aceitar</button>
@@ -1052,6 +1060,23 @@ async function enviarTroca(){
     document.getElementById('modal-troca').classList.remove('open');
     toast('Proposta de troca enviada!');
     loadTrocas();
+  }catch(e){toast(e.message,'err');}
+}
+async function anunciarPlantao(shiftId){
+  if(!confirm('Anunciar este plantão para os colegas do grupo? Quem puder assumir será notificado.'))return;
+  try{
+    await api('POST','/api/escala/anunciar',{shift_id:shiftId});
+    toast('Plantão anunciado! O grupo foi notificado.');
+    closePlantaoModal();
+    loadTrocas();
+  }catch(e){toast(e.message,'err');}
+}
+async function assumirPlantao(id){
+  if(!confirm('Assumir este plantão? Ele passa a ser seu na escala.'))return;
+  try{
+    await api('POST',`/api/escala/troca/${id}/assumir`);
+    toast('Plantão assumido — escala atualizada!');
+    loadTrocas();loadEscala();
   }catch(e){toast(e.message,'err');}
 }
 async function responderTroca(id,aceitar){
@@ -1184,7 +1209,8 @@ function renderPlList(){
   document.getElementById('pl-list').innerHTML=ps.length
     ?ps.map(p=>{
       const podeTrocar=escalaCache?.meu_medico&&escalaCache.meu_medico!==plCtx.doc;
-      return `<div class="li" style="margin-bottom:5px"><span style="font-size:12px">${NOMES[p.turno]||p.turno}${p.meio?' <span style="font-size:10px;color:var(--hint)">(meio)</span>':''}${p.hnt?' <span style="font-size:10px;color:#10b981">HNT</span>':''}${p.setor?` <span style="font-size:10px;color:var(--hint)">· ${p.setor}</span>`:''}${(p.especiais||[]).map(n=>` <span style="font-size:9px;background:#FEF3C7;color:#92400E;border-radius:8px;padding:1px 6px">⭐ ${n}</span>`).join('')}</span><span style="margin-left:auto;display:flex;gap:5px">${podeTrocar?`<button class="btn sm" title="Propor troca" onclick="openTrocaModal('${p.id}')"><i class="ti ti-arrows-exchange"></i></button>`:''}<button class="btn danger sm" onclick="delPlantao('${p.id}')"><i class="ti ti-trash"></i></button></span></div>`;
+      const podeAnunciar=(escalaCache?.meu_medico&&escalaCache.meu_medico===plCtx.doc)||me.role==='admin';
+      return `<div class="li" style="margin-bottom:5px"><span style="font-size:12px">${NOMES[p.turno]||p.turno}${p.meio?' <span style="font-size:10px;color:var(--hint)">(meio)</span>':''}${p.hnt?' <span style="font-size:10px;color:#10b981">HNT</span>':''}${p.setor?` <span style="font-size:10px;color:var(--hint)">· ${p.setor}</span>`:''}${(p.especiais||[]).map(n=>` <span style="font-size:9px;background:#FEF3C7;color:#92400E;border-radius:8px;padding:1px 6px">⭐ ${n}</span>`).join('')}</span><span style="margin-left:auto;display:flex;gap:5px">${podeAnunciar?`<button class="btn sm" title="Anunciar para colegas assumirem" onclick="anunciarPlantao('${p.id}')"><i class="ti ti-speakerphone"></i></button>`:''}${podeTrocar?`<button class="btn sm" title="Propor troca" onclick="openTrocaModal('${p.id}')"><i class="ti ti-arrows-exchange"></i></button>`:''}<button class="btn danger sm" onclick="delPlantao('${p.id}')"><i class="ti ti-trash"></i></button></span></div>`;
     }).join('')
     :'<div style="font-size:11px;color:var(--hint);text-align:center;padding:8px">Nenhum plantão neste dia.</div>';
 }

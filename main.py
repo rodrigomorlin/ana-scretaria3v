@@ -2259,6 +2259,22 @@ async def save_credit_config(request: Request, user=Depends(auth)):
     body = await request.json()
     return ana_data.sb_credit_settings_save(user, body)
 
+@app.get("/api/creditos/tipos")
+def list_credit_types(user=Depends(auth)):
+    if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")
+    return ana_data.sb_custom_types_list(user)
+
+@app.post("/api/creditos/tipos")
+async def create_credit_type(request: Request, user=Depends(auth)):
+    if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")
+    body = await request.json()
+    return ana_data.sb_custom_types_create(user, body)
+
+@app.delete("/api/creditos/tipos/{type_id}")
+def delete_credit_type(type_id: str, user=Depends(auth)):
+    if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")
+    return ana_data.sb_custom_types_delete(user, type_id)
+
 @app.post("/api/escala/troca")
 def criar_troca(s: SwapRequest, bg: BackgroundTasks, user=Depends(auth)):
     if not SB_DATA: raise HTTPException(400, "Disponível apenas com o banco compartilhado.")

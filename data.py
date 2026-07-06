@@ -856,3 +856,40 @@ def sb_swap_cancel(user, swap_id):
     _sb("PATCH", f"/shift_swap_requests?id=eq.{_q(swap_id)}",
         {"status": "cancelled", "updated_at": "now()"})
     return {"ok": True}
+
+
+# ── TIPOS DE CRÉDITO PERSONALIZADOS (custom_credit_types) ────
+def sb_custom_types_list(user):
+    gid = _gid(user)
+    rows = _sb("GET", f"/custom_credit_types?group_id=eq.{_q(gid)}&active=eq.true&select=*&order=created_at")
+    return [{"id": r["id"], "name": r["name"], "credit_value": float(r["credit_value"]),
+             "applies_to_days": r.get("applies_to_days") or ["all"],
+             "applies_to_shifts": r.get("applies_to_shifts") or ["all"],
+             "is_additional": bool(r.get("is_additional", True))} for r in rows]
+
+def sb_custom_types_create(user, body: dict):
+    if user["role"] != "admin":
+        raise HTTPException(403, "Apenas administradores.")
+    gid = _gid(user)
+    name = (body.get("name") or "").strip()[:80]
+    if not name:
+        raise HTTPException(400, "Informe o nome do tipo de crédito.")
+    row = {
+        "group_id": gid, "name": name,
+        "credit_value": float(body.get("credit_value") or 0),
+        "applies_to_days": body.get("applies_to_days") or ["all"],
+        "applies_to_shifts": body.get("applies_to_shifts") or ["all"],
+        "is_additional": bool(body.get("is_additional", True)),
+        "active": True,
+    }
+    rows = _sb("POST", "/custom_credit_types", row)
+    _log(user, f"Tipo de crédito criado: {name}")
+    return {"ok": True, "id": rows[0]["id"]}
+
+def sb_custom_types_delete(user, type_id):
+    if user["role"] != "admin":
+        raise HTTPException(403, "Apenas administradores.")
+    gid = _gid(user)
+    _sb("PATCH", f"/custom_credit_types?id=eq.{_q(type_id)}&group_id=eq.{_q(gid)}", {"active": False})
+    _log(user, f"Tipo de crédito desativado: {type_id}")
+    return {"ok": True}

@@ -2116,12 +2116,6 @@ async function addUser(){
   }catch(e){toast(e.message,'err');}
 }
 async function rmUser(id){if(!confirm(`Remover ${id}?`))return;try{await api('DELETE',`/api/usuarios/${id}`);loadUList();toast('Removido.');}catch(e){toast(e.message,'err');}}
-async function changePin(){
-  const a=document.getElementById('pina').value;const n=document.getElementById('pinn').value;
-  if(!a||!n){toast('Preencha os dois.','warn');return;}
-  if(n.length<4){toast('PIN mínimo 4 dígitos.','warn');return;}
-  try{await api('POST','/api/change-pin',{pin_atual:a,pin_novo:n});toast('PIN alterado!');document.getElementById('pina').value='';document.getElementById('pinn').value='';}catch(e){toast(e.message,'err');}
-}
 
 // ── INTEGRAÇÕES ──────────────────────────────────────────
 async function loadIntStatus(){

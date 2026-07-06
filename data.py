@@ -776,23 +776,24 @@ def sb_creditos(user, mes):
     for s in shifts:
         nome = docs.get(s["doctor_id"], {}).get("name", "?")
         r = por_medico.setdefault(nome, {"total": 0.0, "plantoes": 0, "detalhe": {}})
-        base = _shift_base_credit(s, cs)
-        extra = 0.0
-        for t in extras_by_shift.get(s["id"], []):
-            if t.get("is_additional"):
-                extra += float(t["credit_value"])
-            else:
-                base = float(t["credit_value"])
-        r["total"] += base + extra
-        r["plantoes"] += 1
-        # rótulo do detalhe
-        if s.get("is_hnt_ambulatory"):
-            key = cs["hnt_ambulatory_label"]
+        especiais = extras_by_shift.get(s["id"], [])
+        if especiais:
+            # crédito especial SUBSTITUI o valor do dia/turno (nunca soma com a base)
+            base = sum(float(t["credit_value"]) for t in especiais)
+            if s.get("is_half_shift"):
+                base = base / 2
+            key = " + ".join(t["name"] for t in especiais)
         else:
-            dow = _dt.strptime(s["shift_date"], "%Y-%m-%d").weekday()
-            key = cs["saturday_label"] if dow == 5 else cs["sunday_label"] if dow == 6 else \
-                  cs[{"morning": "morning_label", "afternoon": "afternoon_label",
-                      "night": "night_label"}.get(s["shift_type"], "morning_label")]
+            base = _shift_base_credit(s, cs)
+            if s.get("is_hnt_ambulatory"):
+                key = cs["hnt_ambulatory_label"]
+            else:
+                dow = _dt.strptime(s["shift_date"], "%Y-%m-%d").weekday()
+                key = cs["saturday_label"] if dow == 5 else cs["sunday_label"] if dow == 6 else \
+                      cs[{"morning": "morning_label", "afternoon": "afternoon_label",
+                          "night": "night_label"}.get(s["shift_type"], "morning_label")]
+        r["total"] += base
+        r["plantoes"] += 1
         r["detalhe"][key] = r["detalhe"].get(key, 0) + 1
     lista = [{"medico": k, **v, "total": round(v["total"], 2)} for k, v in por_medico.items()]
     lista.sort(key=lambda x: -x["total"])

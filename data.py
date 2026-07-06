@@ -39,13 +39,10 @@ def _log(user, action, payload=None):
 
 
 def _gid(user) -> str:
-    """Resolve o group_id do Supabase para o usuário atual."""
-    if user.get("auth_source") == "supabase":
-        return user["org_id"]
-    gid = DEPS.get("default_group", "")
+    """Resolve o group_id do usuário autenticado."""
+    gid = user.get("org_id")
     if not gid:
-        raise HTTPException(500, "ANA_DEFAULT_GROUP_ID não configurado no Railway — "
-                                 "necessário para usar o backend Supabase com o login antigo.")
+        raise HTTPException(403, "Nenhum grupo ativo para este usuário.")
     return gid
 
 

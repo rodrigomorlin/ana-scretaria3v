@@ -788,6 +788,13 @@ html,body{height:100%;background:var(--bg);color:var(--text);
       <div style="font-size:11px;color:var(--muted);margin-bottom:5px"><i class="ti ti-star"></i> Créditos Especiais</div>
       <div id="pl-especiais"></div>
     </div>
+    <div class="fl"><label>🔁 Recorrência</label>
+      <select id="pl-rec" onchange="document.getElementById('pl-rec-ate-wrap').style.display=this.value?'block':'none'">
+        <option value="">Sem recorrência</option>
+        <option value="semanal">Repetir semanalmente até...</option>
+      </select>
+    </div>
+    <div class="fl" id="pl-rec-ate-wrap" style="display:none"><label>Repetir até (mesmo dia da semana)</label><input type="date" id="pl-rec-ate"></div>
     <div class="fl"><label>Setor (opcional)</label><select id="pl-setor"><option value="">—</option></select></div>
     <div class="ma">
       <button class="btn" onclick="closePlantaoModal()">Fechar</button>
@@ -998,7 +1005,9 @@ async function renderCreditos(){
     const c=await api('GET',`/api/creditos?mes=${escalaAtual}`);
     if(!c.medicos.length){box.innerHTML='<div class="card" style="margin-bottom:0"><div style="font-size:11px;color:var(--hint)">Nenhum plantão neste mês.</div></div>';return;}
     box.innerHTML=`<div class="card" style="margin-bottom:0">
-      <div class="card-title"><i class="ti ti-coin"></i> Créditos de ${escalaAtual.split('-').reverse().join('/')}</div>
+      <div class="card-title" style="display:flex;align-items:center"><i class="ti ti-coin"></i> Créditos de ${escalaAtual.split('-').reverse().join('/')}
+        <button class="btn sm" style="margin-left:auto" onclick="exportCreditos()"><i class="ti ti-file-spreadsheet"></i> Exportar Excel</button>
+      </div>
       <table class="ag-tbl" style="font-size:12px">
         <tr><th>Médico</th><th style="text-align:center">Plantões</th><th>Detalhe</th><th style="text-align:right">Créditos</th></tr>
         ${c.medicos.map(m=>`<tr${m.medico===c.meu_medico?' style="background:var(--al)"':''}>
@@ -1010,6 +1019,21 @@ async function renderCreditos(){
       </table>
     </div>`;
   }catch(e){box.innerHTML=`<div class="card" style="margin-bottom:0;color:var(--err);font-size:12px">${e.message}</div>`;}
+}
+async function exportCreditos(){
+  try{
+    const t=await getToken();
+    const h={'Authorization':'Bearer '+t};
+    if(groupId)h['X-Group-Id']=groupId;
+    const r=await fetch(`/api/creditos/export?mes=${escalaAtual}`,{headers:h});
+    if(!r.ok)throw new Error('Erro ao gerar a planilha.');
+    const blob=await r.blob();
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;a.download=`creditos-${escalaAtual}.xlsx`;a.click();
+    setTimeout(()=>URL.revokeObjectURL(url),1500);
+    toast('Extrato exportado!');
+  }catch(e){toast(e.message,'err');}
 }
 async function loadTrocas(){
   const box=document.getElementById('trocas-box');
@@ -1184,6 +1208,8 @@ async function openPlantaoModal(doc,data){
   document.getElementById('pl-title').textContent=`${doc} — ${fmtD(data)}`;
   document.getElementById('pl-meio').checked=false;
   document.getElementById('pl-hnt').checked=false;
+  document.getElementById('pl-rec').value='';
+  document.getElementById('pl-rec-ate-wrap').style.display='none';
   const sel=document.getElementById('pl-setor');
   sel.innerHTML='<option value="">—</option>'+setores.map(s=>`<option value="${s.id}">${s.name}</option>`).join('');
   renderPlList();
@@ -1216,12 +1242,17 @@ function renderPlList(){
 }
 async function savePlantao(){
   try{
-    await api('POST','/api/escala/plantao',{medico:plCtx.doc,data:plCtx.data,turno:plTurno,
+    const rec=document.getElementById('pl-rec').value;
+    const recAte=rec?document.getElementById('pl-rec-ate').value:'';
+    if(rec&&!recAte){toast('Escolha a data final da recorrência.','warn');return;}
+    const r=await api('POST','/api/escala/plantao',{medico:plCtx.doc,data:plCtx.data,turno:plTurno,
       meio:document.getElementById('pl-meio').checked,hnt:document.getElementById('pl-hnt').checked,
       setor:document.getElementById('pl-setor').value,
-      creditos_especiais:[...document.querySelectorAll('.pl-cct:checked')].map(c=>c.value)});
+      creditos_especiais:[...document.querySelectorAll('.pl-cct:checked')].map(c=>c.value),
+      repetir_ate:recAte});
     document.querySelectorAll('.pl-cct').forEach(c=>c.checked=false);
-    toast('Plantão adicionado!');
+    document.getElementById('pl-rec').value='';document.getElementById('pl-rec-ate-wrap').style.display='none';
+    toast(r.criados>1?`${r.criados} plantões criados (recorrência semanal)!`:'Plantão adicionado!');
     await loadEscala();renderPlList();
   }catch(e){toast(e.message,'err');}
 }

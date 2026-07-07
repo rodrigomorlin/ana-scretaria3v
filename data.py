@@ -643,21 +643,40 @@ def sb_create_plantao(user, p):
         raise HTTPException(400, f"Médico '{p.medico}' não encontrado no grupo.")
     if p.turno not in ("morning", "afternoon", "night"):
         raise HTTPException(400, "Turno inválido.")
-    body = {"group_id": gid, "doctor_id": doctor_id,
-            "shift_date": p.data, "shift_type": p.turno,
-            "is_half_shift": bool(p.meio), "is_hnt_ambulatory": bool(p.hnt),
-            "sector_id": _find_sector_id(gid, p.setor) if p.setor else None}
-    rows = _sb("POST", "/shifts", body)
-    shift_id = rows[0]["id"]
-    # vincula créditos especiais marcados
-    for tid in (getattr(p, "creditos_especiais", None) or []):
+    # datas: única ou recorrência semanal até repetir_ate (máx. 52 ocorrências)
+    datas = [p.data]
+    rep = (getattr(p, "repetir_ate", "") or "").strip()
+    if rep:
         try:
-            _sb("POST", "/shift_custom_credits", {"shift_id": shift_id, "custom_credit_type_id": tid})
-        except Exception as e:
-            log_ = DEPS.get("log")
-            if log_: log_.warning(f"vínculo crédito especial falhou: {e}")
-    _log(user, f"Plantão criado: {p.medico} {p.data} {p.turno}")
-    return {"ok": True, "id": shift_id}
+            ini = datetime.strptime(p.data, "%Y-%m-%d")
+            fim = datetime.strptime(rep, "%Y-%m-%d")
+        except ValueError:
+            raise HTTPException(400, "Data de recorrência inválida.")
+        if fim < ini:
+            raise HTTPException(400, "A data final da recorrência é anterior ao plantão.")
+        d = ini + timedelta(days=7)
+        while d <= fim and len(datas) < 52:
+            datas.append(d.strftime("%Y-%m-%d"))
+            d += timedelta(days=7)
+    sector_id = _find_sector_id(gid, p.setor) if p.setor else None
+    especiais = getattr(p, "creditos_especiais", None) or []
+    primeiro = None
+    for dt in datas:
+        rows = _sb("POST", "/shifts", {"group_id": gid, "doctor_id": doctor_id,
+                   "shift_date": dt, "shift_type": p.turno,
+                   "is_half_shift": bool(p.meio), "is_hnt_ambulatory": bool(p.hnt),
+                   "sector_id": sector_id})
+        shift_id = rows[0]["id"]
+        primeiro = primeiro or shift_id
+        for tid in especiais:
+            try:
+                _sb("POST", "/shift_custom_credits", {"shift_id": shift_id, "custom_credit_type_id": tid})
+            except Exception as e:
+                log_ = DEPS.get("log")
+                if log_: log_.warning(f"vínculo crédito especial falhou: {e}")
+    _log(user, f"Plantão criado: {p.medico} {p.data} {p.turno}"
+               + (f" (recorrente ×{len(datas)})" if len(datas) > 1 else ""))
+    return {"ok": True, "id": primeiro, "criados": len(datas)}
 
 
 def sb_delete_plantao(user, shift_id):

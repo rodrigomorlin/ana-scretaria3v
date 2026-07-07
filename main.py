@@ -1213,6 +1213,7 @@ class Plantao(BaseModel):
     hnt: bool = False
     setor: str = ""
     creditos_especiais: list = []
+    repetir_ate: str = ""
 
 @app.post("/api/escala/plantao")
 def criar_plantao(p: Plantao, user=Depends(auth)):
@@ -1243,6 +1244,83 @@ def get_credit_config(user=Depends(auth)):
 async def save_credit_config(request: Request, user=Depends(auth)):
     body = await request.json()
     return ana_data.sb_credit_settings_save(user, body)
+
+@app.get("/api/creditos/export")
+def export_creditos(mes: str = "", user=Depends(auth)):
+    """Extrato de créditos do mês em Excel (.xlsx)."""
+    if not mes:
+        mes = datetime.now().strftime("%Y-%m")
+    dados = ana_data.sb_creditos(user, mes)
+    org = ana_data.sb_get_org_info(user)
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    wb = Workbook()
+
+    FONT = "Arial"
+    thin = Border(bottom=Side(style="thin", color="D9D9D9"))
+    head_fill = PatternFill("solid", fgColor="4338CA")
+    head_font = Font(name=FONT, bold=True, color="FFFFFF", size=11)
+
+    # ── Aba 1: Resumo por médico ──
+    ws = wb.active
+    ws.title = "Resumo"
+    ws["A1"] = f"Extrato de Créditos — {org['nome']}"
+    ws["A1"].font = Font(name=FONT, bold=True, size=14)
+    ano, m = mes.split("-")
+    MESES = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho",
+             "Agosto","Setembro","Outubro","Novembro","Dezembro"]
+    ws["A2"] = f"{MESES[int(m)-1]} de {ano}"
+    ws["A2"].font = Font(name=FONT, size=11, color="666666")
+    headers = ["Médico", "Plantões", "Detalhe", "Créditos"]
+    for col, h in enumerate(headers, 1):
+        c = ws.cell(row=4, column=col, value=h)
+        c.font = head_font; c.fill = head_fill
+        c.alignment = Alignment(horizontal="center" if col > 1 else "left")
+    r = 5
+    total_geral = 0.0
+    for med in dados["medicos"]:
+        ws.cell(row=r, column=1, value=med["medico"]).font = Font(name=FONT)
+        ws.cell(row=r, column=2, value=med["plantoes"]).alignment = Alignment(horizontal="center")
+        ws.cell(row=r, column=2).font = Font(name=FONT)
+        det = " · ".join(f"{v}× {k}" for k, v in med["detalhe"].items())
+        ws.cell(row=r, column=3, value=det).font = Font(name=FONT, size=9, color="666666")
+        c = ws.cell(row=r, column=4, value=med["total"])
+        c.font = Font(name=FONT, bold=True); c.number_format = "0.0"
+        c.alignment = Alignment(horizontal="center")
+        for col in range(1, 5): ws.cell(row=r, column=col).border = thin
+        total_geral += med["total"]; r += 1
+    ws.cell(row=r, column=1, value="TOTAL").font = Font(name=FONT, bold=True)
+    c = ws.cell(row=r, column=4, value=round(total_geral, 2))
+    c.font = Font(name=FONT, bold=True); c.number_format = "0.0"
+    c.alignment = Alignment(horizontal="center")
+    for col, w in enumerate([28, 10, 48, 10], 1):
+        ws.column_dimensions[get_column_letter(col)].width = w
+
+    # ── Aba 2: Valores configurados ──
+    ws2 = wb.create_sheet("Valores")
+    cs = dados["labels"]
+    ws2["A1"] = "Valores de crédito configurados"
+    ws2["A1"].font = Font(name=FONT, bold=True, size=12)
+    for col, h in enumerate(["Tipo", "Créditos"], 1):
+        c = ws2.cell(row=3, column=col, value=h)
+        c.font = head_font; c.fill = head_fill
+    r = 4
+    for k in ["morning", "afternoon", "night", "saturday", "sunday", "hnt_ambulatory"]:
+        ws2.cell(row=r, column=1, value=cs.get(k + "_label", k)).font = Font(name=FONT)
+        c = ws2.cell(row=r, column=2, value=float(cs.get(k + "_credit", 0)))
+        c.font = Font(name=FONT); c.number_format = "0.0"
+        r += 1
+    ws2.column_dimensions["A"].width = 24; ws2.column_dimensions["B"].width = 10
+
+    import io
+    buf = io.BytesIO()
+    wb.save(buf); buf.seek(0)
+    from fastapi.responses import StreamingResponse
+    fname = f"creditos-{mes}.xlsx"
+    return StreamingResponse(buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
 @app.get("/api/creditos/tipos")
 def list_credit_types(user=Depends(auth)):

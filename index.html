@@ -676,9 +676,13 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <div style="font-size:10px;color:var(--hint);margin-top:8px">Os usuários que solicitarem entrada precisarão da sua aprovação antes de acessar o grupo.</div>
   </div>
 
-  <div class="card" id="solicitacoes-card" style="display:none">
-    <div class="card-title"><i class="ti ti-user-plus"></i> Solicitações de entrada <span id="sol-badge" style="background:var(--err);color:#fff;border-radius:10px;font-size:10px;padding:1px 7px;margin-left:4px"></span></div>
-    <div id="sol-list"></div>
+  <div class="card" id="membros-card" style="display:none">
+    <div class="card-title"><i class="ti ti-users-group"></i> Integrantes do grupo <span id="membros-count" style="font-size:10px;color:var(--hint);font-weight:400;margin-left:4px"></span></div>
+    <div id="sol-wrap" style="display:none;margin-bottom:12px">
+      <div style="font-size:10px;font-weight:700;letter-spacing:.5px;color:var(--warn-text);margin-bottom:6px"><i class="ti ti-hourglass"></i> SOLICITAÇÕES PENDENTES <span id="sol-badge" style="background:var(--err);color:#fff;border-radius:10px;font-size:10px;padding:1px 7px;font-weight:600"></span></div>
+      <div id="sol-list"></div>
+    </div>
+    <div id="membros-list"></div>
   </div>
 
   <div class="card" id="creditos-config-card" style="display:none">
@@ -1437,7 +1441,7 @@ function tab(n){
   if(n==='escala')loadEscala();
   if(n==='relatorios')loadRelatorios();
   if(n==='logs')loadLogs();
-  if(n==='config'){loadCorrecoes();loadGcalCurrent();loadGcalPessoal();loadOrgInfo();loadPushStatus();loadCreditConfig();loadCodigoAcesso();loadSolicitacoes();}
+  if(n==='config'){loadCorrecoes();loadGcalCurrent();loadGcalPessoal();loadOrgInfo();loadPushStatus();loadCreditConfig();loadCodigoAcesso();loadMembros();}
 }
 
 // ── MEMÓRIA ──────────────────────────────────────────────
@@ -2339,30 +2343,60 @@ function copiarCodigo(){
   const c=document.getElementById('codigo-valor').textContent;
   navigator.clipboard.writeText(c).then(()=>toast('Código copiado!')).catch(()=>toast(c,'info',6000));
 }
-async function loadSolicitacoes(){
-  const card=document.getElementById('solicitacoes-card');
+async function loadMembros(){
+  const card=document.getElementById('membros-card');
   if(!card)return;
-  if(me?.role!=='admin'){card.style.display='none';return;}
+  try{
+    const ms=await api('GET','/api/grupos/membros');
+    card.style.display='block';
+    document.getElementById('membros-count').textContent=`${ms.length} membro${ms.length===1?'':'s'}`;
+    document.getElementById('membros-list').innerHTML=ms.map(m=>`
+      <div class="li" style="margin-bottom:6px">
+        <div style="min-width:0">
+          <div style="font-size:12px;font-weight:600">${m.nome}${m.sou_eu?' <span style="font-size:9px;color:var(--accent)">(você)</span>':''}</div>
+          <div style="font-size:10px;color:var(--hint)">${m.email}${m.medico?` · 🩺 ${m.medico}`:''}</div>
+        </div>
+        <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
+          <span style="font-size:9px;background:${m.role==='admin'?'var(--text)':'var(--faint)'};color:${m.role==='admin'?'var(--surface)':'var(--muted)'};border-radius:10px;padding:2px 8px">${m.role==='admin'?'👑 Admin':'Membro'}</span>
+          ${me.role==='admin'&&!m.sou_eu?`<button class="btn danger sm" title="Remover do grupo" onclick="removerMembro('${m.user_id}','${m.nome.replace(/'/g,"\\'")}')"><i class="ti ti-user-minus"></i></button>`:''}
+        </span>
+      </div>`).join('');
+    loadSolicitacoes();
+  }catch{card.style.display='none';}
+}
+async function removerMembro(uid,nome){
+  if(!confirm(`Remover ${nome} do grupo? O acesso dele à Ana e ao MedSS neste grupo será revogado.`))return;
+  try{
+    await api('DELETE',`/api/grupos/membros/${uid}`);
+    toast(`${nome} removido do grupo.`);
+    loadMembros();
+  }catch(e){toast(e.message,'err');}
+}
+async function loadSolicitacoes(){
+  const wrap=document.getElementById('sol-wrap');
+  if(!wrap)return;
+  if(me?.role!=='admin'){wrap.style.display='none';return;}
   try{
     const sols=await api('GET','/api/grupos/solicitacoes');
-    if(!sols.length){card.style.display='none';return;}
-    card.style.display='block';
-    document.getElementById('sol-badge').textContent=sols.length;
-    document.getElementById('sol-list').innerHTML=sols.map(s=>`
-      <div class="li" style="margin-bottom:6px">
+    wrap.style.display='block';
+    document.getElementById('sol-badge').textContent=sols.length||'';
+    document.getElementById('sol-badge').style.display=sols.length?'inline':'none';
+    document.getElementById('sol-list').innerHTML=sols.length?sols.map(s=>`
+      <div class="li" style="margin-bottom:6px;background:var(--warn-bg);border-radius:var(--rs)">
         <div><div style="font-size:12px;font-weight:600">${s.nome}</div><div style="font-size:10px;color:var(--hint)">${s.email}</div></div>
         <span style="margin-left:auto;display:flex;gap:5px">
           <button class="btn sm" style="border-color:var(--ok-border);color:var(--ok-text);background:var(--ok-bg)" onclick="responderSolicitacao('${s.id}',true)"><i class="ti ti-check"></i> Aprovar</button>
           <button class="btn sm danger" onclick="responderSolicitacao('${s.id}',false)"><i class="ti ti-x"></i> Recusar</button>
         </span>
-      </div>`).join('');
-  }catch{card.style.display='none';}
+      </div>`).join('')
+      :'<div style="font-size:11px;color:var(--hint)">Nenhuma solicitação pendente. Compartilhe o código de acesso para convidar colegas.</div>';
+  }catch{wrap.style.display='none';}
 }
 async function responderSolicitacao(id,aprovar){
   try{
     await api('POST',`/api/grupos/solicitacoes/${id}/responder`,{aprovar});
     toast(aprovar?'Membro aprovado! Ele já pode acessar o grupo.':'Solicitação recusada.');
-    loadSolicitacoes();
+    loadMembros();
   }catch(e){toast(e.message,'err');}
 }
 async function loadCreditConfig(){

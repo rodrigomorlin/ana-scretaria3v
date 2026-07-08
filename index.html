@@ -689,7 +689,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 
   <div class="card" id="creditos-config-card" style="display:none">
     <div class="card-title"><i class="ti ti-coin"></i> Valores de Créditos</div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:12px">Defina os créditos para cada tipo de plantão. Os mesmos valores do MedSS — alterar aqui altera lá também.</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:12px">Defina os créditos para cada tipo de plantão.</div>
 
     <div style="font-size:10px;font-weight:700;letter-spacing:.5px;color:var(--hint);margin-bottom:8px">DIAS DE SEMANA</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:14px">
@@ -727,15 +727,6 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 
     <div style="margin-top:6px"><button class="btn primary sm" onclick="saveCreditConfig()"><i class="ti ti-device-floppy"></i> Salvar Configurações</button></div>
   </div>
-
-  <div class="card" id="usec" style="display:none">
-  <div class="card-title"><i class="ti ti-lock"></i> Usuários e acesso</div>
-  <div style="font-size:12px;color:var(--muted);line-height:1.7">
-    As contas agora são unificadas com o <b>MedSS</b> (mesma conta para escala e agenda).<br>
-    Para convidar médicos, alterar papéis ou remover membros do grupo, use a gestão de membros do MedSS.
-    Novos membros passam a acessar a Ana automaticamente com o mesmo email e senha.
-  </div>
-</div>
 
 <!-- LOGS -->
 <div id="plogs" class="panel">
@@ -904,7 +895,6 @@ async function loadAll(){
       api('GET','/api/eventos'),api('GET','/api/memorias')]);
     renderMem();renderDocList();renderSetorList();populateAgendaFilters();
     if(me?.role==='admin'){
-      const usec=document.getElementById('usec');if(usec)usec.style.display='block';
     }
     const hoje=new Date().toISOString().slice(0,10);
     const hoje_n=eventos.filter(e=>e.date>=hoje).length;

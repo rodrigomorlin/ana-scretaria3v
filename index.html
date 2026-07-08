@@ -1432,9 +1432,7 @@ function tab(n){
   if(tt)tt.textContent=titles[n]||n;
   if(ts)ts.textContent=subs[n]||'';
   if(ta){
-    if(n==='agenda'){
-      ta.innerHTML=`<button class="btn sm" onclick="exportPDF()"><i class="ti ti-file-export"></i> PDF</button><button class="btn sm" onclick="exportAgendaImg()"><i class="ti ti-photo"></i> Imagem</button><button class="btn primary sm" onclick="tab('chat');document.getElementById('minp').focus()"><i class="ti ti-plus"></i> Novo</button>`;
-    }else if(n==='relatorios'){
+    if(n==='relatorios'){
       ta.innerHTML=`<button class="btn sm" onclick="loadRelatorios()"><i class="ti ti-refresh"></i> Atualizar</button>`;
     }else{ta.innerHTML='';}
   }

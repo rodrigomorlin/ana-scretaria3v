@@ -303,6 +303,9 @@ html,body{height:100%;background:var(--bg);color:var(--text);
   .toast-wrap{left:12px;right:12px;bottom:74px}
   .toast{max-width:100%}
 }
+/* overlay de drag-and-drop de PDF: invisível até arrastar um arquivo */
+.drop-ov{display:none;position:fixed;inset:0;z-index:300;background:color-mix(in srgb,var(--bg) 82%,transparent);backdrop-filter:blur(3px);flex-direction:column;align-items:center;justify-content:center;gap:10px;border:3px dashed var(--accent);border-radius:14px;margin:10px;pointer-events:none}
+.drop-ov.on{display:flex}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
@@ -595,7 +598,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:#f97316;vertical-align:middle;margin-right:4px"></span>Tarde</span>
     <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:#6366f1;vertical-align:middle;margin-right:4px"></span>Noite</span>
     <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:#fbbf24;opacity:.45;vertical-align:middle;margin-right:4px"></span>Meio turno</span>
-    <span><span style="display:inline-block;width:10px;height:10px;border-radius:3px;border:2px solid #10b981;vertical-align:middle;margin-right:4px"></span>HNT ambulatório</span>
+    <span id="legenda-especiais" style="display:contents"></span>
   </div>
   <div id="trocas-box" style="display:none;margin-bottom:12px"></div>
   <div id="creditos-box" style="display:none;margin-bottom:12px"></div>
@@ -603,7 +606,6 @@ html,body{height:100%;background:var(--bg);color:var(--text);
   <div class="ag-card" style="overflow-x:auto">
     <table class="ag-tbl" id="escala-grid" style="min-width:700px"><tr><td style="padding:22px;color:var(--hint);text-align:center">Carregando escala...</td></tr></table>
   </div>
-  <div style="font-size:10px;color:var(--hint);margin-top:10px"><i class="ti ti-info-circle"></i> Escala em modo consulta — os plantões são gerenciados no MedSS e aparecem aqui em tempo real (mesmo banco).</div>
 </div>
 
 <!-- RELATÓRIOS -->
@@ -1158,6 +1160,14 @@ async function responderTroca(id,aceitar){
 async function cancelarTroca(id){
   try{await api('DELETE',`/api/escala/troca/${id}`);toast('Proposta cancelada.');loadTrocas();}catch(e){toast(e.message,'err');}
 }
+async function renderLegendaEspeciais(){
+  const el=document.getElementById('legenda-especiais');
+  if(!el)return;
+  try{
+    if(!cctCache)cctCache=await api('GET','/api/creditos/tipos');
+    el.innerHTML=cctCache.map(t=>`<span><span style="display:inline-block;background:var(--star-bg);color:var(--star-text);border-radius:6px;font-size:9px;padding:1px 6px;vertical-align:middle;margin-right:4px">⭐</span>${t.name} <span style="color:var(--hint)">(${t.credit_value})</span></span>`).join('');
+  }catch{el.innerHTML='';}
+}
 function renderEscalaLista(e,a,m,dias,hoje){
   const grid=document.getElementById('escala-grid');
   const DIAS=['dom','seg','ter','qua','qui','sex','sáb'];
@@ -1248,6 +1258,7 @@ async function loadEscala(){
     const dias=new Date(a,m,0).getDate();
     const DOW=['D','S','T','Q','Q','S','S'];
     const hoje=new Date().toISOString().slice(0,10);
+    renderLegendaEspeciais();
     const bv=document.getElementById('btn-vista');
     if(bv)bv.innerHTML=vistaAtual()==='grade'?'<i class="ti ti-layout-list"></i>':'<i class="ti ti-layout-grid"></i>';
     if(vistaAtual()==='lista'){renderEscalaLista(e,a,m,dias,hoje);return;}
@@ -1424,7 +1435,7 @@ function tab(n){
   });
   // Topbar contextual
   const titles={chat:'Chat',agenda:'Agenda',escala:'Escala',relatorios:'Relatórios',config:'Configurações',logs:'Logs'};
-  const subs={chat:'Fale com a Ana em linguagem natural',agenda:'Todos os procedimentos agendados',escala:'Plantões do grupo — integrado ao MedSS',relatorios:'Análises e gráficos do grupo',config:'Médicos, setores e integrações',logs:'Registro de atividades do sistema'};
+  const subs={chat:'Fale com a Ana em linguagem natural',agenda:'Todos os procedimentos agendados',escala:'Plantões e trocas do grupo',relatorios:'Análises e gráficos do grupo',config:'Médicos, setores e integrações',logs:'Registro de atividades do sistema'};
   const tt=document.getElementById('topbar-title');
   const ts=document.getElementById('topbar-sub');
   const ta=document.getElementById('topbar-actions');

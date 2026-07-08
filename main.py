@@ -1477,6 +1477,40 @@ def responder_solicitacao(req_id: str, r: SolicitacaoResposta, user=Depends(auth
     log.info(f"Solicitação {'aprovada' if r.aprovar else 'recusada'}: {req_id}")
     return {"ok": True}
 
+@app.get("/api/grupos/membros")
+def listar_membros(user=Depends(auth)):
+    """Integrantes do grupo ativo, com perfil e médico vinculado."""
+    gid = user.get("org_id")
+    rows = sb_rest("GET", f"/group_members?group_id=eq.{gid}&select=user_id,role,created_at&order=created_at")
+    if not rows:
+        return []
+    uids = ",".join(f'"{r["user_id"]}"' for r in rows)
+    perfis = {p["id"]: p for p in sb_rest("GET", f"/profiles?id=in.({uids})&select=id,full_name,email")}
+    docs = {d["user_id"]: d["name"] for d in
+            sb_rest("GET", f"/doctors?group_id=eq.{gid}&user_id=not.is.null&select=name,user_id")}
+    return [{"user_id": r["user_id"],
+             "nome": perfis.get(r["user_id"], {}).get("full_name") or "—",
+             "email": perfis.get(r["user_id"], {}).get("email") or "",
+             "role": r["role"],
+             "medico": docs.get(r["user_id"]),
+             "sou_eu": r["user_id"] == user["id"]} for r in rows]
+
+@app.delete("/api/grupos/membros/{uid}")
+def remover_membro(uid: str, user=Depends(auth)):
+    """Remove um integrante do grupo (admin). O acesso dele à Ana e ao MedSS neste grupo é revogado."""
+    if user["role"] != "admin":
+        raise HTTPException(403, "Apenas administradores podem remover integrantes.")
+    if uid == user["id"]:
+        raise HTTPException(400, "Você não pode remover a si mesmo do grupo.")
+    gid = user.get("org_id")
+    rows = sb_rest("GET", f"/group_members?group_id=eq.{gid}&user_id=eq.{uid}&select=id")
+    if not rows:
+        raise HTTPException(404, "Integrante não encontrado neste grupo.")
+    sb_rest("DELETE", f"/group_members?group_id=eq.{gid}&user_id=eq.{uid}")
+    _membership_cache.pop(uid, None)
+    log.info(f"Membro removido do grupo {gid}: {uid}")
+    return {"ok": True}
+
 @app.get("/api/grupos/codigo")
 def codigo_acesso(user=Depends(auth)):
     """Código de acesso do grupo ativo (admin) — para compartilhar."""

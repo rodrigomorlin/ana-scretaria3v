@@ -657,9 +657,8 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <div class="card-title"><i class="ti ti-building-hospital" style="color:var(--accent)"></i>Setores</div>
     <div id="setlist"></div>
     <div class="sep"><div class="sep-lbl">Adicionar</div>
-      <div class="grid3" style="margin-bottom:8px">
+      <div style="display:grid;grid-template-columns:1fr 110px;gap:10px;margin-bottom:8px">
         <div class="fl"><label>Nome</label><input id="nsname" placeholder="Hemodinâmica"></div>
-        <div class="fl"><label>Código</label><input id="nscode" placeholder="hd" maxlength="3"></div>
         <div class="fl"><label>Cor</label><input type="color" id="nscolor" value="#CECBF6" style="width:100%;height:36px;padding:2px;border-radius:6px;border:0.5px solid var(--border);cursor:pointer"></div>
       </div>
       <div class="fl" style="margin-bottom:8px"><label>Endereço (para cálculo de deslocamento via Google Routes API)</label><input id="nsendereco" placeholder="ex: Rua Ramiro Barcelos 910, Porto Alegre, RS"></div>
@@ -2187,21 +2186,20 @@ function renderSetorList(){
     const info=[];
     if(s.endereco)info.push(`<i class="ti ti-map-pin"></i> ${s.endereco}`);
     if(s.tempo_manual>0)info.push(`<i class="ti ti-clock"></i> ${s.tempo_manual}min manual`);
-    return `<div class="li"><div class="cdot" style="background:${s.color}"></div><div class="li-name">${s.name}</div><div class="li-spec">cód: ${s.id}${info.length?' · '+info.join(' · '):''}</div><button class="btn danger sm" onclick="rmSetor('${s.id}')"><i class="ti ti-trash"></i></button></div>`;
+    return `<div class="li"><div class="cdot" style="background:${s.color}"></div><div class="li-name">${s.name}</div><div class="li-spec">${info.join(' · ')}</div><button class="btn danger sm" onclick="rmSetor('${s.id}')"><i class="ti ti-trash"></i></button></div>`;
   }).join('');
   const setorSel=document.getElementById('ag-filter-setor');if(setorSel)setorSel.dataset.filled='0';
 }
 async function addSetor(){
   const name=document.getElementById('nsname').value.trim();
-  const code=document.getElementById('nscode').value.trim().toLowerCase().replace(/\s/g,'').substring(0,3);
   const color=document.getElementById('nscolor').value;
   const endereco=document.getElementById('nsendereco').value.trim();
   const tempo_manual=parseInt(document.getElementById('nstempo').value)||0;
-  if(!name||!code){toast('Preencha nome e código.','warn');return;}
+  if(!name){toast('Preencha o nome do setor.','warn');return;}
   try{
-    const s={id:code,name,color,text_color:'#1A1A2E',endereco,tempo_manual};
+    const s={id:'',name,color,text_color:'#1A1A2E',endereco,tempo_manual};
     await api('POST','/api/setores',s);setores.push(s);renderSetorList();
-    document.getElementById('nsname').value='';document.getElementById('nscode').value='';
+    document.getElementById('nsname').value='';
     document.getElementById('nsendereco').value='';document.getElementById('nstempo').value='0';
     toast('Setor adicionado!');
   }catch(e){toast(e.message,'err');}

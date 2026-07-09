@@ -743,7 +743,8 @@ Seja preciso e inclua todos os pacientes listados. Não omita nenhum dado."""
             }],
             "generationConfig": {
                 "temperature": 0.1,
-                "maxOutputTokens": 2000
+                "maxOutputTokens": 8000,
+                "thinkingConfig": {"thinkingBudget": 0}
             }
         }).encode("utf-8")
 
@@ -820,7 +821,8 @@ Seja preciso e inclua todos os pacientes listados. Não omita nenhum dado."""
                     {"text": prompt}
                 ]
             }],
-            "generationConfig": {"temperature": 0.1, "maxOutputTokens": 2000}
+            "generationConfig": {"temperature": 0.1, "maxOutputTokens": 8000,
+                                 "thinkingConfig": {"thinkingBudget": 0}}
         }).encode("utf-8")
 
         req = urllib.request.Request(
@@ -829,7 +831,7 @@ Seja preciso e inclua todos os pacientes listados. Não omita nenhum dado."""
             headers={"Content-Type": "application/json"},
             method="POST"
         )
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with urllib.request.urlopen(req, timeout=45) as r:
             data = json.loads(r.read())
 
         # Verifica se há candidatos válidos
@@ -842,6 +844,10 @@ Seja preciso e inclua todos os pacientes listados. Não omita nenhum dado."""
             log.error(f"Gemini image: sem parts. Candidato: {json.dumps(candidates[0])[:300]}")
             return ""
         text = parts[0].get("text", "")
+        fr = candidates[0].get("finishReason", "")
+        if fr == "MAX_TOKENS":
+            log.warning("Gemini image: extração TRUNCADA por limite de tokens — lista pode estar incompleta")
+        log.info(f"Gemini image: {len(text)} chars extraídos, {text.count(chr(10))+1} linhas, finish={fr}")
         if not text:
             log.error(f"Gemini image: texto vazio. Parts: {json.dumps(parts)[:300]}")
             return ""
@@ -946,7 +952,7 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
 
     payload = json.dumps({
         "model": "llama-3.3-70b-versatile",
-        "max_tokens": req.max_tokens or 1500,
+        "max_tokens": min(req.max_tokens or 6000, 8000),
         "messages": openai_messages,
         "temperature": 0.3,
     }).encode("utf-8")

@@ -1601,7 +1601,7 @@ PADRÕES POR MÉDICO (use como sugestão quando o usuário não especificar seto
 CORREÇÕES APRENDIDAS (erros já cometidos antes — não repita): ${correcoesTxt||'nenhuma correção registrada ainda'}
 DESLOCAMENTOS ENTRE SETORES (tempo mínimo de folga ao mudar de local): ${deslocTxt}
 PACIENTES CONHECIDOS (histórico — ao citar um nome, use o médico/setor habitual como sugestão): ${(ctx.pacientes||[]).map(p=>`${p.nome}→${p.doc}|${p.proc}`).join(' | ')||'nenhum ainda'}
-REGRAS: interprete linguagem natural e abreviações (CC=Centro Cirúrgico, raqui=raquianestesia, AG=anestesia geral). Use memórias/histórico/padrões por médico para preencher campos omitidos. Conflito de horário ocorre SOMENTE quando o mesmo médico tiver dois procedimentos no exato mesmo horário — o servidor vai sinalizar mas agendará normalmente. OTIMIZAÇÃO DE SEQUÊNCIA: use DESLOCAMENTOS para calcular folga mínima entre setores diferentes do mesmo médico. PDF OU IMAGEM COM MÚLTIPLOS PACIENTES: quando o PDF ou imagem tiver 2 ou mais procedimentos para agendar, use OBRIGATORIAMENTE a ação AGENDAR_MULTIPLOS com todos os eventos na lista "eventos" — NUNCA use AGENDAR para múltiplos pacientes. AGENDAR_MULTIPLOS deve incluir TODOS os pacientes, sem exceção. novas_memorias: máx 2. suggests: 2 ações. Seja breve.
+REGRAS: interprete linguagem natural e abreviações (CC=Centro Cirúrgico, raqui=raquianestesia, AG=anestesia geral). Use memórias/histórico/padrões por médico para preencher campos omitidos. Conflito de horário ocorre SOMENTE quando o mesmo médico tiver dois procedimentos no exato mesmo horário — o servidor vai sinalizar mas agendará normalmente. OTIMIZAÇÃO DE SEQUÊNCIA: use DESLOCAMENTOS para calcular folga mínima entre setores diferentes do mesmo médico. PDF OU IMAGEM COM MÚLTIPLOS PACIENTES: se a mensagem contiver [Conteúdo extraído da imagem anexada] ou [Conteúdo extraído do PDF anexado], CONTE quantos pacientes/procedimentos existem no texto extraído. Se houver 2 ou mais, use OBRIGATORIAMENTE a ação AGENDAR_MULTIPLOS com um item em "eventos" para CADA paciente do texto — NUNCA use AGENDAR nesses casos. É PROIBIDO omitir pacientes: a lista "eventos" deve ter exatamente o mesmo número de itens que o texto extraído. Confirme na "resposta" o total (ex: 'Agendei os 7 procedimentos da lista'). novas_memorias: máx 2. suggests: 2 ações. Seja breve.
 RETORNE APENAS JSON sem markdown:
 {"acao":"AGENDAR"|"AGENDAR_MULTIPLOS"|"CANCELAR"|"RELATORIO"|"CONSULTAR"|"CORRECAO"|"DUVIDA","resposta":"HTML","evento":{"id":N,"doc":"","setor":"","proc":"","paciente":"","date":"YYYY-MM-DD","time":"HH:MM","obs":""},"eventos":[{"doc":"","setor":"","proc":"","paciente":"","date":"YYYY-MM-DD","time":"HH:MM","obs":""}],"cancelar_id":N|null,"tabela":[{"data":"","hora":"","setor":"","proc":"","paciente":"","medico":"","obs":""}],"novas_memorias":[{"texto":"","icone":""}],"suggests":["",""]}`;
 
@@ -1621,7 +1621,7 @@ RETORNE APENAS JSON sem markdown:
     : system;
   try{
     const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await getToken(),...(groupId?{'X-Group-Id':groupId}:{})},
-      body:JSON.stringify({system:systemFinal,messages:[{role:'user',content:mc}],max_tokens:1500})});
+      body:JSON.stringify({system:systemFinal,messages:[{role:'user',content:mc}],max_tokens:6000})});
     if(!res.ok){
       let errMsg=`Erro ${res.status}`;
       try{

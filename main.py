@@ -409,7 +409,7 @@ def _build_gcal_service(user_access_token: Optional[str] = None):
         return build("calendar", "v3", credentials=creds)
     return None
 
-async def gcal_create(ev, setor_name, criado_por_id: Optional[str] = None, org_id: str = "default"):
+async def gcal_create(ev, setor_name, criado_por_id: Optional[str] = None, org_id: str = "default", event_id: str = ""):
     # Prioriza o calendário pessoal do médico que criou o evento (OAuth), senão usa a conta de serviço/calendário do grupo
     user_token = get_user_google_token(criado_por_id) if criado_por_id else None
     calendar_id = "primary" if user_token else get_gcal_id(org_id)
@@ -429,6 +429,9 @@ async def gcal_create(ev, setor_name, criado_por_id: Optional[str] = None, org_i
             "start": {"dateTime": f"{ev['date']}T{ev['time']}:00", "timeZone": "America/Sao_Paulo"},
             "end": {"dateTime": f"{ev['date']}T{end_h:02d}:{end_m:02d}:00", "timeZone": "America/Sao_Paulo"},
         }
+        if event_id:
+            # id determinístico (uuid do agendamento sem hífens) — permite deletar no cancelamento
+            body["id"] = event_id
         r = svc.events().insert(calendarId=calendar_id, body=body).execute()
         log.info(f"GCal evento criado com sucesso: {r.get('id')} (calendário: {'pessoal' if user_token else 'grupo'}, id={calendar_id})")
         return r.get("id","")
@@ -504,8 +507,16 @@ def me(user=Depends(auth)):
 
 # ── EVENTOS ────────────────────────────────────────────────
 @app.patch("/api/eventos/{ev_id}/status")
-def update_status(ev_id: str, user=Depends(auth), status: str = "aguardando"):
-    return ana_data.sb_update_status(user, ev_id, status)
+async def update_status(ev_id: str, user=Depends(auth), status: str = "aguardando"):
+    out = ana_data.sb_update_status(user, ev_id, status)
+    if status == "cancelado":
+        try:
+            rows = sb_rest("GET", f"/appointments?id=eq.{ev_id}&select=created_by")
+            criador = (rows[0].get("created_by") if rows else None) or user["id"]
+            await gcal_delete(ev_id.replace("-", ""), criado_por_id=criador, org_id=user.get("org_id", "default"))
+        except Exception as e:
+            log.warning(f"GCal delete no cancelamento: {e}")
+    return out
 
 @app.get("/api/pacientes")
 def list_pacientes(q: str = "", user=Depends(auth)):
@@ -521,7 +532,8 @@ async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=
     org_id = user.get("org_id", "default")
     try:
         if get_user_google_token(user["id"]) or GCAL_CREDS:
-            await gcal_create(ev.dict(), out.get("setor_nome") or "", criado_por_id=user["id"], org_id=org_id)
+            await gcal_create(ev.dict(), out.get("setor_nome") or "", criado_por_id=user["id"], org_id=org_id,
+                             event_id=str(out.get("id", "")).replace("-", ""))
     except Exception as e:
         log.warning(f"GCal sync (modo supabase): {e}")
     if VAPID_PUBLIC_KEY:
@@ -531,6 +543,12 @@ async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=
 
 @app.delete("/api/eventos/{ev_id}")
 async def delete_evento(ev_id: str, bg: BackgroundTasks, user=Depends(auth)):
+    try:
+        rows = sb_rest("GET", f"/appointments?id=eq.{ev_id}&select=created_by")
+        criador = (rows[0].get("created_by") if rows else None) or user["id"]
+        await gcal_delete(ev_id.replace("-", ""), criado_por_id=criador, org_id=user.get("org_id", "default"))
+    except Exception as e:
+        log.warning(f"GCal delete na exclusão: {e}")
     return ana_data.sb_delete_evento(user, ev_id)
 
 @app.put("/api/eventos/{ev_id}")
@@ -1513,6 +1531,11 @@ def remover_membro(uid: str, user=Depends(auth)):
     if not rows:
         raise HTTPException(404, "Integrante não encontrado neste grupo.")
     sb_rest("DELETE", f"/group_members?group_id=eq.{gid}&user_id=eq.{uid}")
+    # desativa o médico vinculado — sai da escala e das listas (histórico preservado)
+    try:
+        sb_rest("PATCH", f"/doctors?group_id=eq.{gid}&user_id=eq.{uid}", {"active": False})
+    except Exception as e:
+        log.warning(f"desativar médico do removido: {e}")
     _membership_cache.pop(uid, None)
     log.info(f"Membro removido do grupo {gid}: {uid}")
     return {"ok": True}

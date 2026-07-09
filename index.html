@@ -49,7 +49,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 /* ── LOGIN ─────────────────────────────────────────────── */
 .login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1rem;background:var(--bg)}
 .login-card{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:2.2rem;width:360px;max-width:100%;box-shadow:0 4px 24px rgba(99,102,241,.08)}
-.login-logo{width:56px;height:56px;background:var(--al);border-radius:14px;display:flex;align-items:center;justify-content:center;color:var(--accent);font-size:28px;margin:0 auto 1.2rem}
+.login-logo{width:92px;height:92px;display:flex;align-items:center;justify-content:center;margin:0 auto 1rem}
 .login-title{text-align:center;font-size:21px;font-weight:700;margin-bottom:4px;color:var(--text);letter-spacing:-.4px}
 .login-sub{text-align:center;font-size:12px;color:var(--muted);margin-bottom:1.6rem}
 .f label{font-size:11px;font-weight:600;color:var(--muted);display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:.5px}
@@ -317,46 +317,87 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 <!-- LOGIN -->
 <div class="login-wrap" id="lwrap">
   <div class="login-card">
-    <div class="login-logo" style="background:transparent;padding:0"><svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%">
-  <defs><style>
-    .lh{fill:none;stroke:#6366f1;stroke-width:2}
-    .ll{fill:none;stroke:#818cf8;stroke-width:1;opacity:.6}
-    .ln{fill:#6366f1}
-    .lns{fill:#a5b4fc}
-    .lc{fill:#6366f1;opacity:.08}
-  </style></defs>
-  <circle cx="50" cy="50" r="44" class="lc"/>
-  <circle cx="50" cy="50" r="44" fill="none" stroke="#818cf8" stroke-width=".8" opacity=".4"/>
-  <polygon points="50,12 76,26 76,54 50,68 24,54 24,26" class="lh"/>
-  <polygon points="50,22 68,32 68,52 50,62 32,52 32,32" fill="#EEF2FF" stroke="#818cf8" stroke-width=".8" opacity=".6"/>
-  <line x1="50" y1="42" x2="50" y2="24" class="ll"/>
-  <line x1="50" y1="42" x2="64" y2="50" class="ll"/>
-  <line x1="50" y1="42" x2="64" y2="34" class="ll"/>
-  <line x1="50" y1="42" x2="36" y2="34" class="ll"/>
-  <line x1="50" y1="42" x2="36" y2="50" class="ll"/>
-  <line x1="50" y1="42" x2="50" y2="60" class="ll"/>
-  <circle cx="50" cy="24" r="2.5" class="ln"/>
-  <circle cx="64" cy="32" r="2.5" class="lns"/>
-  <circle cx="64" cy="52" r="2.5" class="lns"/>
-  <circle cx="50" cy="60" r="2.5" class="ln"/>
-  <circle cx="36" cy="52" r="2.5" class="lns"/>
-  <circle cx="36" cy="32" r="2.5" class="lns"/>
-  <circle cx="50" cy="42" r="9" fill="#EEF2FF" stroke="#6366f1" stroke-width="1.2"/>
-  <circle cx="50" cy="42" r="5" class="ln"/>
-  <circle cx="50" cy="42" r="2.5" fill="white"/>
-  <path d="M50 33 A9 9 0 0 1 59 42" fill="none" stroke="#6366f1" stroke-width="2.5" stroke-linecap="round"/>
-  <line x1="50" y1="12" x2="50" y2="6" class="ll"/>
-  <circle cx="50" cy="5" r="1.8" class="ln"/>
-  <line x1="76" y1="26" x2="85" y2="21" class="ll"/>
-  <circle cx="86" cy="20" r="1.8" class="lns"/>
-  <line x1="76" y1="54" x2="85" y2="59" class="ll"/>
-  <circle cx="86" cy="60" r="1.8" class="lns"/>
-  <line x1="24" y1="26" x2="15" y2="21" class="ll"/>
-  <circle cx="14" cy="20" r="1.8" class="lns"/>
-  <line x1="24" y1="54" x2="15" y2="59" class="ll"/>
-  <circle cx="14" cy="60" r="1.8" class="lns"/>
-  <text x="50" y="84" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="13" font-weight="700" fill="#4338ca" letter-spacing="-0.5">ANA</text>
-  <text x="50" y="94" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="6" fill="#818cf8" letter-spacing="1.5">SECRETÁRIA</text>
+    <div class="login-logo" style="background:transparent;padding:0"><svg xmlns="http://www.w3.org/2000/svg" viewBox="-205 -205 410 410" style="width:100%;height:100%">
+  <defs>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="4" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="glowSoft" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="8" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#67e8f9"/>
+      <stop offset="55%" stop-color="#22d3ee"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+    <style>
+      .spin-cw-slow  { animation: rot 46s linear infinite; transform-origin: 0 0; }
+      .spin-ccw      { animation: rotr 14s linear infinite; transform-origin: 0 0; }
+      .spin-cw       { animation: rot 22s linear infinite; transform-origin: 0 0; }
+      .spin-ccw-fast { animation: rotr 8s linear infinite; transform-origin: 0 0; }
+      .pulse         { animation: pulse 2.6s ease-in-out infinite; }
+      .pulse-txt     { animation: pulseTxt 2.6s ease-in-out infinite; }
+      .blink1        { animation: blink 1.8s ease-in-out infinite; }
+      .blink2        { animation: blink 2.4s ease-in-out .6s infinite; }
+      @keyframes rot     { to { transform: rotate(360deg); } }
+      @keyframes rotr    { to { transform: rotate(-360deg); } }
+      @keyframes pulse   { 0%,100% { opacity:.45; } 50% { opacity:1; } }
+      @keyframes pulseTxt{ 0%,100% { opacity:.85; } 50% { opacity:1; } }
+      @keyframes blink   { 0%,100% { opacity:.2; } 50% { opacity:.9; } }
+      text { font-family: 'Segoe UI', -apple-system, Arial, sans-serif; }
+    </style>
+  </defs>
+
+  <!-- anel externo: ticks finos -->
+  <g class="spin-cw-slow">
+    <circle r="178" fill="none" stroke="#22d3ee" stroke-width="1" opacity=".35"/>
+    <circle r="171" fill="none" stroke="#67e8f9" stroke-width="7" opacity=".8"
+            stroke-dasharray="1.5 7.7" filter="url(#glow)"/>
+  </g>
+
+  <!-- marcadores cardeais: DENTRO do anel externo, simétricos -->
+  <g opacity=".85">
+    <rect x="-2.4" y="-160" width="4.8" height="11" rx="1.2" fill="#67e8f9" class="blink1"/>
+    <rect x="-2.4" y="149"  width="4.8" height="11" rx="1.2" fill="#67e8f9" class="blink2"/>
+    <rect x="-160" y="-2.4" width="11" height="4.8" rx="1.2" fill="#06b6d4" class="blink2"/>
+    <rect x="149"  y="-2.4" width="11" height="4.8" rx="1.2" fill="#06b6d4" class="blink1"/>
+  </g>
+
+  <!-- anel de arcos segmentados -->
+  <g class="spin-ccw">
+    <circle r="140" fill="none" stroke="url(#grad)" stroke-width="4" stroke-linecap="round"
+            stroke-dasharray="180 113.6" filter="url(#glow)"/>
+    <circle r="140" fill="none" stroke="#06b6d4" stroke-width="2" opacity=".6"
+            stroke-dasharray="28 265.6" stroke-dashoffset="-215"/>
+  </g>
+
+  <!-- anel "binário" -->
+  <g class="spin-cw">
+    <circle r="120" fill="none" stroke="#22d3ee" stroke-width="10" opacity=".5"
+            stroke-dasharray="3 4 8 4 3 9 14 5"/>
+    <circle r="109" fill="none" stroke="#a5f3fc" stroke-width="1.4" opacity=".55"/>
+  </g>
+
+  <!-- arco de varredura rápido -->
+  <g class="spin-ccw-fast">
+    <circle r="97" fill="none" stroke="#06b6d4" stroke-width="3" stroke-linecap="round"
+            stroke-dasharray="82 527.5" filter="url(#glowSoft)"/>
+    <circle r="97" fill="none" stroke="#67e8f9" stroke-width="1.4" opacity=".5"
+            stroke-dasharray="8 18"/>
+  </g>
+
+  <!-- núcleo -->
+  <circle r="84" fill="none" stroke="url(#grad)" stroke-width="2.5" filter="url(#glow)" class="pulse"/>
+  <circle r="77" fill="#22d3ee" opacity=".08"/>
+  <circle r="77" fill="none" stroke="#22d3ee" stroke-width=".8" opacity=".5"/>
+
+  <!-- nome: A.N.A — x compensa metade do letter-spacing para centro óptico exato -->
+  <g class="pulse-txt" filter="url(#glow)">
+    <text x="3" y="13" text-anchor="middle" font-size="37" font-weight="700"
+          letter-spacing="9" fill="#ecfeff">A.N.A</text>
+  </g>
 </svg></div>
     <div class="login-title">Ana v3</div>
     <div class="login-sub">Secretária de Anestesiologia</div>
@@ -435,46 +476,87 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 <!-- SIDENAV -->
 <nav class="sidenav">
   <div class="sidenav-logo">
-    <div class="sidenav-ico" style="background:transparent;padding:0"><svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%">
-  <defs><style>
-    .lh{fill:none;stroke:#6366f1;stroke-width:2}
-    .ll{fill:none;stroke:#818cf8;stroke-width:1;opacity:.6}
-    .ln{fill:#6366f1}
-    .lns{fill:#a5b4fc}
-    .lc{fill:#6366f1;opacity:.08}
-  </style></defs>
-  <circle cx="50" cy="50" r="44" class="lc"/>
-  <circle cx="50" cy="50" r="44" fill="none" stroke="#818cf8" stroke-width=".8" opacity=".4"/>
-  <polygon points="50,12 76,26 76,54 50,68 24,54 24,26" class="lh"/>
-  <polygon points="50,22 68,32 68,52 50,62 32,52 32,32" fill="#EEF2FF" stroke="#818cf8" stroke-width=".8" opacity=".6"/>
-  <line x1="50" y1="42" x2="50" y2="24" class="ll"/>
-  <line x1="50" y1="42" x2="64" y2="50" class="ll"/>
-  <line x1="50" y1="42" x2="64" y2="34" class="ll"/>
-  <line x1="50" y1="42" x2="36" y2="34" class="ll"/>
-  <line x1="50" y1="42" x2="36" y2="50" class="ll"/>
-  <line x1="50" y1="42" x2="50" y2="60" class="ll"/>
-  <circle cx="50" cy="24" r="2.5" class="ln"/>
-  <circle cx="64" cy="32" r="2.5" class="lns"/>
-  <circle cx="64" cy="52" r="2.5" class="lns"/>
-  <circle cx="50" cy="60" r="2.5" class="ln"/>
-  <circle cx="36" cy="52" r="2.5" class="lns"/>
-  <circle cx="36" cy="32" r="2.5" class="lns"/>
-  <circle cx="50" cy="42" r="9" fill="#EEF2FF" stroke="#6366f1" stroke-width="1.2"/>
-  <circle cx="50" cy="42" r="5" class="ln"/>
-  <circle cx="50" cy="42" r="2.5" fill="white"/>
-  <path d="M50 33 A9 9 0 0 1 59 42" fill="none" stroke="#6366f1" stroke-width="2.5" stroke-linecap="round"/>
-  <line x1="50" y1="12" x2="50" y2="6" class="ll"/>
-  <circle cx="50" cy="5" r="1.8" class="ln"/>
-  <line x1="76" y1="26" x2="85" y2="21" class="ll"/>
-  <circle cx="86" cy="20" r="1.8" class="lns"/>
-  <line x1="76" y1="54" x2="85" y2="59" class="ll"/>
-  <circle cx="86" cy="60" r="1.8" class="lns"/>
-  <line x1="24" y1="26" x2="15" y2="21" class="ll"/>
-  <circle cx="14" cy="20" r="1.8" class="lns"/>
-  <line x1="24" y1="54" x2="15" y2="59" class="ll"/>
-  <circle cx="14" cy="60" r="1.8" class="lns"/>
-  <text x="50" y="84" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="13" font-weight="700" fill="#4338ca" letter-spacing="-0.5">ANA</text>
-  <text x="50" y="94" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="6" fill="#818cf8" letter-spacing="1.5">SECRETÁRIA</text>
+    <div class="sidenav-ico" style="background:transparent;padding:0"><svg xmlns="http://www.w3.org/2000/svg" viewBox="-205 -205 410 410" style="width:100%;height:100%">
+  <defs>
+    <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="4" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="glowSoft" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="8" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#67e8f9"/>
+      <stop offset="55%" stop-color="#22d3ee"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+    <style>
+      .spin-cw-slow  { animation: rot 46s linear infinite; transform-origin: 0 0; }
+      .spin-ccw      { animation: rotr 14s linear infinite; transform-origin: 0 0; }
+      .spin-cw       { animation: rot 22s linear infinite; transform-origin: 0 0; }
+      .spin-ccw-fast { animation: rotr 8s linear infinite; transform-origin: 0 0; }
+      .pulse         { animation: pulse 2.6s ease-in-out infinite; }
+      .pulse-txt     { animation: pulseTxt 2.6s ease-in-out infinite; }
+      .blink1        { animation: blink 1.8s ease-in-out infinite; }
+      .blink2        { animation: blink 2.4s ease-in-out .6s infinite; }
+      @keyframes rot     { to { transform: rotate(360deg); } }
+      @keyframes rotr    { to { transform: rotate(-360deg); } }
+      @keyframes pulse   { 0%,100% { opacity:.45; } 50% { opacity:1; } }
+      @keyframes pulseTxt{ 0%,100% { opacity:.85; } 50% { opacity:1; } }
+      @keyframes blink   { 0%,100% { opacity:.2; } 50% { opacity:.9; } }
+      text { font-family: 'Segoe UI', -apple-system, Arial, sans-serif; }
+    </style>
+  </defs>
+
+  <!-- anel externo: ticks finos -->
+  <g class="spin-cw-slow">
+    <circle r="178" fill="none" stroke="#22d3ee" stroke-width="1" opacity=".35"/>
+    <circle r="171" fill="none" stroke="#67e8f9" stroke-width="7" opacity=".8"
+            stroke-dasharray="1.5 7.7" filter="url(#glow)"/>
+  </g>
+
+  <!-- marcadores cardeais: DENTRO do anel externo, simétricos -->
+  <g opacity=".85">
+    <rect x="-2.4" y="-160" width="4.8" height="11" rx="1.2" fill="#67e8f9" class="blink1"/>
+    <rect x="-2.4" y="149"  width="4.8" height="11" rx="1.2" fill="#67e8f9" class="blink2"/>
+    <rect x="-160" y="-2.4" width="11" height="4.8" rx="1.2" fill="#06b6d4" class="blink2"/>
+    <rect x="149"  y="-2.4" width="11" height="4.8" rx="1.2" fill="#06b6d4" class="blink1"/>
+  </g>
+
+  <!-- anel de arcos segmentados -->
+  <g class="spin-ccw">
+    <circle r="140" fill="none" stroke="url(#grad)" stroke-width="4" stroke-linecap="round"
+            stroke-dasharray="180 113.6" filter="url(#glow)"/>
+    <circle r="140" fill="none" stroke="#06b6d4" stroke-width="2" opacity=".6"
+            stroke-dasharray="28 265.6" stroke-dashoffset="-215"/>
+  </g>
+
+  <!-- anel "binário" -->
+  <g class="spin-cw">
+    <circle r="120" fill="none" stroke="#22d3ee" stroke-width="10" opacity=".5"
+            stroke-dasharray="3 4 8 4 3 9 14 5"/>
+    <circle r="109" fill="none" stroke="#a5f3fc" stroke-width="1.4" opacity=".55"/>
+  </g>
+
+  <!-- arco de varredura rápido -->
+  <g class="spin-ccw-fast">
+    <circle r="97" fill="none" stroke="#06b6d4" stroke-width="3" stroke-linecap="round"
+            stroke-dasharray="82 527.5" filter="url(#glowSoft)"/>
+    <circle r="97" fill="none" stroke="#67e8f9" stroke-width="1.4" opacity=".5"
+            stroke-dasharray="8 18"/>
+  </g>
+
+  <!-- núcleo -->
+  <circle r="84" fill="none" stroke="url(#grad)" stroke-width="2.5" filter="url(#glow)" class="pulse"/>
+  <circle r="77" fill="#22d3ee" opacity=".08"/>
+  <circle r="77" fill="none" stroke="#22d3ee" stroke-width=".8" opacity=".5"/>
+
+  <!-- nome: A.N.A — x compensa metade do letter-spacing para centro óptico exato -->
+  <g class="pulse-txt" filter="url(#glow)">
+    <text x="3" y="13" text-anchor="middle" font-size="37" font-weight="700"
+          letter-spacing="9" fill="#ecfeff">A.N.A</text>
+  </g>
 </svg></div>
     <div><div class="sidenav-brand">Ana</div><div class="sidenav-ver">Secretária Virtual</div></div>
   </div>
@@ -1992,11 +2074,16 @@ function exportAgendaImg(){
     <div style="background:linear-gradient(135deg,#6366f1,#4338ca);padding:24px 24px 20px;border-radius:0">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
         <div style="width:38px;height:38px;background:rgba(255,255,255,.2);border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0">
-          <svg viewBox="0 0 100 100" width="26" height="26">
-            <polygon points="50,12 76,26 76,54 50,68 24,54 24,26" fill="none" stroke="white" stroke-width="7"/>
-            <circle cx="50" cy="42" r="10" fill="white" opacity=".9"/>
-            <circle cx="50" cy="42" r="5" fill="#6366f1"/>
-          </svg>
+          <svg viewBox="-200 -200 400 400" xmlns="http://www.w3.org/2000/svg" width="26" height="26">
+  <circle r="182" fill="none" stroke="#ffffff" stroke-width="2" opacity=".35"/>
+  <circle r="176" fill="none" stroke="#ffffff" stroke-width="7" opacity=".8" stroke-dasharray="1.5 7.7"/>
+  <circle r="156" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-dasharray="200 126.6"/>
+  <circle r="134" fill="none" stroke="#ffffff" stroke-width="10" opacity=".5" stroke-dasharray="3 4 8 4 3 9 14 5"/>
+  <circle r="106" fill="none" stroke="#ffffff" stroke-width="3" stroke-linecap="round" stroke-dasharray="90 576"/>
+  <circle r="88" fill="none" stroke="#ffffff" stroke-width="2.5"/>
+  <circle r="80" fill="#ffffff" opacity=".08"/>
+  <text y="10" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="46" font-weight="700" letter-spacing="8" x="-4" fill="#ffffff">A.N.A</text>
+</svg>
         </div>
         <div>
           <div style="color:white;font-size:16px;font-weight:700;letter-spacing:-.3px">${orgNome}</div>
@@ -2081,46 +2168,15 @@ async function gerarMapaCirurgico(){
       @media print{.no-print{display:none}}
       </style></head><body>
       <div class="hdr">
-        <div class="hdr-logo" style="background:transparent;padding:0"><svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%">
-  <defs><style>
-    .lh{fill:none;stroke:#6366f1;stroke-width:2}
-    .ll{fill:none;stroke:#818cf8;stroke-width:1;opacity:.6}
-    .ln{fill:#6366f1}
-    .lns{fill:#a5b4fc}
-    .lc{fill:#6366f1;opacity:.08}
-  </style></defs>
-  <circle cx="50" cy="50" r="44" class="lc"/>
-  <circle cx="50" cy="50" r="44" fill="none" stroke="#818cf8" stroke-width=".8" opacity=".4"/>
-  <polygon points="50,12 76,26 76,54 50,68 24,54 24,26" class="lh"/>
-  <polygon points="50,22 68,32 68,52 50,62 32,52 32,32" fill="#EEF2FF" stroke="#818cf8" stroke-width=".8" opacity=".6"/>
-  <line x1="50" y1="42" x2="50" y2="24" class="ll"/>
-  <line x1="50" y1="42" x2="64" y2="50" class="ll"/>
-  <line x1="50" y1="42" x2="64" y2="34" class="ll"/>
-  <line x1="50" y1="42" x2="36" y2="34" class="ll"/>
-  <line x1="50" y1="42" x2="36" y2="50" class="ll"/>
-  <line x1="50" y1="42" x2="50" y2="60" class="ll"/>
-  <circle cx="50" cy="24" r="2.5" class="ln"/>
-  <circle cx="64" cy="32" r="2.5" class="lns"/>
-  <circle cx="64" cy="52" r="2.5" class="lns"/>
-  <circle cx="50" cy="60" r="2.5" class="ln"/>
-  <circle cx="36" cy="52" r="2.5" class="lns"/>
-  <circle cx="36" cy="32" r="2.5" class="lns"/>
-  <circle cx="50" cy="42" r="9" fill="#EEF2FF" stroke="#6366f1" stroke-width="1.2"/>
-  <circle cx="50" cy="42" r="5" class="ln"/>
-  <circle cx="50" cy="42" r="2.5" fill="white"/>
-  <path d="M50 33 A9 9 0 0 1 59 42" fill="none" stroke="#6366f1" stroke-width="2.5" stroke-linecap="round"/>
-  <line x1="50" y1="12" x2="50" y2="6" class="ll"/>
-  <circle cx="50" cy="5" r="1.8" class="ln"/>
-  <line x1="76" y1="26" x2="85" y2="21" class="ll"/>
-  <circle cx="86" cy="20" r="1.8" class="lns"/>
-  <line x1="76" y1="54" x2="85" y2="59" class="ll"/>
-  <circle cx="86" cy="60" r="1.8" class="lns"/>
-  <line x1="24" y1="26" x2="15" y2="21" class="ll"/>
-  <circle cx="14" cy="20" r="1.8" class="lns"/>
-  <line x1="24" y1="54" x2="15" y2="59" class="ll"/>
-  <circle cx="14" cy="60" r="1.8" class="lns"/>
-  <text x="50" y="84" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="13" font-weight="700" fill="#4338ca" letter-spacing="-0.5">ANA</text>
-  <text x="50" y="94" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="6" fill="#818cf8" letter-spacing="1.5">SECRETÁRIA</text>
+        <div class="hdr-logo" style="background:transparent;padding:0"><svg viewBox="-200 -200 400 400" xmlns="http://www.w3.org/2000/svg" style="width:100%;height:100%">
+  <circle r="182" fill="none" stroke="#22d3ee" stroke-width="2" opacity=".35"/>
+  <circle r="176" fill="none" stroke="#67e8f9" stroke-width="7" opacity=".8" stroke-dasharray="1.5 7.7"/>
+  <circle r="156" fill="none" stroke="#22d3ee" stroke-width="4" stroke-linecap="round" stroke-dasharray="200 126.6"/>
+  <circle r="134" fill="none" stroke="#22d3ee" stroke-width="10" opacity=".5" stroke-dasharray="3 4 8 4 3 9 14 5"/>
+  <circle r="106" fill="none" stroke="#06b6d4" stroke-width="3" stroke-linecap="round" stroke-dasharray="90 576"/>
+  <circle r="88" fill="none" stroke="#22d3ee" stroke-width="2.5"/>
+  <circle r="80" fill="#22d3ee" opacity=".08"/>
+  <text y="10" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="46" font-weight="700" letter-spacing="8" x="-4" fill="#0891b2">A.N.A</text>
 </svg></div>
         <div><h1>${dataFmt}</h1><div class="sub">${m.nome_grupo} · Mapa Cirúrgico · ${m.total} procedimento${m.total!==1?'s':''} · Gerado em ${new Date().toLocaleDateString('pt-BR')}</div></div>
       </div>

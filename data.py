@@ -57,8 +57,9 @@ def _hhmm(t) -> str:
 
 
 # ── caches simples por request-burst (nome de médico/setor) ──
-def _doctors_map(gid):
-    rows = _sb("GET", f"/doctors?group_id=eq.{_q(gid)}&select=id,name,specialty,phone,user_id")
+def _doctors_map(gid, only_active=False):
+    filtro = "&active=eq.true" if only_active else ""
+    rows = _sb("GET", f"/doctors?group_id=eq.{_q(gid)}{filtro}&select=id,name,specialty,phone,user_id,active")
     return {r["id"]: r for r in rows}
 
 
@@ -163,7 +164,7 @@ def sb_delete_setor(user, sid):
 # ── MÉDICOS ─────────────────────────────────────────────────
 def sb_list_medicos(user):
     gid = _gid(user)
-    rows = _sb("GET", f"/doctors?group_id=eq.{_q(gid)}&select=id,name,specialty,phone&order=name")
+    rows = _sb("GET", f"/doctors?group_id=eq.{_q(gid)}&active=eq.true&select=id,name,specialty,phone&order=name")
     return [{"id": r["id"], "name": r["name"], "spec": r.get("specialty") or "",
              "email": "", "phone": r.get("phone") or ""} for r in rows]
 
@@ -179,8 +180,8 @@ def sb_create_medico(user, m):
 
 def sb_delete_medico(user, mid):
     gid = _gid(user)
-    _sb("DELETE", f"/doctors?id=eq.{_q(mid)}&group_id=eq.{_q(gid)}")
-    _log(user, f"Médico removido: {mid}")
+    _sb("PATCH", f"/doctors?id=eq.{_q(mid)}&group_id=eq.{_q(gid)}", {"active": False})
+    _log(user, f"Médico desativado: {mid}")
     return {"ok": True}
 
 
@@ -588,7 +589,7 @@ def sb_escala(user, mes):
     """Escala do mês (tabela shifts do MedSS) para os médicos do grupo.
     mes: 'YYYY-MM'."""
     gid = _gid(user)
-    docs = _doctors_map(gid)
+    docs = _doctors_map(gid, only_active=True)
     if not docs:
         return {"mes": mes, "medicos": [], "plantoes": {}}
     ids = ",".join(f'"{i}"' for i in docs)
@@ -764,7 +765,7 @@ def sb_creditos(user, mes):
     """Créditos do mês por médico — derivados dos plantões, como no MedSS."""
     gid = _gid(user)
     cs = sb_credit_settings(user)
-    docs = _doctors_map(gid)
+    docs = _doctors_map(gid, only_active=True)
     if not docs:
         return {"mes": mes, "medicos": [], "labels": cs}
     ids = ",".join(f'"{i}"' for i in docs)

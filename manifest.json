@@ -1,6 +1,6 @@
 {
-  "name": "Ana · Secretária Virtual de Anestesiologia",
-  "short_name": "Ana",
+  "name": "A.N.A · Secretária Virtual de Anestesiologia",
+  "short_name": "A.N.A",
   "description": "Secretária virtual com IA para grupos de anestesiologia",
   "start_url": "/",
   "display": "standalone",
@@ -8,7 +8,17 @@
   "theme_color": "#6366f1",
   "orientation": "portrait-primary",
   "icons": [
-    {"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any"},
-    {"src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable"}
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
   ]
 }

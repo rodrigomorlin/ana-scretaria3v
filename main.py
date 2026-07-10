@@ -4,7 +4,7 @@ PostgreSQL + SQLite, email, Google Calendar, relatórios
 """
 
 from fastapi import FastAPI, HTTPException, Depends, Request, BackgroundTasks
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Any, List
@@ -430,10 +430,20 @@ async def gcal_create(ev, setor_name, criado_por_id: Optional[str] = None, org_i
             "end": {"dateTime": f"{ev['date']}T{end_h:02d}:{end_m:02d}:00", "timeZone": "America/Sao_Paulo"},
         }
         if event_id:
-            # id determinístico (uuid do agendamento sem hífens) — permite deletar no cancelamento
+            # id determinístico (uuid do agendamento sem hífens) + etiqueta anaId para busca no cancelamento
             body["id"] = event_id
-        r = svc.events().insert(calendarId=calendar_id, body=body).execute()
-        log.info(f"GCal evento criado com sucesso: {r.get('id')} (calendário: {'pessoal' if user_token else 'grupo'}, id={calendar_id})")
+            body["extendedProperties"] = {"private": {"anaId": event_id}}
+        try:
+            r = svc.events().insert(calendarId=calendar_id, body=body).execute()
+        except Exception as ins_err:
+            # se o Google rejeitar o id customizado (400/409), recria sem id — a etiqueta anaId garante o cancelamento
+            if event_id and any(t in str(ins_err) for t in ("400", "409", "identifier", "Invalid")):
+                log.warning(f"GCal: id customizado rejeitado ({ins_err}) — recriando com etiqueta anaId")
+                body.pop("id", None)
+                r = svc.events().insert(calendarId=calendar_id, body=body).execute()
+            else:
+                raise
+        log.info(f"GCal evento criado: {r.get('id')} (calendário: {'pessoal' if user_token else 'grupo'}, id={calendar_id})")
         return r.get("id","")
     except Exception as e:
         log.error(f"GCal criar — FALHA: {type(e).__name__}: {e}")
@@ -443,11 +453,32 @@ async def gcal_delete(gcal_id, criado_por_id: Optional[str] = None, org_id: str 
     if not gcal_id: return
     user_token = get_user_google_token(criado_por_id) if criado_por_id else None
     calendar_id = "primary" if user_token else get_gcal_id(org_id)
+    log.info(f"GCal delete: id={gcal_id}, calendário={'pessoal' if user_token else 'grupo'} ({calendar_id})")
+    svc = _build_gcal_service(user_token)
+    if not svc:
+        log.warning("GCal delete: serviço indisponível (sem token e sem GCAL_CREDS)")
+        return
+    # 1º: delete direto pelo id determinístico
     try:
-        svc = _build_gcal_service(user_token)
-        if not svc: return
         svc.events().delete(calendarId=calendar_id, eventId=gcal_id).execute()
-    except Exception as e: log.error(f"GCal delete: {e}")
+        log.info("GCal delete: removido pelo id ✓")
+        return
+    except Exception as e:
+        log.warning(f"GCal delete por id falhou ({e}) — tentando busca pela etiqueta anaId")
+    # 2º: fallback — busca pela etiqueta anaId (cobre eventos recriados sem id custom)
+    try:
+        res = svc.events().list(calendarId=calendar_id,
+                                privateExtendedProperty=f"anaId={gcal_id}",
+                                maxResults=5).execute()
+        items = res.get("items", [])
+        if not items:
+            log.warning("GCal delete: nenhum evento com a etiqueta — provavelmente criado antes da versão atual (remover manualmente)")
+            return
+        for it in items:
+            svc.events().delete(calendarId=calendar_id, eventId=it["id"]).execute()
+        log.info(f"GCal delete: {len(items)} evento(s) removido(s) pela etiqueta ✓")
+    except Exception as e:
+        log.error(f"GCal delete (fallback etiqueta): {e}")
 
 # ── MODELOS ────────────────────────────────────────────────
 class LoginData(BaseModel):
@@ -1743,6 +1774,30 @@ def sw(): return HTMLResponse(open("sw.js").read(), media_type="application/java
 
 @app.get("/manifest.json")
 def manifest(): return JSONResponse(json.load(open("manifest.json")))
+
+from fastapi.responses import FileResponse as _FileResponse
+import os as _os
+_APP_DIR = _os.path.dirname(_os.path.abspath(__file__))
+
+@app.get("/icon-192.png")
+def icon_192():
+    return _FileResponse(_os.path.join(_APP_DIR, "icon-192.png"), media_type="image/png",
+                         headers={"Cache-Control": "public, max-age=86400"})
+
+@app.get("/icon-512.png")
+def icon_512():
+    return _FileResponse(_os.path.join(_APP_DIR, "icon-512.png"), media_type="image/png",
+                         headers={"Cache-Control": "public, max-age=86400"})
+
+@app.get("/icon-maskable-512.png")
+def icon_maskable():
+    return _FileResponse(_os.path.join(_APP_DIR, "icon-maskable-512.png"), media_type="image/png",
+                         headers={"Cache-Control": "public, max-age=86400"})
+
+@app.get("/apple-touch-icon.png")
+def apple_touch_icon():
+    return _FileResponse(_os.path.join(_APP_DIR, "apple-touch-icon.png"), media_type="image/png",
+                         headers={"Cache-Control": "public, max-age=86400"})
 
 @app.get("/icon.svg")
 def icon_svg():

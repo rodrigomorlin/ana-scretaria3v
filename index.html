@@ -6,8 +6,8 @@
 <meta name="theme-color" content="#6C63D4">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Ana">
-<title>Ana · Secretária Virtual de Anestesiologia</title>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'%3E%3Cpolygon points='50,12 76,26 76,54 50,68 24,54 24,26' fill='none' stroke='%236366f1' stroke-width='4'/%3E%3Ccircle cx='50' cy='42' r='9' fill='%23EEF2FF' stroke='%236366f1' stroke-width='3'/%3E%3Ccircle cx='50' cy='42' r='5' fill='%236366f1'/%3E%3Ccircle cx='50' cy='42' r='2.5' fill='white'/%3E%3C/svg%3E">
+<title>A.N.A · Secretária Virtual de Anestesiologia</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20viewBox%3D%22-205%20-205%20410%20410%22%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%3E%3Ccircle%20r%3D%22200%22%20fill%3D%22%230b1120%22/%3E%3Ccircle%20r%3D%22171%22%20fill%3D%22none%22%20stroke%3D%22%2367e8f9%22%20stroke-width%3D%229%22%20opacity%3D%22.85%22%20stroke-dasharray%3D%221.5%207.7%22/%3E%3Ccircle%20r%3D%22140%22%20fill%3D%22none%22%20stroke%3D%22%2322d3ee%22%20stroke-width%3D%227%22%20stroke-linecap%3D%22round%22%20stroke-dasharray%3D%22180%20113.6%22/%3E%3Ccircle%20r%3D%22120%22%20fill%3D%22none%22%20stroke%3D%22%2322d3ee%22%20stroke-width%3D%2212%22%20opacity%3D%22.5%22%20stroke-dasharray%3D%223%204%208%204%203%209%2014%205%22/%3E%3Ccircle%20r%3D%2284%22%20fill%3D%22none%22%20stroke%3D%22%2322d3ee%22%20stroke-width%3D%224%22/%3E%3Ctext%20x%3D%223%22%20y%3D%2226%22%20text-anchor%3D%22middle%22%20font-family%3D%22Arial%2Csans-serif%22%20font-size%3D%2276%22%20font-weight%3D%22700%22%20letter-spacing%3D%226%22%20fill%3D%22%23818cf8%22%3EA.N.A%3C/text%3E%3C/svg%3E">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Ana">
@@ -396,10 +396,10 @@ html,body{height:100%;background:var(--bg);color:var(--text);
   <!-- nome: A.N.A — x compensa metade do letter-spacing para centro óptico exato -->
   <g class="pulse-txt" filter="url(#glow)">
     <text x="3" y="13" text-anchor="middle" font-size="37" font-weight="700"
-          letter-spacing="9" fill="#ecfeff">A.N.A</text>
+          letter-spacing="9" fill="#818cf8">A.N.A</text>
   </g>
 </svg></div>
-    <div class="login-title">Ana v3</div>
+    <div class="login-title">A.N.A</div>
     <div class="login-sub">Secretária de Anestesiologia</div>
 
     <!-- LOGIN FORM (Supabase Auth — mesma conta do MedSS) -->
@@ -555,10 +555,10 @@ html,body{height:100%;background:var(--bg);color:var(--text);
   <!-- nome: A.N.A — x compensa metade do letter-spacing para centro óptico exato -->
   <g class="pulse-txt" filter="url(#glow)">
     <text x="3" y="13" text-anchor="middle" font-size="37" font-weight="700"
-          letter-spacing="9" fill="#ecfeff">A.N.A</text>
+          letter-spacing="9" fill="#818cf8">A.N.A</text>
   </g>
 </svg></div>
-    <div><div class="sidenav-brand">Ana</div><div class="sidenav-ver">Secretária Virtual</div></div>
+    <div><div class="sidenav-brand">A.N.A</div><div class="sidenav-ver">Secretária Virtual</div></div>
   </div>
   <div class="sidenav-section">
     <div class="sidenav-lbl">Principal</div>
@@ -597,7 +597,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 <div class="topbar">
   <div class="topbar-left">
     <div class="topbar-title" id="topbar-title">Chat</div>
-    <div class="topbar-sub" id="topbar-sub">Fale com a Ana em linguagem natural</div>
+    <div class="topbar-sub" id="topbar-sub">Fale com a A.N.A em linguagem natural</div>
   </div>
   <div class="topbar-actions" id="topbar-actions"></div>
 </div>
@@ -1506,7 +1506,7 @@ function tab(n){
   });
   // Topbar contextual
   const titles={chat:'Chat',agenda:'Agenda',escala:'Escala',relatorios:'Relatórios',config:'Configurações',logs:'Logs'};
-  const subs={chat:'Fale com a Ana em linguagem natural',agenda:'Todos os procedimentos agendados',escala:'Plantões e trocas do grupo',relatorios:'Análises e gráficos do grupo',config:'Médicos, setores e integrações',logs:'Registro de atividades do sistema'};
+  const subs={chat:'Fale com a A.N.A em linguagem natural',agenda:'Todos os procedimentos agendados',escala:'Plantões e trocas do grupo',relatorios:'Análises e gráficos do grupo',config:'Médicos, setores e integrações',logs:'Registro de atividades do sistema'};
   const tt=document.getElementById('topbar-title');
   const ts=document.getElementById('topbar-sub');
   const ta=document.getElementById('topbar-actions');
@@ -2029,7 +2029,7 @@ async function saveEdit(){
 function exportPDF(){
   const sorted=[...eventos].sort((a,b)=>a.date.localeCompare(b.date)||a.time.localeCompare(b.time));
   let rows=sorted.map(e=>{const s=getS(e.setor);return`<tr><td>${fmtD(e.date)}</td><td>${e.time}</td><td>${s.name}</td><td>${e.proc}</td><td>${e.paciente||'—'}</td><td>${e.doc}</td><td>${e.obs||'—'}</td></tr>`;}).join('');
-  const html=`<html><head><meta charset="UTF-8"><title>Agenda Ana</title><style>body{font-family:Arial;margin:22px;color:#1a1a2e}h1{font-size:17px;color:#6C63D4;margin-bottom:3px}.sub{font-size:11px;color:#888;margin-bottom:14px}table{width:100%;border-collapse:collapse;font-size:11px}th{background:#EEEDFE;color:#3C3489;padding:5px 8px;text-align:left;border-bottom:1px solid #ccc}td{padding:5px 8px;border-bottom:.5px solid #eee}tr:nth-child(even){background:#f9f9ff}@media print{button{display:none}}</style></head><body><h1>Agenda · Grupo de Anestesia</h1><div class="sub">Gerado em ${new Date().toLocaleDateString('pt-BR',{day:'2-digit',month:'long',year:'numeric'})} · ${sorted.length} procedimentos</div><button onclick="window.print()" style="margin-bottom:10px;padding:5px 14px;background:#6C63D4;color:#fff;border:none;border-radius:5px;cursor:pointer">🖨️ Imprimir / PDF</button><table><tr><th>Data</th><th>Hora</th><th>Setor</th><th>Procedimento</th><th>Paciente</th><th>Médico</th><th>Obs</th></tr>${rows}</table></body></html>`;
+  const html=`<html><head><meta charset="UTF-8"><title>Agenda A.N.A</title><style>body{font-family:Arial;margin:22px;color:#1a1a2e}h1{font-size:17px;color:#6C63D4;margin-bottom:3px}.sub{font-size:11px;color:#888;margin-bottom:14px}table{width:100%;border-collapse:collapse;font-size:11px}th{background:#EEEDFE;color:#3C3489;padding:5px 8px;text-align:left;border-bottom:1px solid #ccc}td{padding:5px 8px;border-bottom:.5px solid #eee}tr:nth-child(even){background:#f9f9ff}@media print{button{display:none}}</style></head><body><h1>Agenda · Grupo de Anestesia</h1><div class="sub">Gerado em ${new Date().toLocaleDateString('pt-BR',{day:'2-digit',month:'long',year:'numeric'})} · ${sorted.length} procedimentos</div><button onclick="window.print()" style="margin-bottom:10px;padding:5px 14px;background:#6C63D4;color:#fff;border:none;border-radius:5px;cursor:pointer">🖨️ Imprimir / PDF</button><table><tr><th>Data</th><th>Hora</th><th>Setor</th><th>Procedimento</th><th>Paciente</th><th>Médico</th><th>Obs</th></tr>${rows}</table></body></html>`;
   const w=window.open('','_blank');if(w){w.document.write(html);w.document.close();}
 }
 
@@ -2087,7 +2087,7 @@ function exportAgendaImg(){
         </div>
         <div>
           <div style="color:white;font-size:16px;font-weight:700;letter-spacing:-.3px">${orgNome}</div>
-          <div style="color:rgba(255,255,255,.75);font-size:11px">Ana · Secretária Virtual</div>
+          <div style="color:rgba(255,255,255,.75);font-size:11px">A.N.A · Secretária Virtual</div>
         </div>
       </div>
       <div style="color:white;font-size:13px;font-weight:500;margin-top:8px;text-transform:capitalize">${dataFmt}</div>
@@ -2176,7 +2176,7 @@ async function gerarMapaCirurgico(){
   <circle r="106" fill="none" stroke="#06b6d4" stroke-width="3" stroke-linecap="round" stroke-dasharray="90 576"/>
   <circle r="88" fill="none" stroke="#22d3ee" stroke-width="2.5"/>
   <circle r="80" fill="#22d3ee" opacity=".08"/>
-  <text y="10" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="46" font-weight="700" letter-spacing="8" x="-4" fill="#0891b2">A.N.A</text>
+  <text y="10" text-anchor="middle" font-family="Segoe UI,Arial,sans-serif" font-size="46" font-weight="700" letter-spacing="8" x="-4" fill="#4338ca">A.N.A</text>
 </svg></div>
         <div><h1>${dataFmt}</h1><div class="sub">${m.nome_grupo} · Mapa Cirúrgico · ${m.total} procedimento${m.total!==1?'s':''} · Gerado em ${new Date().toLocaleDateString('pt-BR')}</div></div>
       </div>

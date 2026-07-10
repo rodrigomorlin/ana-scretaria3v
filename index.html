@@ -1703,7 +1703,7 @@ RETORNE APENAS JSON sem markdown:
     : system;
   try{
     const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await getToken(),...(groupId?{'X-Group-Id':groupId}:{})},
-      body:JSON.stringify({system:systemFinal,messages:[{role:'user',content:mc}],max_tokens:6000})});
+      body:JSON.stringify({system:systemFinal,messages:[{role:'user',content:mc}]})});
     if(!res.ok){
       let errMsg=`Erro ${res.status}`;
       try{

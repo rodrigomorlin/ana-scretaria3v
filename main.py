@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, Any, List
 import os, logging, hashlib, secrets, json, base64, io
+import re, time
 from datetime import datetime, timedelta
 import urllib.request, urllib.error, urllib.parse
 
@@ -943,7 +944,7 @@ def extract_pdf(pdf_b64: str) -> str:
 class ChatRequest(BaseModel):
     system: str
     messages: List[Any]
-    max_tokens: Optional[int] = 1500
+    max_tokens: Optional[int] = None
 
 @app.post("/api/chat")
 def chat_proxy(req: ChatRequest, user=Depends(auth)):
@@ -952,6 +953,7 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
     log.info(f"Chat proxy Groq: system={len(req.system)} chars, msgs={len(req.messages)}")
 
     # Converte formato Anthropic (content pode ser string ou lista de partes) → OpenAI/Groq
+    tem_anexo = False
     openai_messages = [{"role": "system", "content": req.system}]
     for msg in req.messages:
         content = msg.get("content", "")
@@ -964,6 +966,7 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
                 if part.get("type") == "text":
                     text_parts.append(part.get("text", ""))
                 elif part.get("type") == "document":
+                    tem_anexo = True
                     src = part.get("source", {})
                     pdf_b64 = src.get("data", "")
                     extracted = extract_pdf(pdf_b64)
@@ -973,6 +976,7 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
                         text_parts.append("[Aviso: não foi possível ler o conteúdo do PDF anexado. "
                                           "Peça ao usuário para descrever o pedido médico em texto.]")
                 elif part.get("type") == "image":
+                    tem_anexo = True
                     src = part.get("source", {})
                     img_b64 = src.get("data", "")
                     mime = src.get("media_type", "image/jpeg")
@@ -999,9 +1003,12 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
             text = str(content)
         openai_messages.append({"role": role, "content": text})
 
+    # max_tokens dinâmico: reserva grande só quando há anexo (AGENDAR_MULTIPLOS de listas);
+    # no dia a dia usa 2000 para não estourar o limite por minuto (TPM) do Groq
+    limite = 6000 if tem_anexo else 2000
     payload = json.dumps({
         "model": "llama-3.3-70b-versatile",
-        "max_tokens": min(req.max_tokens or 6000, 8000),
+        "max_tokens": min(req.max_tokens or limite, limite),
         "messages": openai_messages,
         "temperature": 0.3,
     }).encode("utf-8")
@@ -1021,8 +1028,20 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
             },
             method="POST",
         )
-        with urllib.request.urlopen(http_req, timeout=60) as resp:
-            groq_resp = json.loads(resp.read())
+        groq_resp = None
+        for tentativa in range(3):
+            try:
+                with urllib.request.urlopen(http_req, timeout=60) as resp:
+                    groq_resp = json.loads(resp.read())
+                break
+            except urllib.error.HTTPError as e429:
+                if e429.code != 429 or tentativa == 2:
+                    raise
+                body429 = e429.read().decode("utf-8", errors="ignore")
+                m = re.search(r"try again in ([\d.]+)s", body429)
+                espera = min(float(m.group(1)) + 0.4, 8.0) if m else 3.0
+                log.warning(f"Groq 429 (limite por minuto) — aguardando {espera:.1f}s e tentando de novo ({tentativa+1}/2)")
+                time.sleep(espera)
         text = groq_resp["choices"][0]["message"]["content"]
         log.info("Chat proxy: resposta OK (Groq)")
         # Retorna no mesmo formato que o frontend espera (estilo Anthropic)
@@ -1030,6 +1049,8 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="ignore")
         log.error(f"Groq API erro {e.code}: {body[:500]}")
+        if e.code == 429:
+            raise HTTPException(502, "A IA está no limite de uso por minuto — aguarde alguns segundos e tente de novo.")
         raise HTTPException(502, f"Erro da API Groq ({e.code}): {body[:300]}")
     except urllib.error.URLError as e:
         log.error(f"Chat proxy URLError: {e}")

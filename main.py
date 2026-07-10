@@ -203,7 +203,7 @@ async def send_email(to, subject, body):
 def email_html(ev, setor_name):
     return f"""<div style="font-family:Arial;max-width:480px;margin:0 auto;padding:20px">
       <div style="background:#6C63D4;color:#fff;border-radius:10px 10px 0 0;padding:14px 18px">
-        <b>Ana · Novo agendamento</b></div>
+        <b>A.N.A · Novo agendamento</b></div>
       <div style="background:#f9f9ff;border:1px solid #E4E4EF;border-radius:0 0 10px 10px;padding:18px">
         <table style="width:100%;font-size:13px">
           <tr><td style="color:#888;padding:4px 0;width:110px">Setor</td><td><b>{setor_name}</b></td></tr>
@@ -213,7 +213,7 @@ def email_html(ev, setor_name):
           <tr><td style="color:#888;padding:4px 0">Horário</td><td>{ev.get('time','—')}</td></tr>
           {f"<tr><td style='color:#888;padding:4px 0'>Obs</td><td>{ev.get('obs')}</td></tr>" if ev.get('obs') else ''}
         </table>
-        <p style="font-size:10px;color:#aaa;margin-top:14px">Ana · Secretária Virtual</p>
+        <p style="font-size:10px;color:#aaa;margin-top:14px">A.N.A · Secretária Virtual</p>
       </div></div>"""
 
 # ── HELPERS DE HORÁRIO ──────────────────────────────────────
@@ -649,7 +649,7 @@ def reminder_email_html(eventos_dia, data_str):
         </tr>"""
     return f"""<div style="font-family:Arial;max-width:560px;margin:0 auto;padding:20px">
       <div style="background:#6C63D4;color:#fff;border-radius:10px 10px 0 0;padding:14px 18px">
-        <b>Ana · Resumo de {data_str}</b></div>
+        <b>A.N.A · Resumo de {data_str}</b></div>
       <div style="background:#f9f9ff;border:1px solid #E4E4EF;border-radius:0 0 10px 10px;padding:18px">
         <p style="font-size:13px;color:#555;margin-bottom:10px">{len(eventos_dia)} procedimento(s) agendado(s) para o dia.</p>
         <table style="width:100%;font-size:12px;border-collapse:collapse">
@@ -660,7 +660,7 @@ def reminder_email_html(eventos_dia, data_str):
               <th style="text-align:left;padding:5px 8px;background:#EEEDFE;color:#3C3489">Médico</th></tr>
           {rows}
         </table>
-        <p style="font-size:10px;color:#aaa;margin-top:14px">Ana · Secretária Virtual — lembrete automático</p>
+        <p style="font-size:10px;color:#aaa;margin-top:14px">A.N.A · Secretária Virtual — lembrete automático</p>
       </div></div>"""
 
 async def run_daily_reminder(org_id: Optional[str] = None):
@@ -682,7 +682,7 @@ async def run_daily_reminder(org_id: Optional[str] = None):
         if not appts:
             continue
         n = len(appts)
-        await push_all_org(gid, f"🩺 Ana · Agenda de {amanha_str}",
+        await push_all_org(gid, f"🩺 A.N.A · Agenda de {amanha_str}",
                            f"{n} procedimento{'s' if n != 1 else ''} agendado{'s' if n != 1 else ''} para amanhã", "/")
         total_push += 1
         # email por médico (opcional, requer SMTP e doctors.phone/email não existe — via profiles dos vinculados)
@@ -701,7 +701,7 @@ async def run_daily_reminder(org_id: Optional[str] = None):
                             "paciente": a.get("patient_name") or "", "setor": secs.get(a.get("sector_id") or "", ""),
                             "doc": d["name"], "obs": a.get("notes") or ""} for a in meus]
                     try:
-                        await send_email(email, f"Ana · Sua agenda de {amanha_str}",
+                        await send_email(email, f"A.N.A · Sua agenda de {amanha_str}",
                                          reminder_email_html(evs, amanha_str))
                         total_email += 1
                     except Exception as e:
@@ -1085,7 +1085,7 @@ async def push_test(user=Depends(auth)):
     sent = 0
     for sub in subs:
         info = json.loads(sub["subscription"])
-        if send_push(info, "🩺 Ana · Teste", "Notificações funcionando!", "/"):
+        if send_push(info, "🩺 A.N.A · Teste", "Notificações funcionando!", "/"):
             sent += 1
     return {"ok": True, "sent": sent}
 
@@ -1747,31 +1747,18 @@ def manifest(): return JSONResponse(json.load(open("manifest.json")))
 @app.get("/icon.svg")
 def icon_svg():
     svg = '''<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
-<rect width="512" height="512" rx="80" fill="#EEF2FF"/>
-<polygon points="256,80 370,144 370,272 256,336 142,272 142,144" fill="none" stroke="#6366f1" stroke-width="18"/>
-<polygon points="256,130 330,172 330,256 256,298 182,256 182,172" fill="#F8FAFF" stroke="#818cf8" stroke-width="8" opacity=".7"/>
-<line x1="256" y1="214" x2="256" y2="138" stroke="#818cf8" stroke-width="6" opacity=".7"/>
-<line x1="256" y1="214" x2="320" y2="250" stroke="#818cf8" stroke-width="6" opacity=".7"/>
-<line x1="256" y1="214" x2="320" y2="178" stroke="#818cf8" stroke-width="6" opacity=".7"/>
-<line x1="256" y1="214" x2="192" y2="178" stroke="#818cf8" stroke-width="6" opacity=".7"/>
-<line x1="256" y1="214" x2="192" y2="250" stroke="#818cf8" stroke-width="6" opacity=".7"/>
-<line x1="256" y1="214" x2="256" y2="290" stroke="#818cf8" stroke-width="6" opacity=".7"/>
-<circle cx="256" cy="138" r="10" fill="#6366f1"/>
-<circle cx="330" cy="172" r="10" fill="#818cf8"/>
-<circle cx="330" cy="256" r="10" fill="#818cf8"/>
-<circle cx="256" cy="290" r="10" fill="#6366f1"/>
-<circle cx="182" cy="256" r="10" fill="#818cf8"/>
-<circle cx="182" cy="172" r="10" fill="#818cf8"/>
-<circle cx="256" cy="214" r="44" fill="#EEF2FF" stroke="#6366f1" stroke-width="10"/>
-<circle cx="256" cy="214" r="26" fill="#6366f1"/>
-<circle cx="256" cy="214" r="12" fill="white"/>
-<path d="M256 170 A44 44 0 0 1 300 214" fill="none" stroke="#6366f1" stroke-width="14" stroke-linecap="round"/>
-<text x="256" y="400" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="80" font-weight="700" fill="#4338ca" letter-spacing="-2">ANA</text>
-<text x="256" y="440" text-anchor="middle" font-family="-apple-system,sans-serif" font-size="28" fill="#6366f1" letter-spacing="6">SECRE&#84;&#193;RIA</text>
+<rect width="512" height="512" rx="96" fill="#0b1120"/>
+<g transform="translate(256 256)">
+<circle r="205" fill="none" stroke="#67e8f9" stroke-width="11" opacity=".85" stroke-dasharray="1.8 9.2"/>
+<circle r="168" fill="none" stroke="#22d3ee" stroke-width="9" stroke-linecap="round" stroke-dasharray="216 136.4"/>
+<circle r="144" fill="none" stroke="#22d3ee" stroke-width="14" opacity=".5" stroke-dasharray="3.6 4.8 9.6 4.8 3.6 10.8 16.8 6"/>
+<circle r="101" fill="none" stroke="#22d3ee" stroke-width="5"/>
+<circle r="92" fill="#22d3ee" opacity=".08"/>
+<text x="4" y="31" text-anchor="middle" font-family="Arial,sans-serif" font-size="91" font-weight="700" letter-spacing="7" fill="#818cf8">A.N.A</text>
+</g>
 </svg>'''
-    return HTMLResponse(svg, media_type="image/svg+xml",
-                        headers={"Cache-Control": "public, max-age=86400"})
-
+    return Response(content=svg, media_type="image/svg+xml",
+                    headers={"Cache-Control": "public, max-age=86400"})
 @app.get("/", response_class=HTMLResponse)
 def index(): return HTMLResponse(open("index.html", encoding="utf-8").read())
 
@@ -1779,4 +1766,4 @@ def index(): return HTMLResponse(open("index.html", encoding="utf-8").read())
 ana_data.init(sb_rest=sb_rest, log=log,
               routes_duration=_google_routes_duration,
               default_group="")
-log.info("Ana · backend Supabase (banco compartilhado com o MedSS)")
+log.info("A.N.A · backend Supabase (banco compartilhado com o MedSS)")

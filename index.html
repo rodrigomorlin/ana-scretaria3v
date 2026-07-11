@@ -1650,7 +1650,6 @@ async function processInput(txt,pdf=null){
 
   const today=new Date().toISOString().slice(0,10);
   const todayFull=new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
-  const nextId=Math.max(100,...eventos.map(e=>e.id),1)+1;
 
   const prefsTxt=Object.entries(ctx.preferencias_medicos||{}).map(([doc,p])=>{
     const partes=[];
@@ -1676,16 +1675,15 @@ async function processInput(txt,pdf=null){
 MÉDICOS: ${ctx.medicos.join(', ')||'(nenhum cadastrado ainda)'}
 SETORES: ${Object.entries(ctx.setores).map(([k,v])=>`${v}(${k})`).join(', ')||'(nenhum cadastrado ainda)'}
 AGENDA: ${JSON.stringify(ctx.eventos)}
-PRÓXIMO ID: ${nextId}
 MEMÓRIAS: ${ctx.memorias.slice(0,20).join(' | ')}
 HISTÓRICO: ${ctx.historico.slice(0,10).map(h=>`${h.date} ${h.time} ${h.setor} ${h.proc} ${h.paciente}`).join(' | ')}
 PADRÕES POR MÉDICO (use como sugestão quando o usuário não especificar setor/horário/duração): ${prefsTxt||'nenhum padrão suficiente ainda'}
 CORREÇÕES APRENDIDAS (erros já cometidos antes — não repita): ${correcoesTxt||'nenhuma correção registrada ainda'}
 DESLOCAMENTOS ENTRE SETORES (tempo mínimo de folga ao mudar de local): ${deslocTxt}
 PACIENTES CONHECIDOS (histórico — ao citar um nome, use o médico/setor habitual como sugestão): ${(ctx.pacientes||[]).map(p=>`${p.nome}→${p.doc}|${p.proc}`).join(' | ')||'nenhum ainda'}
-REGRAS: interprete linguagem natural e abreviações (CC=Centro Cirúrgico, raqui=raquianestesia, AG=anestesia geral). Use memórias/histórico/padrões por médico para preencher campos omitidos. Conflito de horário ocorre SOMENTE quando o mesmo médico tiver dois procedimentos no exato mesmo horário — o servidor vai sinalizar mas agendará normalmente. OTIMIZAÇÃO DE SEQUÊNCIA: use DESLOCAMENTOS para calcular folga mínima entre setores diferentes do mesmo médico. PDF OU IMAGEM COM MÚLTIPLOS PACIENTES: se a mensagem contiver [Conteúdo extraído da imagem anexada] ou [Conteúdo extraído do PDF anexado], CONTE quantos pacientes/procedimentos existem no texto extraído. Se houver 2 ou mais, use OBRIGATORIAMENTE a ação AGENDAR_MULTIPLOS com um item em "eventos" para CADA paciente do texto — NUNCA use AGENDAR nesses casos. É PROIBIDO omitir pacientes: a lista "eventos" deve ter exatamente o mesmo número de itens que o texto extraído. Confirme na "resposta" o total (ex: 'Agendei os 7 procedimentos da lista'). novas_memorias: máx 2. suggests: 2 ações. Seja breve.
+CANCELAMENTO: para cancelar/retirar/remover agendamentos, use a ação CANCELAR com "cancelar_ids" contendo o(s) "id"(s) copiado(s) LETRA POR LETRA do campo "id" dos eventos correspondentes na AGENDA acima (são textos longos com hífens). NUNCA invente, abrevie ou numere ids. Para cancelar vários (ex: "retira todos de amanhã"), inclua TODOS os ids na lista. REGRAS: interprete linguagem natural e abreviações (CC=Centro Cirúrgico, raqui=raquianestesia, AG=anestesia geral). Use memórias/histórico/padrões por médico para preencher campos omitidos. Conflito de horário ocorre SOMENTE quando o mesmo médico tiver dois procedimentos no exato mesmo horário — o servidor vai sinalizar mas agendará normalmente. OTIMIZAÇÃO DE SEQUÊNCIA: use DESLOCAMENTOS para calcular folga mínima entre setores diferentes do mesmo médico. PDF OU IMAGEM COM MÚLTIPLOS PACIENTES: se a mensagem contiver [Conteúdo extraído da imagem anexada] ou [Conteúdo extraído do PDF anexado], CONTE quantos pacientes/procedimentos existem no texto extraído. Se houver 2 ou mais, use OBRIGATORIAMENTE a ação AGENDAR_MULTIPLOS com um item em "eventos" para CADA paciente do texto — NUNCA use AGENDAR nesses casos. É PROIBIDO omitir pacientes: a lista "eventos" deve ter exatamente o mesmo número de itens que o texto extraído. Confirme na "resposta" o total (ex: 'Agendei os 7 procedimentos da lista'). novas_memorias: máx 2. suggests: 2 ações. Seja breve.
 RETORNE APENAS JSON sem markdown:
-{"acao":"AGENDAR"|"AGENDAR_MULTIPLOS"|"CANCELAR"|"RELATORIO"|"CONSULTAR"|"CORRECAO"|"DUVIDA","resposta":"HTML","evento":{"id":N,"doc":"","setor":"","proc":"","paciente":"","date":"YYYY-MM-DD","time":"HH:MM","obs":""},"eventos":[{"doc":"","setor":"","proc":"","paciente":"","date":"YYYY-MM-DD","time":"HH:MM","obs":""}],"cancelar_id":N|null,"tabela":[{"data":"","hora":"","setor":"","proc":"","paciente":"","medico":"","obs":""}],"novas_memorias":[{"texto":"","icone":""}],"suggests":["",""]}`;
+{"acao":"AGENDAR"|"AGENDAR_MULTIPLOS"|"CANCELAR"|"RELATORIO"|"CONSULTAR"|"CORRECAO"|"DUVIDA","resposta":"HTML","evento":{"id":N,"doc":"","setor":"","proc":"","paciente":"","date":"YYYY-MM-DD","time":"HH:MM","obs":""},"eventos":[{"doc":"","setor":"","proc":"","paciente":"","date":"YYYY-MM-DD","time":"HH:MM","obs":""}],"cancelar_ids":["id"]|null,"tabela":[{"data":"","hora":"","setor":"","proc":"","paciente":"","medico":"","obs":""}],"novas_memorias":[{"texto":"","icone":""}],"suggests":["",""]}`;
 
   // Monta o conteúdo: imagem, PDF ou texto puro
   let mc;
@@ -1781,10 +1779,30 @@ RETORNE APENAS JSON sem markdown:
       if(erros.length)html+=`<br>❌ <b>Erros:</b><br>${erros.map(e=>`• ${e}`).join('<br>')}`;
       addMsg(html,'bot',{sug});
       if(pdf)rmPDF();
-    } else if(p.acao==='CANCELAR'&&p.cancelar_id!=null){
-      const idx=eventos.findIndex(e=>e.id===p.cancelar_id);
-      if(idx>=0){const ev=eventos[idx];try{await api('DELETE',`/api/eventos/${p.cancelar_id}`);eventos.splice(idx,1);addMsg(`🗑️ Cancelado: <b>${ev.proc}</b> — ${ev.paciente||'—'} — ${fmtD(ev.date)} às ${ev.time}.`,'bot',{sug});}catch(e){addMsg(`⚠️ ${e.message}`,'bot',{sug});}}
-      else addMsg(p.resposta||'Não encontrado.','bot',{sug});
+    } else if(p.acao==='CANCELAR'&&(p.cancelar_ids||p.cancelar_id!=null)){
+      const pedidos=(p.cancelar_ids||[p.cancelar_id]).filter(x=>x!=null).map(String);
+      const achar=(pid)=>{
+        let i=eventos.findIndex(e=>String(e.id)===pid);
+        if(i<0&&pid.length>=8)i=eventos.findIndex(e=>String(e.id).replace(/-/g,'').startsWith(pid.replace(/-/g,'')));
+        if(i<0&&p.evento)i=eventos.findIndex(e=>e.paciente&&p.evento.paciente&&e.paciente.toLowerCase()===p.evento.paciente.toLowerCase()&&e.date===p.evento.date);
+        return i;
+      };
+      const okList=[],falhas=[];
+      for(const pid of pedidos){
+        const idx=achar(pid);
+        if(idx<0){falhas.push(pid.slice(0,8));continue;}
+        const ev=eventos[idx];
+        try{
+          await api('DELETE',`/api/eventos/${ev.id}`);
+          eventos.splice(idx,1);
+          okList.push(`<b>${ev.proc}</b> — ${ev.paciente||'—'} — ${fmtD(ev.date)} ${ev.time}`);
+        }catch(e){falhas.push(`${ev.paciente||pid.slice(0,8)}: ${e.message}`);}
+      }
+      let msg='';
+      if(okList.length)msg+=`🗑️ Cancelado${okList.length>1?'s':''} (${okList.length}):<br>• ${okList.join('<br>• ')}<br><span style="font-size:10px;color:var(--hint)">Removido${okList.length>1?'s':''} da agenda e do Google Calendar.</span>`;
+      if(falhas.length)msg+=`${okList.length?'<br>':''}⚠️ Não encontrado${falhas.length>1?'s':''}: ${falhas.join(', ')}`;
+      addMsg(msg||p.resposta||'Não encontrado.','bot',{sug});
+      if(okList.length)renderAgenda();
     } else if((p.acao==='RELATORIO'||p.acao==='CONSULTAR')&&p.tabela){
       const t=p.tabela;
       if(!t.length){addMsg(p.resposta||'Nenhum agendamento.','bot',{sug});}

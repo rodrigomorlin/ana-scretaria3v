@@ -1003,12 +1003,13 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
             text = str(content)
         openai_messages.append({"role": role, "content": text})
 
-    # max_tokens dinâmico: reserva grande só quando há anexo (AGENDAR_MULTIPLOS de listas);
-    # no dia a dia usa 2000 para não estourar o limite por minuto (TPM) do Groq
+    # max_tokens dinâmico: reserva grande só quando há anexo (AGENDAR_MULTIPLOS de listas)
     limite = 6000 if tem_anexo else 2000
+    max_tk = min(req.max_tokens or limite, limite)
+
     payload = json.dumps({
         "model": "llama-3.3-70b-versatile",
-        "max_tokens": min(req.max_tokens or limite, limite),
+        "max_tokens": max_tk,
         "messages": openai_messages,
         "temperature": 0.3,
     }).encode("utf-8")

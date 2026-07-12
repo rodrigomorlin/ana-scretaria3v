@@ -27,6 +27,8 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 
 SECRET         = os.environ.get("SECRET_KEY", "ana-secretaria-default-secret-change-me")
 GROQ_KEY       = os.environ.get("GROQ_API_KEY", "")
+CEREBRAS_API_KEY = os.environ.get("CEREBRAS_API_KEY", "")
+CEREBRAS_MODEL   = os.environ.get("CEREBRAS_MODEL", "llama-3.3-70b")
 SMTP_HOST      = os.environ.get("SMTP_HOST", "")
 SMTP_PORT      = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USER      = os.environ.get("SMTP_USER", "")
@@ -948,9 +950,14 @@ class ChatRequest(BaseModel):
 
 @app.post("/api/chat")
 def chat_proxy(req: ChatRequest, user=Depends(auth)):
-    if not GROQ_KEY:
-        raise HTTPException(500, "GROQ_API_KEY não configurada no servidor.")
-    log.info(f"Chat proxy Groq: system={len(req.system)} chars, msgs={len(req.messages)}")
+    """Cascata de motores: Gemini 2.5 Flash → Groq → Cerebras (os configurados, nessa ordem)."""
+    motores = []
+    if GEMINI_API_KEY: motores.append("gemini")
+    if GROQ_KEY: motores.append("groq")
+    if CEREBRAS_API_KEY: motores.append("cerebras")
+    if not motores:
+        raise HTTPException(500, "Nenhum motor de IA configurado (GEMINI_API_KEY / GROQ_API_KEY / CEREBRAS_API_KEY).")
+    log.info(f"Chat proxy [cascata: {'→'.join(motores)}]: system={len(req.system)} chars, msgs={len(req.messages)}")
 
     # Converte formato Anthropic (content pode ser string ou lista de partes) → OpenAI/Groq
     tem_anexo = False
@@ -1007,96 +1014,79 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
     limite = 6000 if tem_anexo else 2000
     max_tk = min(req.max_tokens or limite, limite)
 
-    payload = json.dumps({
-        "model": "llama-3.3-70b-versatile",
-        "max_tokens": max_tk,
-        "messages": openai_messages,
-        "temperature": 0.3,
-    }).encode("utf-8")
+    limite = 6000 if tem_anexo else 2000
+    max_tk = min(req.max_tokens or limite, limite)
 
-    total_chars = sum(len(m.get("content","")) for m in openai_messages)
-    log.info(f"Chat proxy: {len(openai_messages)} msgs, ~{total_chars} chars totais no contexto, payload={len(payload)} bytes")
+    def _openai_compat(nome, url, key, model):
+        payload = json.dumps({"model": model, "max_tokens": max_tk,
+                              "messages": openai_messages, "temperature": 0.3}).encode("utf-8")
+        http_req = urllib.request.Request(url, data=payload, method="POST",
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"})
+        with urllib.request.urlopen(http_req, timeout=60) as resp:
+            j = json.loads(resp.read())
+        return j["choices"][0]["message"]["content"]
 
-    try:
+    def _gemini_chat():
+        contents = []
+        for m in openai_messages:
+            if m["role"] == "system":
+                continue
+            contents.append({"role": "model" if m["role"] == "assistant" else "user",
+                             "parts": [{"text": m["content"]}]})
+        payload = json.dumps({
+            "systemInstruction": {"parts": [{"text": req.system}]},
+            "contents": contents,
+            "generationConfig": {"temperature": 0.3, "maxOutputTokens": max_tk,
+                                 "responseMimeType": "application/json",
+                                 "thinkingConfig": {"thinkingBudget": 0}},
+        }).encode("utf-8")
         http_req = urllib.request.Request(
-            "https://api.groq.com/openai/v1/chat/completions",
-            data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {GROQ_KEY}",
-                "User-Agent": "Mozilla/5.0 (compatible; AnaSecretaria/3.0; +https://railway.app)",
-                "Accept": "application/json",
-            },
-            method="POST",
-        )
-        groq_resp = None
-        for tentativa in range(3):
+            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}",
+            data=payload, method="POST", headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(http_req, timeout=60) as resp:
+            j = json.loads(resp.read())
+        cand = (j.get("candidates") or [{}])[0]
+        parts = (cand.get("content") or {}).get("parts") or []
+        text = "".join(p.get("text", "") for p in parts)
+        if not text:
+            raise RuntimeError(f"Gemini sem texto (finish={cand.get('finishReason')})")
+        return text
+
+    ultimo_erro = None
+    for idx, motor in enumerate(motores):
+        ultimo = idx == len(motores) - 1
+        tentativas = 2 if ultimo else 1   # no último motor, insiste uma vez a mais no 429
+        for t in range(tentativas):
             try:
-                with urllib.request.urlopen(http_req, timeout=60) as resp:
-                    groq_resp = json.loads(resp.read())
+                if motor == "gemini":
+                    text = _gemini_chat()
+                elif motor == "groq":
+                    text = _openai_compat("groq", "https://api.groq.com/openai/v1/chat/completions",
+                                          GROQ_KEY, "llama-3.3-70b-versatile")
+                else:
+                    text = _openai_compat("cerebras", "https://api.cerebras.ai/v1/chat/completions",
+                                          CEREBRAS_API_KEY, CEREBRAS_MODEL)
+                log.info(f"Chat proxy: resposta OK ({motor})")
+                return {"content": [{"type": "text", "text": text}]}
+            except urllib.error.HTTPError as e:
+                body = e.read().decode("utf-8", errors="ignore")
+                ultimo_erro = f"{motor} {e.code}: {body[:200]}"
+                if e.code == 429 and ultimo and t == 0:
+                    m = re.search(r"try again in ([\d.]+)s", body)
+                    espera = min(float(m.group(1)) + 0.4, 8.0) if m else 3.0
+                    log.warning(f"{motor} 429 (último motor) — aguardando {espera:.1f}s")
+                    time.sleep(espera)
+                    continue
+                log.warning(f"Motor {motor} falhou ({e.code}) — {'tentando o próximo' if not ultimo else 'sem mais motores'}")
                 break
-            except urllib.error.HTTPError as e429:
-                if e429.code != 429 or tentativa == 2:
-                    raise
-                body429 = e429.read().decode("utf-8", errors="ignore")
-                m = re.search(r"try again in ([\d.]+)s", body429)
-                espera = min(float(m.group(1)) + 0.4, 8.0) if m else 3.0
-                log.warning(f"Groq 429 (limite por minuto) — aguardando {espera:.1f}s e tentando de novo ({tentativa+1}/2)")
-                time.sleep(espera)
-        text = groq_resp["choices"][0]["message"]["content"]
-        log.info("Chat proxy: resposta OK (Groq)")
-        # Retorna no mesmo formato que o frontend espera (estilo Anthropic)
-        return {"content": [{"type": "text", "text": text}]}
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="ignore")
-        log.error(f"Groq API erro {e.code}: {body[:500]}")
-        if e.code == 429:
-            raise HTTPException(502, "A IA está no limite de uso por minuto — aguarde alguns segundos e tente de novo.")
-        raise HTTPException(502, f"Erro da API Groq ({e.code}): {body[:300]}")
-    except urllib.error.URLError as e:
-        log.error(f"Chat proxy URLError: {e}")
-        raise HTTPException(502, f"Erro de conexão com Groq: {e.reason}")
-    except (KeyError, IndexError) as e:
-        log.error(f"Resposta inesperada da Groq: {e}")
-        raise HTTPException(502, "Resposta inesperada da API Groq.")
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.error(f"Chat proxy erro: {e}")
-        raise HTTPException(500, str(e))
-
-# ── WEB PUSH NOTIFICATIONS ─────────────────────────────────
-def send_push(subscription_info: dict, title: str, body: str, url: str = "/") -> bool:
-    """Envia uma Web Push notification para uma subscription."""
-    if not VAPID_PUBLIC_KEY or not VAPID_PRIVATE_KEY:
-        return False
-    try:
-        from pywebpush import webpush, WebPushException
-        webpush(
-            subscription_info=subscription_info,
-            data=json.dumps({"title": title, "body": body, "url": url}),
-            vapid_private_key=VAPID_PRIVATE_KEY,
-            vapid_claims={"sub": f"mailto:{VAPID_CLAIMS_EMAIL}"}
-        )
-        return True
-    except Exception as e:
-        log.error(f"Push notification erro: {e}")
-        return False
-
-async def push_all_org(org_id: str, title: str, body: str, url: str = "/"):
-    """Envia push para todos os usuários do grupo com subscription ativa."""
-    rows = sb_rest("GET", f"/ana_push_subscriptions?group_id=eq.{org_id}&select=id,subscription")
-    subs = [{"id": r["id"], "subscription": json.dumps(r["subscription"])} for r in rows]
-    sent = 0
-    for sub in subs:
-        try:
-            info = json.loads(sub["subscription"])
-            if send_push(info, title, body, url):
-                sent += 1
-        except Exception as e:
-            log.error(f"Push erro sub {sub['id']}: {e}")
-    return sent
-
+            except Exception as e:
+                ultimo_erro = f"{motor}: {e}"
+                log.warning(f"Motor {motor} falhou ({e}) — {'tentando o próximo' if not ultimo else 'sem mais motores'}")
+                break
+    log.error(f"Todos os motores falharam. Último erro: {ultimo_erro}")
+    if ultimo_erro and "429" in ultimo_erro:
+        raise HTTPException(502, "As IAs estão no limite de uso por minuto — aguarde alguns segundos e tente de novo.")
+    raise HTTPException(502, f"Falha nos motores de IA: {ultimo_erro}")
 @app.get("/api/push/vapid-key")
 def get_vapid_key():
     """Retorna a chave pública VAPID para o frontend registrar subscriptions."""

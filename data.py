@@ -89,10 +89,10 @@ def _appt_to_evento(a, docs, secs):
 def _find_doctor_id(gid, name):
     if not name:
         return None
-    rows = _sb("GET", f"/doctors?group_id=eq.{_q(gid)}&name=eq.{_q(name)}&select=id")
+    rows = _sb("GET", f"/doctors?group_id=eq.{_q(gid)}&active=eq.true&name=eq.{_q(name)}&select=id")
     if rows:
         return rows[0]["id"]
-    rows = _sb("GET", f"/doctors?group_id=eq.{_q(gid)}&name=ilike.{_q('*' + name + '*')}&select=id&limit=1")
+    rows = _sb("GET", f"/doctors?group_id=eq.{_q(gid)}&active=eq.true&name=ilike.{_q('*' + name + '*')}&select=id&limit=1")
     return rows[0]["id"] if rows else None
 
 
@@ -258,6 +258,9 @@ def sb_list_eventos(user):
 def sb_create_evento(user, ev):
     gid = _gid(user)
     doctor_id = _find_doctor_id(gid, ev.doc)
+    if ev.doc and not doctor_id:
+        raise HTTPException(400, f"Médico '{ev.doc}' não encontrado entre os médicos ativos do grupo. "
+                                 f"Confira o nome na aba Config → Médicos.")
     sector_id = _find_sector_id(gid, ev.setor)
     body = {
         "group_id": gid,
@@ -496,13 +499,16 @@ def sb_contexto_ia(user):
     memorias = [m["content"] for m in mems]
 
     historico = evs[:15]
-    medicos = [d["name"] for d in docs.values()]
+    # a IA só deve conhecer médicos ATIVOS (desativados seguem resolvendo nomes em eventos antigos)
+    ativos = {did for did, d in docs.items() if d.get("active", True)}
+    nomes_ativos = {docs[did]["name"] for did in ativos}
+    medicos = sorted(nomes_ativos)
     setores = {sid: s["name"] for sid, s in secs.items()}
 
     # padrões por médico
     prefs = {}
     for e in evs:
-        if not e["doc"]:
+        if not e["doc"] or e["doc"] not in nomes_ativos:
             continue
         p = prefs.setdefault(e["doc"], {"setores": {}, "horas": {}})
         if e["setor"]:

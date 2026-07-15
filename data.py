@@ -63,8 +63,9 @@ def _doctors_map(gid, only_active=False):
     return {r["id"]: r for r in rows}
 
 
-def _sectors_map(gid):
-    rows = _sb("GET", f"/sectors?group_id=eq.{_q(gid)}&active=eq.true&select=id,name,color,address")
+def _sectors_map(gid, only_active=False):
+    filtro = "&active=eq.true" if only_active else ""
+    rows = _sb("GET", f"/sectors?group_id=eq.{_q(gid)}{filtro}&select=id,name,color,address,active")
     return {r["id"]: r for r in rows}
 
 
@@ -74,6 +75,7 @@ def _appt_to_evento(a, docs, secs):
         "id": a["id"],
         "doc": doc.get("name", "") or (a.get("surgeon") or ""),
         "setor": a.get("sector_id") or "",
+        "setor_nome": secs.get(a.get("sector_id") or "", {}).get("name", ""),
         "proc": a.get("procedure") or "",
         "paciente": a.get("patient_name") or "",
         "date": a.get("appointment_date") or "",

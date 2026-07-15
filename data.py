@@ -259,8 +259,10 @@ def sb_create_evento(user, ev):
     gid = _gid(user)
     doctor_id = _find_doctor_id(gid, ev.doc)
     if ev.doc and not doctor_id:
-        raise HTTPException(400, f"Médico '{ev.doc}' não encontrado entre os médicos ativos do grupo. "
-                                 f"Confira o nome na aba Config → Médicos.")
+        ativos = [d["name"] for d in _doctors_map(gid, only_active=True).values()]
+        lista = ", ".join(sorted(ativos)) or "nenhum cadastrado"
+        raise HTTPException(400, f"Médico '{ev.doc}' não encontrado entre os médicos ativos ({lista}). "
+                                 f"Se '{ev.doc}' for um exame ou procedimento, informe-o no campo procedimento.")
     sector_id = _find_sector_id(gid, ev.setor)
     body = {
         "group_id": gid,

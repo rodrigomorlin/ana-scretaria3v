@@ -29,6 +29,8 @@ SECRET         = os.environ.get("SECRET_KEY", "ana-secretaria-default-secret-cha
 GROQ_KEY       = os.environ.get("GROQ_API_KEY", "")
 CEREBRAS_API_KEY = os.environ.get("CEREBRAS_API_KEY", "")
 CEREBRAS_MODEL   = os.environ.get("CEREBRAS_MODEL", "llama-3.3-70b")
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+EMAIL_FROM     = os.environ.get("EMAIL_FROM", "A.N.A <onboarding@resend.dev>")
 SMTP_HOST      = os.environ.get("SMTP_HOST", "")
 SMTP_PORT      = int(os.environ.get("SMTP_PORT", "587"))
 SMTP_USER      = os.environ.get("SMTP_USER", "")
@@ -189,7 +191,27 @@ def get_gcal_id(org_id: str = "default") -> str:
 
 # ── EMAIL ──────────────────────────────────────────────────
 async def send_email(to, subject, body):
-    if not SMTP_HOST or not to: return
+    """Envio de email: Resend (RESEND_API_KEY) com fallback SMTP."""
+    if not to: return
+    if RESEND_API_KEY:
+        try:
+            payload = json.dumps({"from": EMAIL_FROM, "to": [to],
+                                  "subject": subject, "html": body}).encode("utf-8")
+            http_req = urllib.request.Request(
+                "https://api.resend.com/emails", data=payload, method="POST",
+                headers={"Content-Type": "application/json",
+                         "Authorization": f"Bearer {RESEND_API_KEY}"})
+            with urllib.request.urlopen(http_req, timeout=20) as resp:
+                r = json.loads(resp.read())
+            log.info(f"Email (Resend) → {to} · id={r.get('id','?')}")
+            return
+        except urllib.error.HTTPError as e:
+            log.error(f"Resend erro {e.code}: {e.read().decode('utf-8','ignore')[:300]}")
+            return
+        except Exception as e:
+            log.error(f"Resend erro: {e}")
+            return
+    if not SMTP_HOST: return
     try:
         import smtplib
         from email.mime.text import MIMEText
@@ -200,7 +222,7 @@ async def send_email(to, subject, body):
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as s:
             s.starttls(); s.login(SMTP_USER, SMTP_PASS)
             s.sendmail(SMTP_FROM, to, msg.as_string())
-        log.info(f"Email → {to}")
+        log.info(f"Email (SMTP) → {to}")
     except Exception as e: log.error(f"Email erro: {e}")
 
 def email_html(ev, setor_name):
@@ -916,6 +938,7 @@ Seja preciso e inclua todos os pacientes listados. Não omita nenhum dado."""
         return ""
 
 
+def _extract_pdf_text(pdf_b64: str, max_chars: int = 20000) -> str:
     """Extrai texto de um PDF em base64 via pypdf (fallback quando sem Gemini API key)."""
     if not PDF_SUPPORT or not pdf_b64:
         return ""
@@ -924,7 +947,14 @@ Seja preciso e inclua todos os pacientes listados. Não omita nenhum dado."""
         reader = PdfReader(io.BytesIO(pdf_bytes))
         text = ""
         for page in reader.pages:
-            text += page.extract_text() or ""
+            # modo layout preserva as colunas de tabelas (mapas cirúrgicos) — essencial para a IA
+            try:
+                t = page.extract_text(extraction_mode="layout") or ""
+            except Exception:
+                t = ""
+            if not t.strip():
+                t = page.extract_text() or ""
+            text += t
             if len(text) >= max_chars:
                 break
         result = text[:max_chars].strip()
@@ -1036,9 +1066,11 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
         payload = json.dumps({
             "systemInstruction": {"parts": [{"text": req.system}]},
             "contents": contents,
-            "generationConfig": {"temperature": 0.3, "maxOutputTokens": max_tk,
+            "generationConfig": {"temperature": 0.3,
+                                 # com anexo: libera raciocínio (2048) p/ organizar escalas; o teto acomoda o thinking
+                                 "maxOutputTokens": max_tk + (2048 if tem_anexo else 0),
                                  "responseMimeType": "application/json",
-                                 "thinkingConfig": {"thinkingBudget": 0}},
+                                 "thinkingConfig": {"thinkingBudget": 2048 if tem_anexo else 0}},
         }).encode("utf-8")
         http_req = urllib.request.Request(
             f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}",
@@ -1524,8 +1556,72 @@ def listar_solicitacoes(user=Depends(auth)):
              "email": perfis.get(r["user_id"], {}).get("email") or "",
              "role": r.get("requested_role", "member")} for r in rows]
 
+
+def welcome_email_html(nome: str, grupo: str) -> str:
+    """Email de boas-vindas — visual da marca, compatível com Gmail/Outlook (tabelas + estilos inline)."""
+    base = (APP_BASE_URL or "").rstrip("/")
+    logo = f"{base}/icon-192.png" if base else ""
+    logo_html = (f'<img src="{logo}" width="76" height="76" alt="A.N.A" '
+                 f'style="display:block;border-radius:18px">' if logo else
+                 '<div style="font-size:30px;font-weight:700;color:#818cf8;letter-spacing:4px">A.N.A</div>')
+    primeiro = (nome or "").split(" ")[0] or "colega"
+    return f"""<!doctype html>
+<html><body style="margin:0;padding:0;background:#f1f5f9;font-family:'Segoe UI',Arial,sans-serif">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:28px 12px">
+<tr><td align="center">
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(15,23,42,.08)">
+
+  <tr><td align="center" style="background:#0b1120;padding:34px 24px 26px">
+    {logo_html}
+    <div style="font-size:24px;font-weight:700;color:#eef2ff;letter-spacing:6px;margin-top:14px">A.N.A</div>
+    <div style="font-size:12px;color:#67e8f9;letter-spacing:2px;margin-top:4px">SECRET&Aacute;RIA VIRTUAL DE ANESTESIOLOGIA</div>
+  </td></tr>
+
+  <tr><td style="padding:34px 36px 8px">
+    <div style="font-size:19px;font-weight:700;color:#0f172a">Bem-vindo(a), Dr(a). {primeiro}! 🎉</div>
+    <p style="font-size:14px;line-height:1.7;color:#334155;margin:14px 0 0">
+      Sua entrada no grupo <b style="color:#4338ca">{grupo}</b> foi aprovada.
+      A partir de agora voc&ecirc; tem acesso &agrave; <b>A.N.A</b> — a assistente com intelig&ecirc;ncia artificial
+      que cuida da agenda e da escala do seu grupo de anestesiologia.
+    </p>
+  </td></tr>
+
+  <tr><td style="padding:18px 36px 6px">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+      <tr><td style="padding:11px 14px;background:#f8fafc;border-radius:10px;border-left:3px solid #22d3ee">
+        <div style="font-size:13px;font-weight:700;color:#0f172a">💬 Agendamento em linguagem natural</div>
+        <div style="font-size:12px;color:#64748b;margin-top:3px">Converse com a A.N.A pelo chat — ou envie a <b>foto</b> ou o <b>PDF</b> do mapa cir&uacute;rgico e ela agenda todos os procedimentos de uma vez.</div>
+      </td></tr>
+      <tr><td style="height:8px"></td></tr>
+      <tr><td style="padding:11px 14px;background:#f8fafc;border-radius:10px;border-left:3px solid #6366f1">
+        <div style="font-size:13px;font-weight:700;color:#0f172a">🗓️ Escala de plant&otilde;es integrada</div>
+        <div style="font-size:12px;color:#64748b;margin-top:3px">Veja e edite a escala do grupo, proponha <b>trocas</b>, anuncie plant&otilde;es para colegas assumirem e acompanhe seus <b>cr&eacute;ditos</b> do m&ecirc;s.</div>
+      </td></tr>
+      <tr><td style="height:8px"></td></tr>
+      <tr><td style="padding:11px 14px;background:#f8fafc;border-radius:10px;border-left:3px solid #22d3ee">
+        <div style="font-size:13px;font-weight:700;color:#0f172a">🔔 Avisos inteligentes</div>
+        <div style="font-size:12px;color:#64748b;margin-top:3px">Notifica&ccedil;&otilde;es de novos agendamentos, trocas e o resumo da agenda do dia seguinte — com sincroniza&ccedil;&atilde;o opcional ao seu <b>Google Calendar</b>.</div>
+      </td></tr>
+    </table>
+  </td></tr>
+
+  <tr><td align="center" style="padding:26px 36px 8px">
+    <a href="{base or '#'}" style="display:inline-block;background:#4338ca;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;padding:13px 34px;border-radius:10px">Acessar a A.N.A</a>
+    <div style="font-size:11px;color:#94a3b8;margin-top:12px">💡 Dica: no celular, use <b>&ldquo;Adicionar &agrave; tela de in&iacute;cio&rdquo;</b> para instalar a A.N.A como aplicativo.</div>
+  </td></tr>
+
+  <tr><td style="padding:22px 36px 26px">
+    <div style="border-top:1px solid #e2e8f0;padding-top:14px;font-size:11px;color:#94a3b8;text-align:center">
+      Voc&ecirc; recebeu este email porque sua entrada no grupo {grupo} foi aprovada pelo administrador.<br>
+      A.N.A &middot; Secret&aacute;ria Virtual de Anestesiologia
+    </div>
+  </td></tr>
+</table>
+</td></tr></table>
+</body></html>"""
+
 @app.post("/api/grupos/solicitacoes/{req_id}/responder")
-def responder_solicitacao(req_id: str, r: SolicitacaoResposta, user=Depends(auth)):
+def responder_solicitacao(req_id: str, r: SolicitacaoResposta, bg: BackgroundTasks, user=Depends(auth)):
     if user["role"] != "admin":
         raise HTTPException(403, "Apenas administradores podem aprovar solicitações.")
     gid = user.get("org_id")
@@ -1539,6 +1635,16 @@ def responder_solicitacao(req_id: str, r: SolicitacaoResposta, user=Depends(auth
         sb_rest("POST", "/group_members",
                 {"user_id": req["user_id"], "group_id": gid, "role": req.get("requested_role", "member")})
         _membership_cache.pop(req["user_id"], None)
+        # email de boas-vindas ao novo integrante
+        try:
+            perfil = sb_rest("GET", f"/profiles?id=eq.{req['user_id']}&select=full_name,email")
+            grupo = sb_rest("GET", f"/groups?id=eq.{gid}&select=name")
+            if perfil and perfil[0].get("email"):
+                bg.add_task(send_email, perfil[0]["email"],
+                            f"🎉 Bem-vindo(a) ao grupo {grupo[0]['name'] if grupo else ''} — A.N.A",
+                            welcome_email_html(perfil[0].get("full_name") or "", grupo[0]["name"] if grupo else "seu grupo"))
+        except Exception as e:
+            log.warning(f"email boas-vindas: {e}")
     sb_rest("PATCH", f"/group_join_requests?id=eq.{req_id}",
             {"status": "approved" if r.aprovar else "rejected"})
     log.info(f"Solicitação {'aprovada' if r.aprovar else 'recusada'}: {req_id}")

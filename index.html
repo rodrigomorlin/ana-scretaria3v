@@ -1653,6 +1653,7 @@ async function processInput(txt,pdf=null){
   await new Promise(r=>setTimeout(r,400));
 
   let ctx;try{ctx=await api('GET','/api/contexto-ia');}catch{ctx={eventos,memorias:memorias.map(m=>m.texto),historico:[],medicos:medicos.map(m=>m.name),setores:Object.fromEntries(setores.map(s=>[s.id,s.name])),preferencias_medicos:{},correcoes:[]};}
+window._ctxCache=ctx;
 
   const today=new Date().toISOString().slice(0,10);
   const todayFull=new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long',year:'numeric'});
@@ -1689,6 +1690,7 @@ DESLOCAMENTOS ENTRE SETORES (tempo mínimo de folga ao mudar de local): ${desloc
 PACIENTES CONHECIDOS (histórico — ao citar um nome, use o médico/setor habitual como sugestão): ${(ctx.pacientes||[]).map(p=>`${p.nome}→${p.doc}|${p.proc}`).join(' | ')||'nenhum ainda'}
 ORGANIZAR ESCALA (distribuição de anestesistas): quando o usuário enviar um mapa cirúrgico (PDF/imagem) e pedir para ORGANIZAR, DISTRIBUIR ou DIVIDIR os casos entre os anestesistas, use a ação ORGANIZAR. Processo: 1) extraia TODOS os procedimentos com local, horário de início e fim; 2) consulte as MEMÓRIAS DO GRUPO — regras de escala salvas lá (alocações fixas, restrições, preferências) são OBRIGATÓRIAS; 3) distribua os casos entre os médicos do grupo (ou as pessoas citadas no documento) obedecendo: nenhum profissional com dois casos de horários sobrepostos; casos no MESMO local em sequência ficam com o mesmo profissional; trocar de hospital exige folga mínima de 30 minutos entre o fim de um caso e o início do outro (use os deslocamentos cadastrados quando existirem); equilibre a carga entre os profissionais; 4) responda com a ação ORGANIZAR preenchendo "tabela" com TODOS os casos e a coluna "medico" com o profissional atribuído, e na "resposta" explique brevemente a lógica (picos de simultaneidade, quantos profissionais foram necessários); 5) NÃO agende nada ainda — inclua em "suggests" a opção "Agendar tudo conforme a distribuição". Se o usuário confirmar em seguida, aí sim use AGENDAR_MULTIPLOS com o campo "doc" de cada evento preenchido conforme a tabela.
 LEITURA DE MAPAS CIRÚRGICOS: o texto extraído de PDFs vem com as colunas coladas. A última coluna de cada linha é o CONVÊNIO (IPE, UNIMED, SUS, PART, PARTICULAR, SULMED, IPÊ, MASTER, VERTE, BRADESCO, AMIL...) — nunca confunda convênio com local. Os NOMES DE HOSPITAIS/CLÍNICAS aparecem como cabeçalhos de seção entre os blocos de linhas (ex: HOSPITAL ERNESTO DORNELLES, HOSPITAL MÃE DE DEUS, CENTER = Mãe de Deus Center, HOSPITAL MOINHOS DE VENTO, CLINICA BELLE, HOSPITAL PUC). Rodapés costumam trazer plantões e restrições por INICIAIS dos anestesistas (ex: "PRÉS NO HED: RAF") — trate como regras do dia.
+CAMPOS DO EVENTO — REGRA CRÍTICA: "doc" SÓ pode conter um nome copiado EXATAMENTE da lista MEDICOS do contexto — NUNCA o nome de exame, procedimento ou setor (ETE, colono, EDA, raqui etc. são PROCEDIMENTOS e vão em "proc"). Se o usuário citar um médico da lista, use-o em "doc"; se não citar e o grupo tiver um único médico, use esse; se houver vários e nenhum citado, pergunte qual médico (ação DUVIDA). Exemplo: "Agendar para Rodrigo Morlin ETE" → doc:"Rodrigo Morlin", proc:"ETE".
 CANCELAMENTO: para cancelar/retirar/remover agendamentos, use a ação CANCELAR com "cancelar_ids" contendo o(s) "id"(s) copiado(s) LETRA POR LETRA do campo "id" dos eventos correspondentes na AGENDA acima (são textos longos com hífens). NUNCA invente, abrevie ou numere ids. Para cancelar vários (ex: "retira todos de amanhã"), inclua TODOS os ids na lista. REGRAS: interprete linguagem natural e abreviações (CC=Centro Cirúrgico, raqui=raquianestesia, AG=anestesia geral). Use memórias/histórico/padrões por médico para preencher campos omitidos. Conflito de horário ocorre SOMENTE quando o mesmo médico tiver dois procedimentos no exato mesmo horário — o servidor vai sinalizar mas agendará normalmente. OTIMIZAÇÃO DE SEQUÊNCIA: use DESLOCAMENTOS para calcular folga mínima entre setores diferentes do mesmo médico. PDF OU IMAGEM COM MÚLTIPLOS PACIENTES: se a mensagem contiver [Conteúdo extraído da imagem anexada] ou [Conteúdo extraído do PDF anexado], CONTE quantos pacientes/procedimentos existem no texto extraído. Se houver 2 ou mais, use OBRIGATORIAMENTE a ação AGENDAR_MULTIPLOS com um item em "eventos" para CADA paciente do texto — NUNCA use AGENDAR nesses casos. É PROIBIDO omitir pacientes: a lista "eventos" deve ter exatamente o mesmo número de itens que o texto extraído. Confirme na "resposta" o total (ex: 'Agendei os 7 procedimentos da lista'). novas_memorias: máx 2. suggests: 2 ações. Seja breve.
 RETORNE APENAS JSON sem markdown:
 {"acao":"AGENDAR"|"AGENDAR_MULTIPLOS"|"CANCELAR"|"RELATORIO"|"CONSULTAR"|"ORGANIZAR"|"CORRECAO"|"DUVIDA","resposta":"HTML","evento":{"id":N,"doc":"","setor":"","proc":"","paciente":"","date":"YYYY-MM-DD","time":"HH:MM","obs":""},"eventos":[{"doc":"","setor":"","proc":"","paciente":"","date":"YYYY-MM-DD","time":"HH:MM","obs":""}],"cancelar_ids":["id"]|null,"tabela":[{"data":"","hora":"","setor":"","proc":"","paciente":"","medico":"","obs":""}],"novas_memorias":[{"texto":"","icone":""}],"suggests":["",""]}`;
@@ -1734,6 +1736,30 @@ RETORNE APENAS JSON sem markdown:
     if(p.novas_memorias)p.novas_memorias.forEach(m=>{if(m.texto)addMem(m.texto,m.icone||'ti-brain');});
     const sug=p.suggests||[];
 
+    // Autocorreção: se a IA puser exame/procedimento no campo do médico, conserta antes de enviar
+    function sanitizeEv(ev,txtUsuario){
+      const meds=(window._ctxCache?.medicos)||[];
+      if(!meds.length)return ev;
+      const ok=meds.some(m=>m.toLowerCase()===(ev.doc||'').toLowerCase());
+      if(ok)return ev;
+      const docErrado=ev.doc||'';
+      // 1º: médico citado no texto do usuário
+      let achado=meds.find(m=>txtUsuario&&txtUsuario.toLowerCase().includes(m.toLowerCase()));
+      // 2º: match parcial (primeiro nome/sobrenome)
+      if(!achado&&docErrado)achado=meds.find(m=>m.toLowerCase().split(' ').some(p2=>p2.length>3&&docErrado.toLowerCase().includes(p2)));
+      // 3º: grupo com um único médico
+      if(!achado&&meds.length===1)achado=meds[0];
+      if(achado){
+        ev.doc=achado;
+        if(docErrado&&!meds.some(m=>m.toLowerCase()===docErrado.toLowerCase())){
+          if(!ev.proc)ev.proc=docErrado;
+          else if(!ev.proc.toLowerCase().includes(docErrado.toLowerCase())&&!docErrado.toLowerCase().includes(ev.proc.toLowerCase()))ev.obs=((ev.obs||'')+' '+docErrado).trim();
+        }
+      }
+      return ev;
+    }
+    if(p.evento)p.evento=sanitizeEv(p.evento,txt);
+    if(Array.isArray(p.eventos))p.eventos=p.eventos.map(e=>sanitizeEv(e,txt));
     if(p.acao==='AGENDAR'&&p.evento?.proc&&p.evento?.date){
       const ev=p.evento;
       try{

@@ -1135,6 +1135,36 @@ def get_vapid_key():
         raise HTTPException(400, "Web Push não configurado no servidor.")
     return {"public_key": VAPID_PUBLIC_KEY}
 
+async def push_all_org(org_id: str, title: str, body: str, url: str = "/"):
+    """Envia push para todos os dispositivos inscritos do grupo (limpa inscrições mortas)."""
+    if not VAPID_PRIVATE_KEY:
+        return
+    try:
+        from pywebpush import webpush, WebPushException
+    except ImportError:
+        log.warning("pywebpush não instalado — push ignorado")
+        return
+    subs = sb_rest("GET", f"/ana_push_subscriptions?group_id=eq.{org_id}&select=id,subscription")
+    payload = json.dumps({"title": title, "body": body, "url": url})
+    enviados = 0
+    for s in subs:
+        try:
+            webpush(subscription_info=s["subscription"], data=payload,
+                    vapid_private_key=VAPID_PRIVATE_KEY,
+                    vapid_claims={"sub": f"mailto:{VAPID_CLAIMS_EMAIL}"})
+            enviados += 1
+        except WebPushException as e:
+            code = getattr(getattr(e, "response", None), "status_code", 0)
+            if code in (404, 410):  # inscrição morta — remove
+                sb_rest("DELETE", f"/ana_push_subscriptions?id=eq.{s['id']}")
+            else:
+                log.warning(f"push falhou: {e}")
+        except Exception as e:
+            log.warning(f"push erro: {e}")
+    if subs:
+        log.info(f"Push '{title}' → {enviados}/{len(subs)} dispositivos")
+
+
 @app.post("/api/push/subscribe")
 async def push_subscribe(request: Request, user=Depends(auth)):
     """Salva a subscription de push do dispositivo do usuário."""

@@ -1897,6 +1897,35 @@ from fastapi.responses import FileResponse as _FileResponse
 import os as _os
 _APP_DIR = _os.path.dirname(_os.path.abspath(__file__))
 
+@app.get("/api/geocode")
+def geocode(q: str, user=Depends(auth)):
+    """Busca endereço pelo nome do local via Google Places Text Search (mesma conta da chave de rotas)."""
+    if not GOOGLE_ROUTES_API_KEY:
+        raise HTTPException(400, "GOOGLE_ROUTES_API_KEY não configurada.")
+    if not q or len(q.strip()) < 3:
+        raise HTTPException(400, "Digite pelo menos 3 caracteres.")
+    payload = json.dumps({"textQuery": q.strip(), "languageCode": "pt-BR", "maxResultCount": 4}).encode("utf-8")
+    http_req = urllib.request.Request(
+        "https://places.googleapis.com/v1/places:searchText",
+        data=payload, method="POST",
+        headers={"Content-Type": "application/json",
+                 "X-Goog-Api-Key": GOOGLE_ROUTES_API_KEY,
+                 "X-Goog-FieldMask": "places.displayName,places.formattedAddress"})
+    try:
+        with urllib.request.urlopen(http_req, timeout=15) as resp:
+            j = json.loads(resp.read())
+        out = [{"nome": p.get("displayName", {}).get("text", ""),
+                "endereco": p.get("formattedAddress", "")}
+               for p in j.get("places", []) if p.get("formattedAddress")]
+        return {"resultados": out}
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="ignore")
+        log.error(f"Places search {e.code}: {body[:300]}")
+        if e.code == 403:
+            raise HTTPException(502, "A 'Places API (New)' não está habilitada nesta chave do Google. "
+                                     "Habilite em console.cloud.google.com → APIs & Services → Places API (New) → Enable.")
+        raise HTTPException(502, f"Erro na busca de endereço ({e.code}).")
+
 @app.get("/icon-192.png")
 def icon_192():
     return _FileResponse(_os.path.join(_APP_DIR, "icon-192.png"), media_type="image/png",

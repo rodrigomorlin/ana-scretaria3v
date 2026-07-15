@@ -822,14 +822,7 @@ Seja preciso e inclua todos os pacientes listados. Não omita nenhum dado."""
             }
         }).encode("utf-8")
 
-        req = urllib.request.Request(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-        with urllib.request.urlopen(req, timeout=30) as r:
-            data = json.loads(r.read())
+        data = _gemini_request(payload, timeout=30)
 
         text = data["candidates"][0]["content"]["parts"][0]["text"]
         log.info(f"Gemini PDF extraction: {len(text)} chars extraídos")
@@ -874,6 +867,29 @@ def _extract_image_ocrspace(image_b64: str, mime_type: str = "image/png") -> str
         log.error(f"OCR.space erro: {e}")
         return ""
 
+def _gemini_request(payload_bytes: bytes, timeout: int = 60):
+    """POST no Gemini nativo compatível com chaves antigas (AIza) e novas (AQ. Auth keys).
+    Tenta o header x-goog-api-key; se a chave nova for recusada (401/403), tenta Authorization: Bearer."""
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+    tentativas = [{"x-goog-api-key": GEMINI_API_KEY}]
+    if GEMINI_API_KEY.startswith("AQ."):
+        tentativas.append({"Authorization": f"Bearer {GEMINI_API_KEY}"})
+    ultimo = None
+    for auth_h in tentativas:
+        headers = {"Content-Type": "application/json", "User-Agent": "ANA-Secretaria/1.0", **auth_h}
+        req = urllib.request.Request(url, data=payload_bytes, method="POST", headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            if e.code in (401, 403) and len(tentativas) > 1 and auth_h is not tentativas[-1]:
+                ultimo = e
+                log.warning(f"Gemini {e.code} com {list(auth_h)[0]} — tentando Authorization: Bearer")
+                continue
+            raise
+    raise ultimo
+
+
 def _extract_image_gemini(image_b64: str, mime_type: str = "image/jpeg") -> str:
     """Usa o Gemini Flash para extrair informações de agenda de uma imagem."""
     if not GEMINI_API_KEY:
@@ -899,14 +915,7 @@ Seja preciso e inclua todos os pacientes listados. Não omita nenhum dado."""
                                  "thinkingConfig": {"thinkingBudget": 0}}
         }).encode("utf-8")
 
-        req = urllib.request.Request(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="POST"
-        )
-        with urllib.request.urlopen(req, timeout=45) as r:
-            data = json.loads(r.read())
+        data = _gemini_request(payload, timeout=45)
 
         # Verifica se há candidatos válidos
         candidates = data.get("candidates", [])
@@ -1051,7 +1060,8 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
         payload = json.dumps({"model": model, "max_tokens": max_tk,
                               "messages": openai_messages, "temperature": 0.3}).encode("utf-8")
         http_req = urllib.request.Request(url, data=payload, method="POST",
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}"})
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {key}",
+                     "User-Agent": "ANA-Secretaria/1.0"})
         with urllib.request.urlopen(http_req, timeout=60) as resp:
             j = json.loads(resp.read())
         return j["choices"][0]["message"]["content"]
@@ -1072,11 +1082,7 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
                                  "responseMimeType": "application/json",
                                  "thinkingConfig": {"thinkingBudget": 2048 if tem_anexo else 0}},
         }).encode("utf-8")
-        http_req = urllib.request.Request(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}",
-            data=payload, method="POST", headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(http_req, timeout=60) as resp:
-            j = json.loads(resp.read())
+        j = _gemini_request(payload, timeout=60)
         cand = (j.get("candidates") or [{}])[0]
         parts = (cand.get("content") or {}).get("parts") or []
         text = "".join(p.get("text", "") for p in parts)
@@ -1084,6 +1090,7 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
             raise RuntimeError(f"Gemini sem texto (finish={cand.get('finishReason')})")
         return text
 
+    erros_cascata = []
     ultimo_erro = None
     for idx, motor in enumerate(motores):
         ultimo = idx == len(motores) - 1
@@ -1103,6 +1110,7 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
             except urllib.error.HTTPError as e:
                 body = e.read().decode("utf-8", errors="ignore")
                 ultimo_erro = f"{motor} {e.code}: {body[:200]}"
+                erros_cascata.append(f"{motor}: HTTP {e.code}")
                 if e.code == 429 and ultimo and t == 0:
                     m = re.search(r"try again in ([\d.]+)s", body)
                     espera = min(float(m.group(1)) + 0.4, 8.0) if m else 3.0
@@ -1113,12 +1121,13 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
                 break
             except Exception as e:
                 ultimo_erro = f"{motor}: {e}"
+                erros_cascata.append(f"{motor}: {str(e)[:80]}")
                 log.warning(f"Motor {motor} falhou ({e}) — {'tentando o próximo' if not ultimo else 'sem mais motores'}")
                 break
-    log.error(f"Todos os motores falharam. Último erro: {ultimo_erro}")
+    log.error(f"Todos os motores falharam: {' | '.join(erros_cascata)} — último detalhe: {ultimo_erro}")
     if ultimo_erro and "429" in ultimo_erro:
         raise HTTPException(502, "As IAs estão no limite de uso por minuto — aguarde alguns segundos e tente de novo.")
-    raise HTTPException(502, f"Falha nos motores de IA: {ultimo_erro}")
+    raise HTTPException(502, f"Falha nos motores de IA — {'; '.join(erros_cascata)}. Confira as chaves no Railway (logs têm o detalhe).")
 @app.get("/api/push/vapid-key")
 def get_vapid_key():
     """Retorna a chave pública VAPID para o frontend registrar subscriptions."""

@@ -972,7 +972,9 @@ async function api(m,p,b=null){
 }
 
 // ── HELPERS (reconstruídos) ───────────────────────────────
-function getS(id){return setores.find(s=>s.id===id)||{id:id,name:id||'—',color:'#EEF2FF',text_color:'#4338ca'};}
+window._setorNomes={};
+function getS(id){const s=setores.find(x=>x.id===id);if(s)return s;const n=window._setorNomes[id];return {id:id,name:n||(id&&id.length>20?'Setor removido':id)||'—',color:'#EEF2FF',text_color:'#4338ca'};}
+function lembrarSetores(list){(list||[]).forEach(e=>{if(e&&e.setor&&e.setor_nome)window._setorNomes[e.setor]=e.setor_nome;});}
 function fmtD(d){if(!d)return'—';const[a,m,dia]=d.split('-');return`${dia}/${m}`;}
 function nowT(){return new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});}
 async function loadAll(){
@@ -980,6 +982,7 @@ async function loadAll(){
     [medicos,setores,eventos,memorias]=await Promise.all([
       api('GET','/api/medicos'),api('GET','/api/setores'),
       api('GET','/api/eventos'),api('GET','/api/memorias')]);
+  lembrarSetores(eventos);
     renderMem();renderDocList();renderSetorList();populateAgendaFilters();
     if(me?.role==='admin'){
     }
@@ -1765,7 +1768,7 @@ RETORNE APENAS JSON sem markdown:
       try{
         const payload={...ev,ai:true};
         if(pdf){payload.pdf_filename=pdf.name;payload.pdf_data=pdf.b64;}
-        const saved=await api('POST','/api/eventos',payload);eventos.push(saved);
+        const saved=await api('POST','/api/eventos',payload);eventos.push(saved);lembrarSetores([saved]);
         const s=getS(ev.setor);const bc=BADGE[ev.setor]||'';
         let html=pdf?'📄 <b>PDF lido!</b><br>':'✅ <b>Agendado!</b><br>';
         if(saved.aviso){

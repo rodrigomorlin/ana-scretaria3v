@@ -450,7 +450,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 
       <div id="hub-codigo" style="display:none;margin-bottom:14px">
         <div class="f"><label>Código de acesso do grupo</label>
-          <input id="hub-cod" placeholder="ex: DD222A94" style="text-transform:uppercase;letter-spacing:2px;text-align:center" onkeydown="if(event.key==='Enter')doSolicitar()"></div>
+          <input id="hub-cod" style="text-transform:uppercase;letter-spacing:2px;text-align:center" onkeydown="if(event.key==='Enter')doSolicitar()"></div>
         <button class="btn-full" onclick="doSolicitar()" id="hub-cod-btn"><i class="ti ti-send"></i> Solicitar entrada</button>
         <div style="font-size:10px;color:var(--hint);margin-top:6px;text-align:center">Sua entrada precisa ser aprovada pelo administrador do grupo.</div>
       </div>
@@ -1326,7 +1326,7 @@ async function loadEscala(){
   if(bx)bx.style.display=window._medssUrl?'inline-flex':'none';
   const grid=document.getElementById('escala-grid');
   try{
-    const e=await api('GET',`/api/escala?mes=${escalaAtual}`);
+    let e=await api('GET',`/api/escala?mes=${escalaAtual}`);
     escalaCache=e;
     const bm=document.getElementById('btn-meus-plantoes');
     if(bm)bm.style.display=e.meu_medico?'inline-flex':'none';

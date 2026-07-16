@@ -1052,6 +1052,13 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
     # max_tokens dinâmico: reserva grande só quando há anexo (AGENDAR_MULTIPLOS de listas)
     limite = 6000 if tem_anexo else 2000
     max_tk = min(req.max_tokens or limite, limite)
+    # pedidos de organização de escala exigem raciocínio combinatório → thinking maior
+    ultimo_txt = ""
+    for m in reversed(openai_messages):
+        if m["role"] == "user":
+            ultimo_txt = m["content"] if isinstance(m["content"], str) else ""
+            break
+    pede_organizacao = bool(re.search(r"organiz|distribu|dividir os", ultimo_txt, re.I))
 
     limite = 6000 if tem_anexo else 2000
     max_tk = min(req.max_tokens or limite, limite)
@@ -1078,9 +1085,9 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
             "contents": contents,
             "generationConfig": {"temperature": 0.3,
                                  # com anexo: libera raciocínio (2048) p/ organizar escalas; o teto acomoda o thinking
-                                 "maxOutputTokens": max_tk + (2048 if tem_anexo else 0),
+                                 "maxOutputTokens": max_tk + (4096 if pede_organizacao else (2048 if tem_anexo else 0)),
                                  "responseMimeType": "application/json",
-                                 "thinkingConfig": {"thinkingBudget": 2048 if tem_anexo else 0}},
+                                 "thinkingConfig": {"thinkingBudget": 4096 if pede_organizacao else (2048 if tem_anexo else 0)}},
         }).encode("utf-8")
         j = _gemini_request(payload, timeout=60)
         cand = (j.get("candidates") or [{}])[0]

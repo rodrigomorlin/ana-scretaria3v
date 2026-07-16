@@ -1085,7 +1085,7 @@ function hubShow(qual){
   if(qual==='criar')document.getElementById('ob-nome').focus();
   else document.getElementById('hub-cod').focus();
 }
-function entrarGrupo(gid,role){
+function entrarGrupo(gid,role){window._chatHist=[];
   groupId=gid;localStorage.setItem('ana-group',gid);
   me.org_id=gid;me.role=role==='admin'?'admin':'medico';
   document.getElementById('hub').style.display='none';
@@ -1632,6 +1632,11 @@ RETORNE APENAS JSON sem markdown: {"campo":"nome_do_campo","valor_errado":"valor
     if(!res.ok)throw new Error('Falha ao processar correção.');
     const data=await res.json();
     let raw=data.content.map(i=>i.text||'').join('').trim();
+    // memória de conversa: guarda o turno (anexos viram nota textual; respostas truncadas p/ economizar tokens)
+    window._chatHist=window._chatHist||[];
+    const histUser=Array.isArray(mc)?(mc.filter(x=>x.type==='text').map(x=>x.text).join(' ')+' [enviou um anexo]'):mc;
+    window._chatHist.push({role:'user',content:String(histUser).slice(0,3000)},{role:'assistant',content:raw.slice(0,4000)});
+    if(window._chatHist.length>16)window._chatHist=window._chatHist.slice(-16);
     raw=raw.replace(/^```(?:json)?\s*/i,'').replace(/```\s*$/,'').trim();
     const p=JSON.parse(raw);
     hideTyp();
@@ -1691,7 +1696,7 @@ PADRÕES POR MÉDICO (use como sugestão quando o usuário não especificar seto
 CORREÇÕES APRENDIDAS (erros já cometidos antes — não repita): ${correcoesTxt||'nenhuma correção registrada ainda'}
 DESLOCAMENTOS ENTRE SETORES (tempo mínimo de folga ao mudar de local): ${deslocTxt}
 PACIENTES CONHECIDOS (histórico — ao citar um nome, use o médico/setor habitual como sugestão): ${(ctx.pacientes||[]).map(p=>`${p.nome}→${p.doc}|${p.proc}`).join(' | ')||'nenhum ainda'}
-ORGANIZAR ESCALA (distribuição de anestesistas): quando o usuário enviar um mapa cirúrgico (PDF/imagem) e pedir para ORGANIZAR, DISTRIBUIR ou DIVIDIR os casos entre os anestesistas, use a ação ORGANIZAR. Processo: 1) extraia TODOS os procedimentos com local, horário de início e fim; 2) consulte as MEMÓRIAS DO GRUPO — regras de escala salvas lá (alocações fixas, restrições, preferências) são OBRIGATÓRIAS; 3) distribua os casos entre os médicos do grupo (ou as pessoas citadas no documento) obedecendo: nenhum profissional com dois casos de horários sobrepostos; casos no MESMO local em sequência ficam com o mesmo profissional; trocar de hospital exige folga mínima de 30 minutos entre o fim de um caso e o início do outro (use os deslocamentos cadastrados quando existirem); equilibre a carga entre os profissionais; 4) responda com a ação ORGANIZAR preenchendo "tabela" com TODOS os casos e a coluna "medico" com o profissional atribuído, e na "resposta" explique brevemente a lógica (picos de simultaneidade, quantos profissionais foram necessários); 5) NÃO agende nada ainda — inclua em "suggests" a opção "Agendar tudo conforme a distribuição". Se o usuário confirmar em seguida, aí sim use AGENDAR_MULTIPLOS com o campo "doc" de cada evento preenchido conforme a tabela.
+ORGANIZAR ESCALA (distribuição de anestesistas): quando o usuário enviar um mapa cirúrgico (PDF/imagem) e pedir para ORGANIZAR, DISTRIBUIR ou DIVIDIR os casos entre os anestesistas, use a ação ORGANIZAR. Processo: 1) extraia TODOS os procedimentos com local, horário de início e fim; 2) consulte as MEMÓRIAS DO GRUPO — regras de escala salvas lá (alocações fixas, restrições, preferências) são OBRIGATÓRIAS; 3) distribua os casos entre os médicos do grupo (ou as pessoas citadas no documento) obedecendo: nenhum profissional com dois casos de horários sobrepostos; casos no MESMO local em sequência ficam com o mesmo profissional; trocar de hospital exige folga mínima de 30 minutos entre o fim de um caso e o início do outro (quando houver a matriz DESLOCAMENTOS, use o tempo real do par de setores); OTIMIZE POR PROXIMIDADE: ao escolher o próximo caso de um profissional, prefira 1º o mesmo local, 2º o local com MENOR tempo de deslocamento na matriz — minimize o total de deslocamento do dia e evite que alguém cruze a cidade várias vezes; equilibre a carga entre os profissionais; 4) responda com a ação ORGANIZAR preenchendo "tabela" com TODOS os casos e a coluna "medico" com o profissional atribuído, e na "resposta" explique brevemente a lógica (picos de simultaneidade, quantos profissionais foram necessários); 5) NÃO agende nada ainda — inclua em "suggests" a opção "Agendar tudo conforme a distribuição". Se o usuário confirmar em seguida, aí sim use AGENDAR_MULTIPLOS com o campo "doc" de cada evento preenchido conforme a tabela.
 LEITURA DE MAPAS CIRÚRGICOS — ESTRUTURA DAS LINHAS (crítico): 1º) descubra a ordem das colunas pelo CABEÇALHO do próprio documento (a linha tipo "HORÁRIO LEITO CIRURGIA CIRURGIAO SALA PACIENTE IDADE CONVÊNIO") — a ordem pode variar entre mapas, o cabeçalho de cada documento manda. 2º) cada LINHA de dados é UM caso completo. 3º) regra universal dos horários: quando dois horários aparecem adjacentes na MESMA linha, são o INÍCIO e o FIM previsto do MESMO caso — PROIBIDO parear um horário de uma linha com o horário de outra linha. Exemplo de um formato comum ([nº] [início] [fim] [leito] [cirurgia] [cirurgião] [paciente] [convênio]):
 "1  07:00  12:00  AMB  LIFTING+BLEFARO  ZANETTE  GILBERTO  PART"
 "2  07:30  11:00  AMB  RITIDO+BLEFARO  GOLDMAN  ROSANA  PART"
@@ -1717,7 +1722,7 @@ RETORNE APENAS JSON sem markdown:
     : system;
   try{
     const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await getToken(),...(groupId?{'X-Group-Id':groupId}:{})},
-      body:JSON.stringify({system:systemFinal,messages:[{role:'user',content:mc}]})});
+      body:JSON.stringify({system:systemFinal,messages:[...(window._chatHist||[]).slice(-8),{role:'user',content:mc}]})});
     if(!res.ok){
       let errMsg=`Erro ${res.status}`;
       try{
@@ -1729,6 +1734,11 @@ RETORNE APENAS JSON sem markdown:
     }
     const data=await res.json();
     let raw=data.content.map(i=>i.text||'').join('').trim();
+    // memória de conversa: guarda o turno (anexos viram nota textual; respostas truncadas p/ economizar tokens)
+    window._chatHist=window._chatHist||[];
+    const histUser=Array.isArray(mc)?(mc.filter(x=>x.type==='text').map(x=>x.text).join(' ')+' [enviou um anexo]'):mc;
+    window._chatHist.push({role:'user',content:String(histUser).slice(0,3000)},{role:'assistant',content:raw.slice(0,4000)});
+    if(window._chatHist.length>16)window._chatHist=window._chatHist.slice(-16);
     // Remove cercas de markdown ```json ... ``` ou ``` ... ``` preservando o conteúdo interno
     raw=raw.replace(/^```(?:json)?\s*/i,'').replace(/```\s*$/,'').trim();
     let p;

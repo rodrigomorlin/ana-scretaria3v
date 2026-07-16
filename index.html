@@ -1027,7 +1027,7 @@ async function doSignup(){
   const btn=document.getElementById('su-btn');btn.disabled=true;
   try{
     await initSupabase();
-    const {data,error}=await sb.auth.signUp({email,password:senha,options:{data:{full_name:nome}}});
+    const {data,error}=await sb.auth.signUp({email,password:senha,options:{data:{full_name:nome},emailRedirectTo:location.origin}});
     if(error)throw new Error(error.message.includes('already registered')?'Este email já tem conta. Use "Voltar ao login".':error.message);
     if(data.session){
       // confirmação de email desativada: entra direto → onboarding cria o grupo
@@ -1044,7 +1044,7 @@ async function doForgot(){
   const email=document.getElementById('lu').value.trim();
   if(!email){showErr('Digite seu email no campo acima e clique de novo.');return;}
   await initSupabase();
-  const {error}=await sb.auth.resetPasswordForEmail(email);
+  const {error}=await sb.auth.resetPasswordForEmail(email,{redirectTo:location.origin});
   showErr(error?error.message:'Email de recuperação enviado! Confira sua caixa de entrada.');
 }
 async function afterLogin(){

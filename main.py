@@ -1674,6 +1674,26 @@ def responder_solicitacao(req_id: str, r: SolicitacaoResposta, bg: BackgroundTas
         sb_rest("POST", "/group_members",
                 {"user_id": req["user_id"], "group_id": gid, "role": req.get("requested_role", "member")})
         _membership_cache.pop(req["user_id"], None)
+        # vincula o novo membro a um cadastro de médico (cria/associa/reativa) — habilita "Meus plantões" e trocas
+        try:
+            uid = req["user_id"]
+            perfil_doc = sb_rest("GET", f"/profiles?id=eq.{uid}&select=full_name")
+            nome = (perfil_doc[0].get("full_name") if perfil_doc else "") or ""
+            meu = sb_rest("GET", f"/doctors?group_id=eq.{gid}&user_id=eq.{uid}&select=id,active")
+            if meu:
+                if not meu[0].get("active", True):
+                    sb_rest("PATCH", f"/doctors?id=eq.{meu[0]['id']}", {"active": True})
+            else:
+                vinculado = False
+                if nome:
+                    homonimo = sb_rest("GET", f"/doctors?group_id=eq.{gid}&user_id=is.null&name=ilike.{urllib.parse.quote(nome)}&select=id")
+                    if homonimo:
+                        sb_rest("PATCH", f"/doctors?id=eq.{homonimo[0]['id']}", {"user_id": uid, "active": True})
+                        vinculado = True
+                if not vinculado and nome:
+                    sb_rest("POST", "/doctors", {"group_id": gid, "user_id": uid, "name": nome, "active": True})
+        except Exception as e:
+            log.warning(f"vincular médico do novo membro: {e}")
         # email de boas-vindas ao novo integrante
         try:
             perfil = sb_rest("GET", f"/profiles?id=eq.{req['user_id']}&select=full_name,email")

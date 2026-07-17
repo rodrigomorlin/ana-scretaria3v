@@ -582,6 +582,122 @@ def list_pacientes(q: str = "", user=Depends(auth)):
 def list_eventos(user=Depends(auth)):
     return ana_data.sb_list_eventos(user)
 
+# ─────────────────────────────────────────────────────────────
+# ORGANIZADOR DE ESCALA — algoritmo determinístico
+# A IA extrai os casos; a distribuição é exata (zero colisão por construção)
+# ─────────────────────────────────────────────────────────────
+class OrganizarRequest(BaseModel):
+    casos: List[Any]                 # [{setor, inicio "HH:MM", fim "HH:MM", proc, paciente, cirurgiao?}]
+    profissionais: List[str] = []    # nomes/iniciais disponíveis (ordem = prioridade)
+    fixos: Optional[dict] = None     # {"RAF": "HED"} — profissional restrito ao setor
+    data: Optional[str] = None       # data do mapa YYYY-MM-DD
+
+def _hhmm_min(s):
+    try:
+        h, m = str(s).strip().split(":")[:2]
+        return int(h) * 60 + int(m)
+    except Exception:
+        return None
+
+@app.post("/api/organizar")
+def organizar_escala(req: OrganizarRequest, user=Depends(auth)):
+    avisos, folga_padrao = [], 30
+    # matriz de deslocamentos por NOME de setor (min), simétrica
+    gid_secs = {}
+    try:
+        secs = {s["id"]: s["name"] for s in ana_data.sb_list_setores(user)}
+        for d in ana_data.sb_list_deslocamentos(user):
+            a = (secs.get(d["setor_origem"]) or "").lower()
+            b = (secs.get(d["setor_destino"]) or "").lower()
+            if a and b and d.get("minutos"):
+                gid_secs[(a, b)] = gid_secs[(b, a)] = int(d["minutos"])
+    except Exception as e:
+        log.warning(f"organizar: matriz de deslocamentos indisponível ({e})")
+
+    def desloc(a, b):
+        if not a or a.lower() == b.lower():
+            return 0
+        return gid_secs.get((a.lower(), b.lower()), folga_padrao)
+
+    # normaliza casos
+    casos = []
+    for c in req.casos:
+        ini = _hhmm_min(c.get("inicio") or c.get("time") or "")
+        fim = _hhmm_min(c.get("fim") or "")
+        if ini is None:
+            continue
+        obs_extra = ""
+        if fim is None or fim <= ini or fim - ini > 14 * 60:
+            fim = ini + 120
+            obs_extra = " (fim estimado)"
+            avisos.append(f"{c.get('proc','?')} {c.get('inicio','')}: fim ausente/inválido — estimado 2h")
+        casos.append({"setor": (c.get("setor") or "").strip(), "ini": ini, "fim": fim,
+                      "proc": c.get("proc") or "", "paciente": c.get("paciente") or "",
+                      "cirurgiao": c.get("cirurgiao") or "", "obs_extra": obs_extra})
+    casos.sort(key=lambda x: (x["ini"], x["fim"]))
+    if not casos:
+        raise HTTPException(400, "Nenhum caso com horário válido para organizar.")
+
+    fixos = {str(k).strip(): str(v).strip() for k, v in (req.fixos or {}).items() if k and v}
+    profs = [p.strip() for p in req.profissionais if p and p.strip()]
+    # fixos entram na lista mesmo se não citados
+    for f in fixos:
+        if f not in profs:
+            profs.append(f)
+    if not profs:
+        profs = ["Anestesista 1"]
+
+    def eh_fixo_de(p, setor):
+        alvo = fixos.get(p, "")
+        return alvo and (alvo.lower() in setor.lower() or setor.lower() in alvo.lower())
+
+    estado = {p: {"fim": None, "local": None, "carga": 0, "n": 0} for p in profs}
+    extras = 0
+    aloc = []
+    pico, pico_hora = 0, 0
+    for c in casos:
+        # pico de simultaneidade
+        simult = sum(1 for x in casos if x["ini"] <= c["ini"] < x["fim"])
+        if simult > pico:
+            pico, pico_hora = simult, c["ini"]
+        candidatos = []
+        for p, st in estado.items():
+            if p in fixos and not eh_fixo_de(p, c["setor"]):
+                continue  # fixo não sai do seu setor
+            gap = 0 if st["local"] is None else desloc(st["local"], c["setor"])
+            livre = st["fim"] is None or st["fim"] + gap <= c["ini"]
+            if not livre:
+                continue
+            # score: fixo do setor > mesmo local (encadeia) > menor deslocamento > equilíbrio de carga
+            score = 0 if eh_fixo_de(p, c["setor"]) else 10000
+            if st["local"] is not None:
+                score += 0 if st["local"].lower() == c["setor"].lower() else (desloc(st["local"], c["setor"]) * 20 + 500)
+            else:
+                score += 800  # ainda não começou o dia
+            score += st["carga"]
+            candidatos.append((score, profs.index(p) if p in profs else 999, p))
+        if candidatos:
+            p = min(candidatos)[2]
+        else:
+            extras += 1
+            p = f"+ Anestesista extra {extras}"
+            estado[p] = {"fim": None, "local": None, "carga": 0, "n": 0}
+            avisos.append(f"{c['proc']} às {c['ini']//60:02d}:{c['ini']%60:02d} ({c['setor']}): ninguém livre — precisa de mais um profissional")
+        st = estado[p]
+        st["fim"], st["local"] = c["fim"], c["setor"]
+        st["carga"] += c["fim"] - c["ini"]; st["n"] += 1
+        aloc.append({"data": req.data or "", "hora": f"{c['ini']//60:02d}:{c['ini']%60:02d}",
+                     "setor": c["setor"], "proc": c["proc"], "paciente": c["paciente"],
+                     "medico": p, "obs": (f"fim {c['fim']//60:02d}:{c['fim']%60:02d}" + c["obs_extra"] +
+                                          (f" · cir: {c['cirurgiao']}" if c["cirurgiao"] else ""))})
+    usados = [p for p, st in estado.items() if st["n"] > 0]
+    resumo = {"n_casos": len(aloc), "n_profissionais": len(usados),
+              "pico_simultaneo": pico, "pico_hora": f"{pico_hora//60:02d}:{pico_hora%60:02d}",
+              "cargas": {p: f"{estado[p]['carga']//60}h{estado[p]['carga']%60:02d}" for p in usados},
+              "avisos": avisos}
+    return {"tabela": aloc, "resumo": resumo}
+
+
 @app.post("/api/eventos")
 async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=Depends(auth)):
     out = ana_data.sb_create_evento(user, ev)

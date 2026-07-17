@@ -1718,7 +1718,7 @@ PADRÕES POR MÉDICO (use como sugestão quando o usuário não especificar seto
 CORREÇÕES APRENDIDAS (erros já cometidos antes — não repita): ${correcoesTxt||'nenhuma correção registrada ainda'}
 DESLOCAMENTOS ENTRE SETORES (tempo mínimo de folga ao mudar de local): ${deslocTxt}
 PACIENTES CONHECIDOS (histórico — ao citar um nome, use o médico/setor habitual como sugestão): ${(ctx.pacientes||[]).map(p=>`${p.nome}→${p.doc}|${p.proc}`).join(' | ')||'nenhum ainda'}
-ORGANIZAR ESCALA (distribuição de anestesistas): quando o usuário enviar um mapa cirúrgico e pedir para ORGANIZAR/DISTRIBUIR/DIVIDIR os casos, use a ação ORGANIZAR — mas NÃO distribua você mesma: um algoritmo exato do sistema faz a alocação sem colisões. Seu papel é EXTRAIR com precisão e devolver: "casos":[{"setor":"","inicio":"HH:MM","fim":"HH:MM","proc":"","paciente":"","cirurgiao":""}] com TODOS os casos do mapa (inicio e fim da MESMA linha); "profissionais":["..."] — os disponíveis para o dia: os citados no documento/mensagem (iniciais do rodapé como GUS, HEN contam) e/ou os médicos do grupo; "fixos":{"PROFISSIONAL":"SETOR"} — alocações obrigatórias extraídas das MEMÓRIAS DO GRUPO e do rodapé do mapa (ex: "PRÉS NO HED: RAF" → {"RAF":"HED"}); "data":"YYYY-MM-DD" — a data do mapa (título). Em "resposta", diga apenas que extraiu N casos e o sistema vai calcular a distribuição. NÃO preencha "tabela" nem "eventos" nessa ação.
+ORGANIZAR ESCALA (distribuição de anestesistas): quando o usuário enviar um mapa cirúrgico e pedir para ORGANIZAR/DISTRIBUIR/DIVIDIR os casos, use a ação ORGANIZAR — mas NÃO distribua você mesma: um algoritmo exato do sistema faz a alocação sem colisões. Seu papel é EXTRAIR com precisão e devolver: "casos":[{"setor":"","inicio":"HH:MM","fim":"HH:MM","proc":"","paciente":"","cirurgiao":""}] com TODOS os casos do mapa (inicio e fim da MESMA linha); "profissionais":["..."] — os disponíveis para o dia: os citados no documento/mensagem (iniciais do rodapé como GUS, HEN contam) e/ou os médicos do grupo; "fixos":{"PROFISSIONAL":"SETOR"} — alocações obrigatórias extraídas das MEMÓRIAS DO GRUPO e do rodapé do mapa (ex: "PRÉS NO HED: RAF" → {"RAF":"HED"}); "data":"YYYY-MM-DD" — a data do mapa (título). OBRIGATÓRIO: o campo "casos" preenchido DEVE vir no MESMO JSON da ação ORGANIZAR — nunca responda ORGANIZAR com "casos" vazio ou ausente (se não conseguiu extrair, use DUVIDA explicando o que faltou). Em "resposta", diga apenas que extraiu N casos e o sistema vai calcular a distribuição. NÃO preencha "tabela" nem "eventos" nessa ação. SUGESTÕES: "suggests" são FRASES COMPLETAS que o usuário diria (ex: "Agendar tudo conforme a distribuição") — NUNCA nomes de ações como "ORGANIZAR" ou "DUVIDA".
 LEITURA DE MAPAS CIRÚRGICOS — ESTRUTURA DAS LINHAS (crítico): 1º) descubra a ordem das colunas pelo CABEÇALHO do próprio documento (a linha tipo "HORÁRIO LEITO CIRURGIA CIRURGIAO SALA PACIENTE IDADE CONVÊNIO") — a ordem pode variar entre mapas, o cabeçalho de cada documento manda. 2º) cada LINHA de dados é UM caso completo. 3º) regra universal dos horários: quando dois horários aparecem adjacentes na MESMA linha, são o INÍCIO e o FIM previsto do MESMO caso — PROIBIDO parear um horário de uma linha com o horário de outra linha. Exemplo de um formato comum ([nº] [início] [fim] [leito] [cirurgia] [cirurgião] [paciente] [convênio]):
 "1  07:00  12:00  AMB  LIFTING+BLEFARO  ZANETTE  GILBERTO  PART"
 "2  07:30  11:00  AMB  RITIDO+BLEFARO  GOLDMAN  ROSANA  PART"
@@ -1744,7 +1744,7 @@ RETORNE APENAS JSON sem markdown:
     : system;
   try{
     const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+await getToken(),...(groupId?{'X-Group-Id':groupId}:{})},
-      body:JSON.stringify({system:systemFinal,messages:[...(window._chatHist||[]).slice(-8),{role:'user',content:mc}]})});
+      body:JSON.stringify({system:systemFinal,messages:[...(window._chatHist||[]).slice(Array.isArray(mc)?-2:-8),{role:'user',content:mc}]})});
     if(!res.ok){
       let errMsg=`Erro ${res.status}`;
       try{
@@ -1801,6 +1801,19 @@ RETORNE APENAS JSON sem markdown:
         }
       }
       return ev;
+    }
+    async function processarOrganizar(p){
+      addMsg(`📋 ${p.casos.length} casos extraídos — calculando a distribuição ótima…`,'bot');
+      try{
+        const org=await api('POST','/api/organizar',{casos:p.casos,profissionais:p.profissionais||[],fixos:p.fixos||{},data:p.data||''});
+        window._ultimaDistrib={tabela:org.tabela,data:p.data||''};
+        const r=org.resumo;
+        let html=`<b>🧮 Distribuição calculada</b> — ${r.n_casos} casos, <b>${r.n_profissionais} profissionais</b> (pico de ${r.pico_simultaneo} salas às ${r.pico_hora}).<br>`;
+        html+=`<span style="font-size:11px;color:var(--muted)">Carga: ${Object.entries(r.cargas).map(([m,c])=>`${m} ${c}`).join(' · ')}</span>`;
+        if(r.avisos&&r.avisos.length)html+=`<br><span style="font-size:11px;color:#d97706">⚠️ ${r.avisos.join('<br>⚠️ ')}</span>`;
+        html+=tabelaHTML(org.tabela);
+        addMsg(html,'bot',{sug:['Agendar tudo conforme a distribuição']});
+      }catch(e){addMsg(`⚠️ ${e.message}`,'bot',{sug});}
     }
     if(p.evento)p.evento=sanitizeEv(p.evento,txt);
     if(Array.isArray(p.eventos))p.eventos=p.eventos.map(e=>sanitizeEv(e,txt));
@@ -1881,18 +1894,15 @@ RETORNE APENAS JSON sem markdown:
       if(falhas.length)msg+=`${okList.length?'<br>':''}⚠️ Não encontrado${falhas.length>1?'s':''}: ${falhas.join(', ')}`;
       addMsg(msg||p.resposta||'Não encontrado.','bot',{sug});
       if(okList.length)renderAgenda();
+    } else if(p.acao==='ORGANIZAR'&&(!Array.isArray(p.casos)||!p.casos.length)&&Array.isArray(p.eventos)&&p.eventos.length){
+      // a IA extraiu no formato de eventos — converte para casos
+      p.casos=p.eventos.map(e=>({setor:e.setor||'',inicio:e.time||'',fim:((e.obs||'').match(/fim\s*(\d{1,2}:\d{2})/i)||[])[1]||'',proc:e.proc||'',paciente:e.paciente||'',cirurgiao:''}));
+      p.data=p.data||(p.eventos[0]&&p.eventos[0].date)||'';
+      processarOrganizar(p);
+    } else if(p.acao==='ORGANIZAR'&&(!Array.isArray(p.casos)||!p.casos.length)){
+      addMsg((p.resposta||'')+'<br>⚠️ A extração não retornou os casos estruturados — reenvie o PDF pedindo: "organiza a escala".','bot');
     } else if(p.acao==='ORGANIZAR'&&Array.isArray(p.casos)&&p.casos.length){
-      addMsg(`📋 ${p.casos.length} casos extraídos — calculando a distribuição ótima…`,'bot');
-      try{
-        const org=await api('POST','/api/organizar',{casos:p.casos,profissionais:p.profissionais||[],fixos:p.fixos||{},data:p.data||''});
-        window._ultimaDistrib={tabela:org.tabela,data:p.data||''};
-        const r=org.resumo;
-        let html=`<b>🧮 Distribuição calculada</b> — ${r.n_casos} casos, <b>${r.n_profissionais} profissionais</b> (pico de ${r.pico_simultaneo} salas às ${r.pico_hora}).<br>`;
-        html+=`<span style="font-size:11px;color:var(--muted)">Carga: ${Object.entries(r.cargas).map(([m,c])=>`${m} ${c}`).join(' · ')}</span>`;
-        if(r.avisos&&r.avisos.length)html+=`<br><span style="font-size:11px;color:#d97706">⚠️ ${r.avisos.join('<br>⚠️ ')}</span>`;
-        html+=tabelaHTML(org.tabela);
-        addMsg(html,'bot',{sug:['Agendar tudo conforme a distribuição']});
-      }catch(e){addMsg(`⚠️ ${e.message}`,'bot',{sug});}
+      await processarOrganizar(p);
     } else if((p.acao==='RELATORIO'||p.acao==='CONSULTAR'||p.acao==='ORGANIZAR')&&p.tabela){
       const t=p.tabela;
       if(!t.length){addMsg(p.resposta||'Nenhum agendamento.','bot',{sug});}

@@ -1611,6 +1611,28 @@ function hideTyp(){document.getElementById('typ').style.display='none';}
 function send(){
   const inp=document.getElementById('minp');const txt=inp.value.trim();const pdf=pdfData;
   if(!txt&&!pdf)return;rmPDF();inp.value='';
+  // Confirmação da distribuição: agenda DIRETO da tabela calculada (caminho determinístico, sem IA)
+  if(/^agendar tudo conforme a distribui/i.test(txt)&&window._ultimaDistrib?.tabela?.length){
+    addMsg(txt,'user');showTyp();
+    (async()=>{
+      const dist=window._ultimaDistrib;const okL=[],falhas=[];
+      for(const r of dist.tabela){
+        try{
+          const saved=await api('POST','/api/eventos',{doc:r.medico,setor:r.setor,proc:r.proc,paciente:r.paciente||'',date:r.data||dist.data,time:r.hora,obs:r.obs||'',ai:true});
+          eventos.push(saved);lembrarSetores([saved]);
+          okL.push(`${r.hora} ${r.proc} — ${r.medico}`);
+        }catch(e){falhas.push(`${r.hora} ${r.proc} (${r.medico}): ${e.message}`);}
+      }
+      hideTyp();
+      let msg='';
+      if(okL.length)msg+=`✅ <b>${okL.length} agendamento${okL.length>1?'s':''} criado${okL.length>1?'s':''}</b> conforme a distribuição.`;
+      if(falhas.length)msg+=`${okL.length?'<br>':''}⚠️ ${falhas.length} falha${falhas.length>1?'s':''}:<br>• ${falhas.join('<br>• ')}<br><span style="font-size:10px;color:var(--hint)">Dica: se o nome é uma inicial (ex: RAF), cadastre o médico com esse nome em Config ou ajuste e reenvie.</span>`;
+      addMsg(msg||'Nada a agendar.','bot');
+      if(okL.length)renderAgenda();
+      window._ultimaDistrib=null;
+    })();
+    return;
+  }
   if(pendingCorrection&&txt){
     handleCorrection(txt);
     return;
@@ -1696,7 +1718,7 @@ PADRÕES POR MÉDICO (use como sugestão quando o usuário não especificar seto
 CORREÇÕES APRENDIDAS (erros já cometidos antes — não repita): ${correcoesTxt||'nenhuma correção registrada ainda'}
 DESLOCAMENTOS ENTRE SETORES (tempo mínimo de folga ao mudar de local): ${deslocTxt}
 PACIENTES CONHECIDOS (histórico — ao citar um nome, use o médico/setor habitual como sugestão): ${(ctx.pacientes||[]).map(p=>`${p.nome}→${p.doc}|${p.proc}`).join(' | ')||'nenhum ainda'}
-ORGANIZAR ESCALA (distribuição de anestesistas): quando o usuário enviar um mapa cirúrgico (PDF/imagem) e pedir para ORGANIZAR, DISTRIBUIR ou DIVIDIR os casos entre os anestesistas, use a ação ORGANIZAR. Processo: 1) extraia TODOS os procedimentos com local, horário de início e fim; 2) consulte as MEMÓRIAS DO GRUPO — regras de escala salvas lá (alocações fixas, restrições, preferências) são OBRIGATÓRIAS; 3) distribua os casos entre os médicos do grupo (ou as pessoas citadas no documento) obedecendo: nenhum profissional com dois casos de horários sobrepostos; casos no MESMO local em sequência ficam com o mesmo profissional; trocar de hospital exige folga mínima de 30 minutos entre o fim de um caso e o início do outro (quando houver a matriz DESLOCAMENTOS, use o tempo real do par de setores); OTIMIZE POR PROXIMIDADE: ao escolher o próximo caso de um profissional, prefira 1º o mesmo local, 2º o local com MENOR tempo de deslocamento na matriz — minimize o total de deslocamento do dia e evite que alguém cruze a cidade várias vezes; equilibre a carga entre os profissionais; 4) responda com a ação ORGANIZAR preenchendo "tabela" com TODOS os casos e a coluna "medico" com o profissional atribuído, e na "resposta" explique brevemente a lógica (picos de simultaneidade, quantos profissionais foram necessários); 5) NÃO agende nada ainda — inclua em "suggests" a opção "Agendar tudo conforme a distribuição". Se o usuário confirmar em seguida, aí sim use AGENDAR_MULTIPLOS com o campo "doc" de cada evento preenchido conforme a tabela.
+ORGANIZAR ESCALA (distribuição de anestesistas): quando o usuário enviar um mapa cirúrgico e pedir para ORGANIZAR/DISTRIBUIR/DIVIDIR os casos, use a ação ORGANIZAR — mas NÃO distribua você mesma: um algoritmo exato do sistema faz a alocação sem colisões. Seu papel é EXTRAIR com precisão e devolver: "casos":[{"setor":"","inicio":"HH:MM","fim":"HH:MM","proc":"","paciente":"","cirurgiao":""}] com TODOS os casos do mapa (inicio e fim da MESMA linha); "profissionais":["..."] — os disponíveis para o dia: os citados no documento/mensagem (iniciais do rodapé como GUS, HEN contam) e/ou os médicos do grupo; "fixos":{"PROFISSIONAL":"SETOR"} — alocações obrigatórias extraídas das MEMÓRIAS DO GRUPO e do rodapé do mapa (ex: "PRÉS NO HED: RAF" → {"RAF":"HED"}); "data":"YYYY-MM-DD" — a data do mapa (título). Em "resposta", diga apenas que extraiu N casos e o sistema vai calcular a distribuição. NÃO preencha "tabela" nem "eventos" nessa ação.
 LEITURA DE MAPAS CIRÚRGICOS — ESTRUTURA DAS LINHAS (crítico): 1º) descubra a ordem das colunas pelo CABEÇALHO do próprio documento (a linha tipo "HORÁRIO LEITO CIRURGIA CIRURGIAO SALA PACIENTE IDADE CONVÊNIO") — a ordem pode variar entre mapas, o cabeçalho de cada documento manda. 2º) cada LINHA de dados é UM caso completo. 3º) regra universal dos horários: quando dois horários aparecem adjacentes na MESMA linha, são o INÍCIO e o FIM previsto do MESMO caso — PROIBIDO parear um horário de uma linha com o horário de outra linha. Exemplo de um formato comum ([nº] [início] [fim] [leito] [cirurgia] [cirurgião] [paciente] [convênio]):
 "1  07:00  12:00  AMB  LIFTING+BLEFARO  ZANETTE  GILBERTO  PART"
 "2  07:30  11:00  AMB  RITIDO+BLEFARO  GOLDMAN  ROSANA  PART"
@@ -1752,6 +1774,12 @@ RETORNE APENAS JSON sem markdown:
     if(p.novas_memorias)p.novas_memorias.forEach(m=>{if(m.texto)addMem(m.texto,m.icone||'ti-brain');});
     const sug=p.suggests||[];
 
+    function tabelaHTML(t){
+      let html=`<br><table><tr><th>Hora</th><th>Setor</th><th>Procedimento</th><th>Paciente</th><th>Médico</th><th>Obs</th></tr>`;
+      t.forEach(r=>{const en=setores.find(s=>s.name===r.setor||s.id===r.setor);const bc=en?BADGE[en.id]:'';html+=`<tr><td style="white-space:nowrap">${r.hora}</td><td><span class="ev-tag ${bc}">${r.setor}</span></td><td>${r.proc}</td><td>${r.paciente||'—'}</td><td style="font-weight:600;font-size:11px">${r.medico}</td><td style="font-size:10px;color:var(--muted)">${r.obs||''}</td></tr>`;});
+      html+=`</table><div style="font-size:10px;color:var(--hint);margin-top:4px">${t.length} procedimento${t.length!==1?'s':''}</div>`;
+      return html;
+    }
     // Autocorreção: se a IA puser exame/procedimento no campo do médico, conserta antes de enviar
     function sanitizeEv(ev,txtUsuario){
       const meds=(window._ctxCache?.medicos)||[];
@@ -1853,15 +1881,22 @@ RETORNE APENAS JSON sem markdown:
       if(falhas.length)msg+=`${okList.length?'<br>':''}⚠️ Não encontrado${falhas.length>1?'s':''}: ${falhas.join(', ')}`;
       addMsg(msg||p.resposta||'Não encontrado.','bot',{sug});
       if(okList.length)renderAgenda();
+    } else if(p.acao==='ORGANIZAR'&&Array.isArray(p.casos)&&p.casos.length){
+      addMsg(`📋 ${p.casos.length} casos extraídos — calculando a distribuição ótima…`,'bot');
+      try{
+        const org=await api('POST','/api/organizar',{casos:p.casos,profissionais:p.profissionais||[],fixos:p.fixos||{},data:p.data||''});
+        window._ultimaDistrib={tabela:org.tabela,data:p.data||''};
+        const r=org.resumo;
+        let html=`<b>🧮 Distribuição calculada</b> — ${r.n_casos} casos, <b>${r.n_profissionais} profissionais</b> (pico de ${r.pico_simultaneo} salas às ${r.pico_hora}).<br>`;
+        html+=`<span style="font-size:11px;color:var(--muted)">Carga: ${Object.entries(r.cargas).map(([m,c])=>`${m} ${c}`).join(' · ')}</span>`;
+        if(r.avisos&&r.avisos.length)html+=`<br><span style="font-size:11px;color:#d97706">⚠️ ${r.avisos.join('<br>⚠️ ')}</span>`;
+        html+=tabelaHTML(org.tabela);
+        addMsg(html,'bot',{sug:['Agendar tudo conforme a distribuição']});
+      }catch(e){addMsg(`⚠️ ${e.message}`,'bot',{sug});}
     } else if((p.acao==='RELATORIO'||p.acao==='CONSULTAR'||p.acao==='ORGANIZAR')&&p.tabela){
       const t=p.tabela;
       if(!t.length){addMsg(p.resposta||'Nenhum agendamento.','bot',{sug});}
-      else{
-        let html=`${p.resposta||'📅 Agenda:'}<br><table><tr><th>Data</th><th>Hora</th><th>Setor</th><th>Procedimento</th><th>Paciente</th><th>Médico</th></tr>`;
-        t.forEach(r=>{const en=setores.find(s=>s.name===r.setor||s.id===r.setor);const bc=en?BADGE[en.id]:'';html+=`<tr><td style="white-space:nowrap">${r.data}</td><td>${r.hora}</td><td><span class="ev-tag ${bc}">${r.setor}</span></td><td>${r.proc}</td><td>${r.paciente||'—'}</td><td style="font-size:10px;color:var(--muted)">${r.medico}</td></tr>`;});
-        html+=`</table><div style="font-size:10px;color:var(--hint);margin-top:4px">${t.length} procedimento${t.length!==1?'s':''}</div>`;
-        addMsg(html,'bot',{sug});
-      }
+      else{addMsg(`${p.resposta||'📅 Agenda:'}`+tabelaHTML(t),'bot',{sug});}
     } else {addMsg(p.resposta||'Como posso ajudar?','bot',{sug});}
   }catch(e){
     hideTyp();

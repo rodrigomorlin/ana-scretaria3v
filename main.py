@@ -2073,6 +2073,18 @@ def auth_jwt_only(request: Request) -> dict:
 class NovoGrupo(BaseModel):
     nome: str
 
+def _gerar_codigo_unico() -> str:
+    """Código de acesso aleatório e inédito (8 hex maiúsculos)."""
+    for _ in range(6):
+        codigo = secrets.token_hex(4).upper()
+        try:
+            if not sb_rest("GET", f"/groups?access_code=eq.{codigo}&select=id"):
+                return codigo
+        except Exception:
+            return codigo
+    return secrets.token_hex(6).upper()
+
+
 @app.post("/api/grupos")
 def criar_grupo(g: NovoGrupo, request: Request):
     """Cria um grupo novo e torna o usuário atual admin (onboarding)."""
@@ -2087,12 +2099,23 @@ def criar_grupo(g: NovoGrupo, request: Request):
             sb_rest("POST", "/profiles", {"id": u["id"], "full_name": u["nome"]})
     except Exception as e:
         log.warning(f"profiles check/insert: {e}")
-    grupo = sb_rest("POST", "/groups", {"name": nome, "created_by": u["id"]})[0]
+    grupo = sb_rest("POST", "/groups", {"name": nome, "created_by": u["id"],
+                                        "access_code": _gerar_codigo_unico()})[0]
     sb_rest("POST", "/group_members",
             {"user_id": u["id"], "group_id": grupo["id"], "role": "admin"})
     _membership_cache.pop(u["id"], None)
     log.info(f"Grupo criado no onboarding: {nome} por {u['nome']}")
     return {"ok": True, "group_id": grupo["id"], "nome": nome}
+
+@app.post("/api/grupos/regenerar-codigo")
+def regenerar_codigo(user=Depends(auth)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Apenas administradores.")
+    gid = user.get("org_id") or user.get("group_id")
+    novo = _gerar_codigo_unico()
+    sb_rest("PATCH", f"/groups?id=eq.{gid}", {"access_code": novo})
+    log.info(f"Código de acesso regenerado para o grupo {gid}")
+    return {"ok": True, "access_code": novo}
 
 @app.get("/api/supabase/whoami")
 def supabase_whoami(request: Request):

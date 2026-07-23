@@ -736,6 +736,16 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     </div>
   </div>
 
+  <div class="card" id="gcal-card" style="display:none">
+    <div class="card-title"><i class="ti ti-calendar-event" style="color:var(--accent)"></i>Google Calendar do grupo</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Cada grupo pode sincronizar com um calendário próprio — ou deixar em branco para usar o padrão.</div>
+    <div style="display:flex;gap:8px;margin-bottom:6px">
+      <input id="gcal-id-input" placeholder="ID do calendário (ex: abc123@group.calendar.google.com)" style="flex:1">
+      <button class="btn sm" onclick="salvarGcal()"><i class="ti ti-device-floppy"></i> Salvar</button>
+    </div>
+    <div id="gcal-info" style="font-size:11px;color:var(--hint)"></div>
+  </div>
+
   <div class="card">
     <div class="card-title"><i class="ti ti-bell" style="color:var(--accent)"></i>Notificações</div>
     <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Preferências pessoais — cada integrante configura as suas.</div>
@@ -1006,7 +1016,7 @@ async function loadAll(){
       api('GET','/api/medicos'),api('GET','/api/setores'),
       api('GET','/api/eventos'),api('GET','/api/memorias')]);
   lembrarSetores(eventos);
-  loadNotifPrefs();
+  loadNotifPrefs();loadGcalCfg();
     renderMem();renderDocList();renderSetorList();populateAgendaFilters();
     if(me?.role==='admin'){
     }
@@ -2462,6 +2472,26 @@ async function regenerarCodigo(){
     const el=document.getElementById('codigo-valor');
     if(el)el.textContent=r.access_code;
     toast('🔑 Novo código: '+r.access_code);
+  }catch(e){toast('⚠️ '+e.message);}
+}
+async function loadGcalCfg(){
+  const card=document.getElementById('gcal-card');
+  if(!card||me?.role!=='admin')return;
+  try{
+    const c=await api('GET','/api/config/gcal');
+    card.style.display='block';
+    document.getElementById('gcal-id-input').value=(c.configurado_via==='app')?c.calendar_id:'';
+    let info=c.configurado_via==='app'?`✓ Este grupo usa calendário próprio.`:`Este grupo usa o calendário padrão (${c.calendar_id==='primary'?'da conta de serviço':c.calendar_id}).`;
+    if(c.service_account_email)info+=`<br>📌 Para usar um calendário próprio: no Google Calendar, crie/abra o calendário → Configurações → <b>Compartilhar com pessoas específicas</b> → adicione <b style="user-select:all">${c.service_account_email}</b> com permissão "Fazer alterações" → copie o <b>ID do calendário</b> (na seção Integrar) e cole acima.`;
+    document.getElementById('gcal-info').innerHTML=info;
+  }catch{card.style.display='none';}
+}
+async function salvarGcal(){
+  try{
+    const v=document.getElementById('gcal-id-input').value.trim();
+    await api('POST','/api/config/gcal',{calendar_id:v});
+    toast(v?'📆 Calendário do grupo salvo!':'📆 Voltou ao calendário padrão.');
+    loadGcalCfg();
   }catch(e){toast('⚠️ '+e.message);}
 }
 async function loadNotifPrefs(){

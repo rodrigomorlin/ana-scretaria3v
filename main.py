@@ -1492,16 +1492,13 @@ def push_status(user=Depends(auth)):
 @app.post("/api/push/test")
 async def push_test(user=Depends(auth)):
     """Envia uma notificação de teste para o usuário atual."""
-    rows = sb_rest("GET", f"/ana_push_subscriptions?user_id=eq.{user['id']}&select=subscription")
-    subs = [{"subscription": json.dumps(r["subscription"])} for r in rows]
-    if not subs:
-        raise HTTPException(400, "Nenhum dispositivo registrado para este usuário.")
-    sent = 0
-    for sub in subs:
-        info = json.loads(sub["subscription"])
-        if send_push(info, "🩺 A.N.A · Teste", "Notificações funcionando!", "/"):
-            sent += 1
-    return {"ok": True, "sent": sent}
+    rows = sb_rest("GET", f"/ana_push_subscriptions?user_id=eq.{user['id']}&select=id")
+    if not rows:
+        raise HTTPException(400, "Nenhum dispositivo registrado. Toque em 'Ativar notificações' neste aparelho primeiro.")
+    if not VAPID_PRIVATE_KEY:
+        raise HTTPException(400, "VAPID_PRIVATE_KEY não configurada no servidor.")
+    await push_user(user["id"], "🩺 A.N.A · Teste", "Notificações funcionando!", "/")
+    return {"ok": True, "dispositivos": len(rows)}
 
 # ── CONFIGURAÇÃO DO GOOGLE CALENDAR (via app) ───────────────
 class GCalConfig(BaseModel):

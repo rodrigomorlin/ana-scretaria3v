@@ -1480,7 +1480,14 @@ class GCalConfig(BaseModel):
 @app.get("/api/config/gcal")
 def get_gcal_config(user=Depends(auth)):
     org_id = user.get("org_id","default")
-    return {"calendar_id": get_gcal_id(org_id), "configurado_via": "app" if get_config("gcal_calendar_id", org_id=org_id) else "env_var_ou_padrao"}
+    sa_email = ""
+    try:
+        sa_email = json.loads(GCAL_CREDS).get("client_email", "") if GCAL_CREDS else ""
+    except Exception:
+        pass
+    return {"calendar_id": get_gcal_id(org_id),
+            "configurado_via": "app" if get_config("gcal_calendar_id", org_id=org_id) else "padrao_global",
+            "service_account_email": sa_email}
 
 @app.post("/api/config/gcal")
 def set_gcal_config(cfg: GCalConfig, user=Depends(auth)):

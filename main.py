@@ -2107,6 +2107,31 @@ def criar_grupo(g: NovoGrupo, request: Request):
     log.info(f"Grupo criado no onboarding: {nome} por {u['nome']}")
     return {"ok": True, "group_id": grupo["id"], "nome": nome}
 
+@app.post("/api/grupos/membros/{uid}/vincular-medico")
+def vincular_medico(uid: str, body: dict, user=Depends(auth)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Apenas administradores.")
+    gid = user.get("org_id") or user.get("group_id")
+    membro = sb_rest("GET", f"/group_members?group_id=eq.{gid}&user_id=eq.{uid}&select=user_id")
+    if not membro:
+        raise HTTPException(404, "Membro não encontrado neste grupo.")
+    doctor_id = (body or {}).get("doctor_id") or ""
+    # desfaz vínculo anterior desse usuário no grupo (evita duplicidade)
+    sb_rest("PATCH", f"/doctors?group_id=eq.{gid}&user_id=eq.{uid}", {"user_id": None})
+    if doctor_id == "novo":
+        perfil = sb_rest("GET", f"/profiles?id=eq.{uid}&select=full_name")
+        nome = (perfil[0].get("full_name") if perfil else "") or "Novo médico"
+        d = sb_rest("POST", "/doctors", {"group_id": gid, "user_id": uid, "name": nome, "active": True})
+        return {"ok": True, "medico": d[0]["name"]}
+    doc = sb_rest("GET", f"/doctors?id=eq.{doctor_id}&group_id=eq.{gid}&select=id,name,user_id")
+    if not doc:
+        raise HTTPException(404, "Médico não encontrado neste grupo.")
+    if doc[0].get("user_id") and doc[0]["user_id"] != uid:
+        raise HTTPException(400, f"O médico {doc[0]['name']} já está vinculado a outra conta.")
+    sb_rest("PATCH", f"/doctors?id=eq.{doctor_id}", {"user_id": uid, "active": True})
+    log.info(f"Médico {doc[0]['name']} vinculado ao membro {uid}")
+    return {"ok": True, "medico": doc[0]["name"]}
+
 @app.post("/api/grupos/regenerar-codigo")
 def regenerar_codigo(user=Depends(auth)):
     if user.get("role") != "admin":

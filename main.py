@@ -752,9 +752,11 @@ async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=
                 alvo_uid = (d[0].get("user_id") if d else None)
         except Exception:
             pass
-        if alvo_uid and alvo_uid != user["id"]:
+        if alvo_uid:
             if get_notif_prefs(alvo_uid).get("new_appointment", True):
-                bg.add_task(push_user, alvo_uid, "📅 Novo agendamento para você",
+                titulo = ("📅 Agendamento criado" if alvo_uid == user["id"]
+                          else "📅 Novo agendamento para você")
+                bg.add_task(push_user, alvo_uid, titulo,
                             f"{ev.proc} · {fmtDate(ev.date)} {ev.time}")
         elif not alvo_uid:
             bg.add_task(push_all_org, org_id, "📅 Novo agendamento",
@@ -1422,17 +1424,27 @@ async def push_user(user_id: str, title: str, body: str, url: str = "/"):
         return
     subs = sb_rest("GET", f"/ana_push_subscriptions?user_id=eq.{user_id}&select=id,subscription")
     payload = json.dumps({"title": title, "body": body, "url": url})
+    entregues = 0
     for s in subs:
         try:
             webpush(subscription_info=s["subscription"], data=payload,
                     vapid_private_key=VAPID_PRIVATE_KEY,
                     vapid_claims={"sub": f"mailto:{VAPID_CLAIMS_EMAIL}"})
+            entregues += 1
         except WebPushException as e:
             code = getattr(getattr(e, "response", None), "status_code", 0)
+            corpo = ""
+            try:
+                corpo = e.response.text[:200] if getattr(e, "response", None) is not None else ""
+            except Exception:
+                pass
+            log.warning(f"push_user falhou (HTTP {code}) user={user_id}: {corpo or e}")
             if code in (404, 410):
                 sb_rest("DELETE", f"/ana_push_subscriptions?id=eq.{s['id']}")
         except Exception as e:
-            log.warning(f"push_user erro: {e}")
+            log.warning(f"push_user erro: {type(e).__name__}: {e}")
+    log.info(f"push_user '{title}' → {entregues}/{len(subs)} dispositivo(s) do usuário {user_id}")
+    return entregues
 
 
 async def push_all_org(org_id: str, title: str, body: str, url: str = "/"):
@@ -1472,11 +1484,20 @@ async def push_subscribe(request: Request, user=Depends(auth)):
     sub_json = json.dumps(body)
     sub_id = secrets.token_hex(16)
     org_id = user.get("org_id", "default")
-    # remove inscrições anteriores do usuário e insere a nova
-    sb_rest("DELETE", f"/ana_push_subscriptions?user_id=eq.{user['id']}")
+    # mantém um registro por APARELHO: remove só a inscrição com o mesmo endpoint
+    endpoint = (body or {}).get("endpoint", "")
+    try:
+        atuais = sb_rest("GET", f"/ana_push_subscriptions?user_id=eq.{user['id']}&select=id,subscription")
+        for a in atuais:
+            if (a.get("subscription") or {}).get("endpoint") == endpoint:
+                sb_rest("DELETE", f"/ana_push_subscriptions?id=eq.{a['id']}")
+    except Exception as e:
+        log.warning(f"limpeza de inscrição duplicada: {e}")
     sb_rest("POST", "/ana_push_subscriptions",
             {"user_id": user["id"], "group_id": org_id, "subscription": body})
-    return {"ok": True}
+    total = len(sb_rest("GET", f"/ana_push_subscriptions?user_id=eq.{user['id']}&select=id"))
+    log.info(f"Push inscrito: user={user['id']} dispositivos={total}")
+    return {"ok": True, "dispositivos": total}
 
 @app.delete("/api/push/subscribe")
 def push_unsubscribe(user=Depends(auth)):
@@ -1497,8 +1518,11 @@ async def push_test(user=Depends(auth)):
         raise HTTPException(400, "Nenhum dispositivo registrado. Toque em 'Ativar notificações' neste aparelho primeiro.")
     if not VAPID_PRIVATE_KEY:
         raise HTTPException(400, "VAPID_PRIVATE_KEY não configurada no servidor.")
-    await push_user(user["id"], "🩺 A.N.A · Teste", "Notificações funcionando!", "/")
-    return {"ok": True, "dispositivos": len(rows)}
+    entregues = await push_user(user["id"], "🩺 A.N.A · Teste", "Notificações funcionando!", "/")
+    if not entregues:
+        raise HTTPException(502, f"Nenhum dos {len(rows)} dispositivo(s) aceitou o envio — "
+                                 "reative as notificações neste aparelho (o registro pode ter expirado).")
+    return {"ok": True, "dispositivos": len(rows), "entregues": entregues}
 
 # ── CONFIGURAÇÃO DO GOOGLE CALENDAR (via app) ───────────────
 class GCalConfig(BaseModel):

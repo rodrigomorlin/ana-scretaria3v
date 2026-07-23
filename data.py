@@ -166,9 +166,9 @@ def sb_delete_setor(user, sid):
 # ── MÉDICOS ─────────────────────────────────────────────────
 def sb_list_medicos(user):
     gid = _gid(user)
-    rows = _sb("GET", f"/doctors?group_id=eq.{_q(gid)}&active=eq.true&select=id,name,specialty,phone&order=name")
+    rows = _sb("GET", f"/doctors?group_id=eq.{_q(gid)}&active=eq.true&select=id,name,specialty,phone,user_id&order=name")
     return [{"id": r["id"], "name": r["name"], "spec": r.get("specialty") or "",
-             "email": "", "phone": r.get("phone") or ""} for r in rows]
+             "email": "", "phone": r.get("phone") or "", "vinculado": bool(r.get("user_id"))} for r in rows]
 
 
 def sb_create_medico(user, m):

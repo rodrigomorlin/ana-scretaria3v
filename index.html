@@ -255,7 +255,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 .ac-name{font-size:13px;font-weight:500;color:var(--text)}
 .ac-sub{font-size:10px;color:var(--hint);margin-top:2px}
 .bottom-nav{display:none;position:fixed;bottom:0;left:0;right:0;background:var(--surface);border-top:1px solid var(--border);z-index:50;padding:6px 0 max(6px,env(safe-area-inset-bottom))}
-.bottom-nav-items{display:flex;justify-content:space-around;align-items:center}
+.bottom-nav-items{display:flex;align-items:center;overflow-x:auto;gap:2px;scrollbar-width:none;-webkit-overflow-scrolling:touch;padding:0 4px}.bottom-nav-items::-webkit-scrollbar{display:none}.bn-item{flex:0 0 auto;min-width:60px}
 .bn-item{display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 12px;border:none;background:none;cursor:pointer;color:var(--muted);font-size:9px;font-weight:500;font-family:inherit;border-radius:8px;transition:color .12s;min-width:52px}
 .bn-item i{font-size:20px}
 .bn-item.on{color:var(--accent)}
@@ -584,7 +584,8 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <div class="sidenav-user">
       <div class="user-avatar" id="user-avatar">?</div>
       <div><div class="user-name" id="uname">—</div><div class="user-role" id="urole">—</div></div>
-      <button class="sidenav-logout" onclick="doLogout()" title="Sair"><i class="ti ti-logout"></i></button>
+      <button class="sidenav-logout" onclick="voltarGrupos()" title="Trocar de grupo"><i class="ti ti-users"></i></button>
+      <button class="sidenav-logout" onclick="doLogout()" title="Sair" style="margin-left:4px"><i class="ti ti-logout"></i></button>
       <button class="sidenav-logout" id="dark-toggle" onclick="toggleDark()" title="Alternar tema" style="margin-left:4px"><i class="ti ti-moon"></i></button>
     </div>
   </div>
@@ -861,6 +862,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <button class="bn-item" id="bn-config" onclick="tab('config')"><i class="ti ti-settings"></i>Config</button>
     <button class="bn-item" id="bn-logs" onclick="tab('logs')" style="display:none"><i class="ti ti-terminal"></i>Logs</button>
     <button class="bn-item" id="bn-dark" onclick="toggleDark()"><i class="ti ti-moon" id="bn-dark-icon"></i>Tema</button>
+    <button class="bn-item" id="bn-grupos" onclick="voltarGrupos()"><i class="ti ti-users"></i>Grupos</button>
   </div>
 </nav>
 
@@ -1106,6 +1108,12 @@ function hubShow(qual){
   document.getElementById('hub-codigo').style.display=qual==='codigo'?'block':'none';
   if(qual==='criar')document.getElementById('ob-nome').focus();
   else document.getElementById('hub-cod').focus();
+}
+function voltarGrupos(){
+  window._chatHist=[];
+  document.getElementById('app').classList.remove('on');
+  document.getElementById('lwrap').style.display='';
+  showHub();
 }
 function entrarGrupo(gid,role){window._chatHist=[];
   groupId=gid;localStorage.setItem('ana-group',gid);

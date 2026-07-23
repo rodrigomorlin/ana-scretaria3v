@@ -739,10 +739,19 @@ html,body{height:100%;background:var(--bg);color:var(--text);
   <div class="card" id="gcal-card" style="display:none">
     <div class="card-title"><i class="ti ti-calendar-event" style="color:var(--accent)"></i>Google Calendar do grupo</div>
     <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Cada grupo pode sincronizar com um calendário próprio — ou deixar em branco para usar o padrão.</div>
-    <div style="display:flex;gap:8px;margin-bottom:6px">
-      <input id="gcal-id-input" placeholder="ID do calendário (ex: abc123@group.calendar.google.com)" style="flex:1">
-      <button class="btn sm" onclick="salvarGcal()"><i class="ti ti-device-floppy"></i> Salvar</button>
+    <div id="gcal-facil" style="display:none;margin-bottom:8px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <select id="gcal-select" style="flex:1;min-width:180px;padding:8px;border:1px solid var(--border);border-radius:var(--rs);background:var(--surface);color:var(--text)"></select>
+        <button class="btn sm primary" onclick="usarCalendarioSelecionado()"><i class="ti ti-check"></i> Usar este</button>
+        <button class="btn sm" onclick="criarCalendarioGrupo()" title="Cria um calendário novo na sua conta Google com o nome do grupo"><i class="ti ti-plus"></i> Criar novo</button>
+      </div>
     </div>
+    <details style="margin-bottom:6px"><summary style="font-size:11px;color:var(--muted);cursor:pointer">Configuração manual (avançado)</summary>
+      <div style="display:flex;gap:8px;margin-top:6px">
+        <input id="gcal-id-input" placeholder="ID do calendário (ex: abc123@group.calendar.google.com)" style="flex:1">
+        <button class="btn sm" onclick="salvarGcal()"><i class="ti ti-device-floppy"></i> Salvar</button>
+      </div>
+    </details>
     <div id="gcal-info" style="font-size:11px;color:var(--hint)"></div>
   </div>
 
@@ -2474,6 +2483,32 @@ async function regenerarCodigo(){
     toast('🔑 Novo código: '+r.access_code);
   }catch(e){toast('⚠️ '+e.message);}
 }
+async function carregarMeusCalendarios(){
+  const facil=document.getElementById('gcal-facil');
+  try{
+    const r=await api('GET','/api/config/gcal/meus-calendarios');
+    const sel=document.getElementById('gcal-select');
+    sel.innerHTML=r.calendarios.map(c=>`<option value="${c.id}">${c.principal?'⭐ ':''}${c.nome}</option>`).join('');
+    facil.style.display=r.calendarios.length?'block':'none';
+    return true;
+  }catch{facil.style.display='none';return false;}
+}
+async function usarCalendarioSelecionado(){
+  const id=document.getElementById('gcal-select').value;
+  if(!id)return;
+  try{
+    await api('POST','/api/config/gcal/vincular',{calendar_id:id});
+    toast('📆 Calendário do grupo vinculado!');loadGcalCfg();
+  }catch(e){toast('⚠️ '+e.message);}
+}
+async function criarCalendarioGrupo(){
+  const nome=prompt('Nome do calendário novo:','A.N.A — '+(document.getElementById('uname')?.textContent?'Agenda do grupo':'Agenda do grupo'));
+  if(nome===null)return;
+  try{
+    const r=await api('POST','/api/config/gcal/vincular',{criar:true,nome:nome||'A.N.A — Agenda do grupo'});
+    toast('📆 Calendário criado e vinculado!');loadGcalCfg();
+  }catch(e){toast('⚠️ '+e.message);}
+}
 async function loadGcalCfg(){
   const card=document.getElementById('gcal-card');
   if(!card||me?.role!=='admin')return;
@@ -2481,8 +2516,13 @@ async function loadGcalCfg(){
     const c=await api('GET','/api/config/gcal');
     card.style.display='block';
     document.getElementById('gcal-id-input').value=(c.configurado_via==='app')?c.calendar_id:'';
-    let info=c.configurado_via==='app'?`✓ Este grupo usa calendário próprio.`:`Este grupo usa o calendário padrão (${c.calendar_id==='primary'?'da conta de serviço':c.calendar_id}).`;
-    if(c.service_account_email)info+=`<br>📌 Para usar um calendário próprio: no Google Calendar, crie/abra o calendário → Configurações → <b>Compartilhar com pessoas específicas</b> → adicione <b style="user-select:all">${c.service_account_email}</b> com permissão "Fazer alterações" → copie o <b>ID do calendário</b> (na seção Integrar) e cole acima.`;
+    const temLista=await carregarMeusCalendarios();
+    let info=c.configurado_via==='oauth'?`✓ Este grupo usa um calendário da sua conta Google (<b>${c.calendar_id}</b>).`
+      :c.configurado_via==='app'?`✓ Este grupo usa calendário próprio via conta de serviço.`
+      :`Este grupo usa o calendário padrão (${c.calendar_id==='primary'?'da conta de serviço':c.calendar_id}).`;
+    if(!temLista)info+=`<br>💡 Conecte seu Google no card "Meu Google Calendar pessoal" acima e volte aqui — aí é só escolher o calendário numa lista, sem copiar ID.`;
+    else info+=`<br>💡 Escolha um calendário acima ou crie um novo — pronto, sem copiar IDs.`;
+    if(c.service_account_email&&!temLista)info+=`<br>📌 Alternativa manual: compartilhe o calendário com <b style="user-select:all">${c.service_account_email}</b> ("Fazer alterações") e cole o ID em "Configuração manual".`;
     document.getElementById('gcal-info').innerHTML=info;
   }catch{card.style.display='none';}
 }

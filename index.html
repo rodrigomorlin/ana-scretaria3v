@@ -774,7 +774,9 @@ html,body{height:100%;background:var(--bg);color:var(--text);
   </div>
 
   <div class="card" id="codigo-card" style="display:none">
-    <div class="card-title"><i class="ti ti-key"></i> Código de Acesso</div>
+    <div class="card-title" style="display:flex;align-items:center"><i class="ti ti-key"></i> Código de Acesso
+      <button class="btn sm" style="margin-left:auto" onclick="regenerarCodigo()" title="Gera um código novo — o antigo deixa de funcionar"><i class="ti ti-refresh"></i> Regenerar</button>
+    </div>
     <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Compartilhe este código para que outros membros possam solicitar entrada no grupo</div>
     <div style="display:flex;gap:8px;align-items:center">
       <div id="codigo-valor" style="flex:1;background:var(--faint);border:1px solid var(--border);border-radius:var(--rs);padding:12px;text-align:center;font-family:monospace;font-size:16px;letter-spacing:3px;font-weight:600"></div>
@@ -853,6 +855,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
   <div class="bottom-nav-items">
     <button class="bn-item on" id="bn-chat" onclick="tab('chat')"><i class="ti ti-message-2"></i>Chat</button>
     <button class="bn-item" id="bn-agenda" onclick="tab('agenda')"><i class="ti ti-calendar"></i>Agenda</button>
+    <button class="bn-item" id="bn-mapa" onclick="openMapaCirurgico()"><i class="ti ti-clipboard-list"></i>Mapa</button>
     <button class="bn-item" id="bn-escala" onclick="tab('escala')"><i class="ti ti-calendar-stats"></i>Escala</button>
     <button class="bn-item" id="bn-relatorios" onclick="tab('relatorios')"><i class="ti ti-chart-bar"></i>Relatórios</button>
     <button class="bn-item" id="bn-config" onclick="tab('config')"><i class="ti ti-settings"></i>Config</button>
@@ -2443,6 +2446,15 @@ function escolherEndereco(i){
   const box=document.getElementById('nsend-sugestoes');
   box.innerHTML=`<span style="font-size:11px;color:var(--ok,#16a34a)">✓ ${s.nome}</span>`;
   setTimeout(()=>{box.style.display='none'},2500);
+}
+async function regenerarCodigo(){
+  if(!confirm('Gerar um novo código de acesso? O código atual deixa de funcionar para novas solicitações.'))return;
+  try{
+    const r=await api('POST','/api/grupos/regenerar-codigo');
+    const el=document.getElementById('codigo-valor');
+    if(el)el.textContent=r.access_code;
+    toast('🔑 Novo código: '+r.access_code);
+  }catch(e){toast('⚠️ '+e.message);}
 }
 async function loadNotifPrefs(){
   try{

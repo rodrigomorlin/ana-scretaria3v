@@ -1130,14 +1130,50 @@ function hubShow(qual){
   else document.getElementById('hub-cod').focus();
 }
 function voltarGrupos(){
-  window._chatHist=[];
+  salvarEstadoChat();
   document.getElementById('app').classList.remove('on');
   document.getElementById('lwrap').style.display='';
   showHub();
 }
-function entrarGrupo(gid,role){window._chatHist=[];
+// ── Chat isolado por grupo: cada grupo guarda a própria conversa e caches ──
+window._chatByGroup={};
+function salvarEstadoChat(){
+  if(!groupId)return;
+  const msgs=document.getElementById('msgs');
+  if(!msgs)return;
+  window._chatByGroup[groupId]={
+    html:msgs.innerHTML,
+    hist:(window._chatHist||[]).slice(),
+    distrib:window._ultimaDistrib||null,
+    distribCopia:window._ultimaDistribCopia||null
+  };
+}
+function limparEstadoChat(){
+  const msgs=document.getElementById('msgs');
+  if(msgs)msgs.innerHTML='<div class="typing" id="typ"><span></span><span></span><span></span></div>';
+  window._chatHist=[];window._ultimaDistrib=null;window._ultimaDistribCopia=null;
+  window._ctxCache=null;window._setorNomes={};
+  if(typeof pendingCorrection!=='undefined')pendingCorrection=null;
+}
+function restaurarEstadoChat(gid){
+  const s=window._chatByGroup[gid];
+  if(!s)return false;
+  const msgs=document.getElementById('msgs');
+  if(!msgs)return false;
+  msgs.innerHTML=s.html;
+  const typ=document.getElementById('typ');if(typ)typ.style.display='none';
+  window._chatHist=(s.hist||[]).slice();
+  window._ultimaDistrib=s.distrib||null;
+  window._ultimaDistribCopia=s.distribCopia||null;
+  msgs.scrollTop=msgs.scrollHeight;
+  return true;
+}
+function entrarGrupo(gid,role){
+  salvarEstadoChat();              // guarda a conversa do grupo que está saindo
   groupId=gid;localStorage.setItem('ana-group',gid);
   me.org_id=gid;me.role=role==='admin'?'admin':'medico';
+  limparEstadoChat();              // zera tela e caches do grupo anterior
+  window._restaurou=restaurarEstadoChat(gid);  // se já conversou neste grupo, volta de onde parou
   document.getElementById('hub').style.display='none';
   showApp();
 }
@@ -1515,7 +1551,8 @@ async function doLogout(){
   document.getElementById('lwrap').style.display='flex';
   document.getElementById('login-form').style.display='block';
   document.getElementById('hub').style.display='none';
-  document.getElementById('msgs').innerHTML='<div class="typing" id="typ"><span></span><span></span><span></span></div>';
+  limparEstadoChat();window._chatByGroup={};
+  if(window._loadAllTimer){clearInterval(window._loadAllTimer);window._loadAllTimer=null;}
 }
 async function showApp(){
   document.getElementById('lwrap').style.display='none';
@@ -1530,8 +1567,11 @@ async function showApp(){
     const bn=document.getElementById('bn-logs');if(bn)bn.style.display='flex';
   }
   if(window._medssUrl){const ms=document.getElementById('snav-medss');if(ms)ms.style.display='flex';}
-  await loadAll();loadIntStatus();initWelcome();
-  setInterval(loadAll,30000);
+  await loadAll();loadIntStatus();
+  if(!window._restaurou)initWelcome();
+  window._restaurou=false;
+  if(window._loadAllTimer)clearInterval(window._loadAllTimer);
+  window._loadAllTimer=setInterval(loadAll,30000);
 }
 async function tryAuto(){
   try{

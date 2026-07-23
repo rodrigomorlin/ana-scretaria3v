@@ -79,11 +79,11 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 .sidenav-badge{margin-left:auto;background:var(--al);color:var(--accent);font-size:10px;font-weight:700;padding:2px 7px;border-radius:20px;min-width:20px;text-align:center}
 .sidenav-badge.red{background:#FEF2F2;color:var(--err)}
 .sidenav-bottom{margin-top:auto;padding:10px;border-top:1px solid var(--border)}
-.sidenav-user{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--rs)}
+.sidenav-user{display:flex;align-items:center;gap:8px;padding:8px 6px;border-radius:var(--rs)}.sidenav-user>div:not(.user-avatar){flex:1;min-width:0;overflow:hidden}.sidenav-user .user-name,.sidenav-user .user-role{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .user-avatar{width:32px;height:32px;background:var(--al);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent);flex-shrink:0}
 .user-name{font-size:12px;font-weight:600;color:var(--text)}
 .user-role{font-size:10px;color:var(--hint)}
-.sidenav-logout{width:28px;height:28px;border-radius:50%;border:1px solid var(--border);cursor:pointer;background:transparent;color:var(--muted);display:flex;align-items:center;justify-content:center;font-size:14px;margin-left:auto;transition:all .12s;flex-shrink:0}
+.sidenav-logout{width:26px;height:26px;border-radius:50%;border:1px solid var(--border);cursor:pointer;background:transparent;color:var(--muted);display:flex;align-items:center;justify-content:center;font-size:14px;margin-left:auto;transition:all .12s;flex-shrink:0}
 .sidenav-logout:hover{background:#FEF2F2;border-color:#FCA5A5;color:var(--err)}
 .mem-section{padding:10px;flex:1;overflow:hidden;display:flex;flex-direction:column}
 .mem-hdr{font-size:10px;font-weight:700;color:var(--hint);letter-spacing:.8px;text-transform:uppercase;display:flex;align-items:center;gap:5px;margin-bottom:8px;padding:0 2px}
@@ -2647,11 +2647,20 @@ async function loadMembros(){
         </div>
         <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
           <span style="font-size:9px;background:${m.role==='admin'?'var(--text)':'var(--faint)'};color:${m.role==='admin'?'var(--surface)':'var(--muted)'};border-radius:10px;padding:2px 8px">${m.role==='admin'?'👑 Admin':'Membro'}</span>
+          ${me.role==='admin'&&!m.medico?`<select onchange="vincularMedico('${m.user_id}',this.value)" style="font-size:10px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);max-width:130px"><option value="">🩺 Vincular…</option>${(medicos||[]).filter(d=>!d.vinculado).map(d=>`<option value="${d.id}">${d.name}</option>`).join('')}<option value="novo">➕ Criar novo médico</option></select>`:''}
           ${me.role==='admin'&&!m.sou_eu?`<button class="btn danger sm" title="Remover do grupo" onclick="removerMembro('${m.user_id}','${m.nome.replace(/'/g,"\\'")}')"><i class="ti ti-user-minus"></i></button>`:''}
         </span>
       </div>`).join('');
     loadSolicitacoes();
   }catch{card.style.display='none';}
+}
+async function vincularMedico(uid,docId){
+  if(!docId)return;
+  try{
+    const r=await api('POST',`/api/grupos/membros/${uid}/vincular-medico`,{doctor_id:docId});
+    toast(`🩺 Vinculado a ${r.medico} — o botão "Meus plantões" já funciona para ele.`);
+    await loadAll();loadMembros();
+  }catch(e){toast(e.message,'err');}
 }
 async function removerMembro(uid,nome){
   if(!confirm(`Remover ${nome} do grupo? O acesso dele à Ana e ao MedSS neste grupo será revogado.`))return;

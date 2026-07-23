@@ -758,7 +758,12 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 
   <div class="card">
     <div class="card-title"><i class="ti ti-bell" style="color:var(--accent)"></i>Notificações</div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Preferências pessoais — cada integrante configura as suas.</div>
+    <div class="sep"><div class="sep-lbl">Este dispositivo</div></div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Para receber avisos no celular, ative aqui — a permissão é <b>por aparelho</b>, então repita no celular e no computador.</div>
+    <div id="push-status" style="margin-bottom:8px;font-size:12px"></div>
+    <div id="push-actions" style="margin-bottom:6px"></div>
+    <div class="sep" style="margin-top:14px"><div class="sep-lbl">O que eu quero receber</div></div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Preferências pessoais — valem para todos os seus dispositivos.</div>
     <label style="display:flex;align-items:center;gap:10px;padding:8px 0;cursor:pointer;font-size:13px">
       <input type="checkbox" id="np-daily" onchange="salvarNotifPrefs()" checked>
       <span>🗓️ <b>Resumo diário (18h)</b> — seus casos do dia seguinte, na véspera</span>
@@ -1620,7 +1625,7 @@ function tab(n){
   if(n==='escala')loadEscala();
   if(n==='relatorios')loadRelatorios();
   if(n==='logs')loadLogs();
-  if(n==='config'){loadCorrecoes();loadGcalCurrent();loadGcalPessoal();loadOrgInfo();loadPushStatus();loadCreditConfig();loadCodigoAcesso();loadMembros();}
+  if(n==='config'){[loadCorrecoes,loadGcalCfg,loadGcalPessoal,loadOrgInfo,loadPushStatus,loadCreditConfig,loadCodigoAcesso,loadMembros,loadNotifPrefs].forEach(f=>{try{Promise.resolve(f()).catch(e=>console.warn(f.name,e));}catch(e){console.warn(f.name,e);}});}
 }
 
 // ── MEMÓRIA ──────────────────────────────────────────────
@@ -2638,7 +2643,9 @@ async function rmUser(id){if(!confirm(`Remover ${id}?`))return;try{await api('DE
 async function loadIntStatus(){
   try{
     const h=await api('GET','/api/health');
-    document.getElementById('int-status').innerHTML=`
+    const isEl=document.getElementById('int-status');
+    if(!isEl)return;
+    isEl.innerHTML=`
       <div class="int-row"><div class="int-ico" style="background:#EAF3DE"><i class="ti ti-mail" style="color:#1D9E75"></i></div><div class="int-body"><div class="int-name">Email (SMTP)</div><div class="int-desc">Notificações automáticas para médicos</div></div><span class="int-status ${h.email?'ok':'off'}">${h.email?'Ativo':'Não configurado'}</span></div>
       <div class="int-row"><div class="int-ico" style="background:#E8F0FE"><i class="ti ti-brand-google" style="color:#4285F4"></i></div><div class="int-body"><div class="int-name">Google Calendar</div><div class="int-desc">Sincronização de eventos</div></div><span class="int-status ${h.gcal?'ok':'off'}">${h.gcal?'Ativo':'Não configurado'}</span></div>
       <div class="int-row"><div class="int-ico" style="background:#EEEDFE"><i class="ti ti-robot" style="color:var(--accent)"></i></div><div class="int-body"><div class="int-name">IA (Groq · gratuito)</div><div class="int-desc">Motor de linguagem natural da Ana</div></div><span class="int-status ${h.ai?'ok':'off'}">${h.ai?'Ativo':'GROQ_API_KEY não configurada'}</span></div>
@@ -2649,6 +2656,7 @@ async function loadCorrecoes(){
   try{
     const list=await api('GET','/api/correcoes');
     const el=document.getElementById('correcoes-list');
+    if(!el)return;
     if(!list.length){el.innerHTML='<div style="font-size:11px;color:var(--hint);padding:8px 0">Nenhuma correção registrada ainda. Use o botão "Corrigir" no chat quando a Ana errar algo.</div>';return;}
     el.innerHTML=list.map(c=>`<div class="mem-item" style="font-size:11px;padding:7px 9px"><i class="ti ti-edit"></i><span style="flex:1"><b>${c.campo}</b>: ${c.valor_errado?`evitar "${c.valor_errado}" → `:''}preferir "${c.valor_certo}"<br><span style="color:var(--hint);font-size:10px">${(c.contexto||'').slice(0,80)}</span></span></div>`).join('');
   }catch{}
@@ -2887,7 +2895,9 @@ async function delCct(id){
   try{await api('DELETE',`/api/creditos/tipos/${id}`);toast('Removido.');cctCache=null;loadCctList();}catch(e){toast(e.message,'err');}
 }
 async function loadOrgInfo(){
-  if(me?.role!=='admin'){document.getElementById('org-info-card').style.display='none';return;}
+  const ocard=document.getElementById('org-info-card');
+  if(!ocard)return;
+  if(me?.role!=='admin'){ocard.style.display='none';return;}
   document.getElementById('org-info-card').style.display='block';
   try{
     const info=await api('GET','/api/org/info');
@@ -2908,15 +2918,6 @@ async function recalcularDeslocamentos(){
     const r=await api('POST','/api/deslocamentos/recalcular');
     toast(`Deslocamentos atualizados: ${r.pares_calculados} par(es) calculado(s).`);
   }catch(e){toast(e.message,'err');}
-}
-async function loadGcalCurrent(){
-  try{
-    const cfg=await api('GET','/api/config/gcal');
-    document.getElementById('gcal-current').innerHTML=`<i class="ti ti-calendar-check" style="color:var(--ok)"></i> Calendário atual: <b>${cfg.calendar_id}</b>`;
-    document.getElementById('gcal-manual').value=cfg.calendar_id;
-  }catch{
-    document.getElementById('gcal-current').innerHTML='';
-  }
 }
 async function loadGcalPessoal(){
   const card=document.getElementById('gcal-pessoal-card');
@@ -2958,28 +2959,6 @@ async function disconnectGcalPessoal(){
   }catch(e){toast(e.message,'err');}
 }
 
-async function loadGcalList(){
-  const sel=document.getElementById('gcal-select');
-  sel.innerHTML='<option value="">Carregando...</option>';
-  try{
-    const r=await api('GET','/api/config/gcal/list');
-    if(!r.calendars?.length){sel.innerHTML='<option value="">Nenhum calendário encontrado</option>';return;}
-    sel.innerHTML='<option value="">Selecione um calendário...</option>'+r.calendars.map(c=>`<option value="${c.id}">${c.summary}${c.primary?' (principal)':''}</option>`).join('');
-    sel.onchange=()=>{if(sel.value)document.getElementById('gcal-manual').value=sel.value;};
-  }catch(e){
-    sel.innerHTML='<option value="">Erro ao buscar — configure GCAL_CREDENTIALS no Railway</option>';
-    toast(e.message,'err');
-  }
-}
-async function saveGcalConfig(){
-  const id=document.getElementById('gcal-manual').value.trim();
-  if(!id){toast('Informe um ID de calendário.','warn');return;}
-  try{
-    await api('POST','/api/config/gcal',{calendar_id:id});
-    toast('Calendário atualizado! Novos agendamentos usarão esse calendário.');
-    loadGcalCurrent();
-  }catch(e){toast(e.message,'err');}
-}
 async function sendDailyReminder(){
   try{
     const r=await api('POST','/api/lembrete-diario');

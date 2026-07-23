@@ -759,7 +759,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
   <div class="card">
     <div class="card-title"><i class="ti ti-bell" style="color:var(--accent)"></i>Notificações</div>
     <div class="sep"><div class="sep-lbl">Este dispositivo</div></div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Para receber avisos no celular, ative aqui — a permissão é <b>por aparelho</b>, então repita no celular e no computador.</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Para receber avisos no celular, ative aqui — a permissão é <b>por aparelho</b>, então repita no celular e no computador. As notificações chegam <b>mesmo com o app fechado</b>. No iPhone é preciso primeiro adicionar a A.N.A à tela de início (Compartilhar → Adicionar à Tela de Início) e abrir por lá.</div>
     <div id="push-status" style="margin-bottom:8px;font-size:12px"></div>
     <div id="push-actions" style="margin-bottom:6px"></div>
     <div class="sep" style="margin-top:14px"><div class="sep-lbl">O que eu quero receber</div></div>
@@ -2729,8 +2729,8 @@ async function disablePush(){
 
 async function testPush(){
   try{
-    await api('POST','/api/push/test');
-    toast('Notificação de teste enviada!');
+    const r=await api('POST','/api/push/test');
+    toast(`Enviado para ${r.entregues||0} de ${r.dispositivos||0} dispositivo(s) — deve chegar em segundos.`);
   }catch(e){toast(e.message,'err');}
 }
 

@@ -10,6 +10,8 @@ from pydantic import BaseModel
 from typing import Optional, Any, List
 import os, logging, hashlib, secrets, json, base64, io
 import re, time
+from zoneinfo import ZoneInfo
+SP_TZ = ZoneInfo("America/Sao_Paulo")
 from datetime import datetime, timedelta
 import urllib.request, urllib.error, urllib.parse
 
@@ -721,8 +723,9 @@ async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=
         except Exception:
             pass
         if alvo_uid and alvo_uid != user["id"]:
-            bg.add_task(push_user, alvo_uid, "📅 Novo agendamento para você",
-                        f"{ev.proc} · {fmtDate(ev.date)} {ev.time}")
+            if get_notif_prefs(alvo_uid).get("new_appointment", True):
+                bg.add_task(push_user, alvo_uid, "📅 Novo agendamento para você",
+                            f"{ev.proc} · {fmtDate(ev.date)} {ev.time}")
         elif not alvo_uid:
             bg.add_task(push_all_org, org_id, "📅 Novo agendamento",
                         f"{ev.proc} — {ev.doc} · {fmtDate(ev.date)} {ev.time}")
@@ -853,8 +856,8 @@ def reminder_email_html(eventos_dia, data_str):
 async def run_daily_reminder(org_id: Optional[str] = None):
     """Resumo da agenda de amanhã por grupo: push para os dispositivos registrados
     e email para médicos com email (quando SMTP configurado)."""
-    amanha = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
-    amanha_str = (datetime.now() + timedelta(days=1)).strftime("%d/%m/%Y")
+    amanha = (datetime.now(SP_TZ) + timedelta(days=1)).strftime("%Y-%m-%d")
+    amanha_str = (datetime.now(SP_TZ) + timedelta(days=1)).strftime("%d/%m/%Y")
     if org_id:
         grupos = [{"id": org_id}]
     else:
@@ -877,6 +880,9 @@ async def run_daily_reminder(org_id: Optional[str] = None):
             meus = sorted([a for a in appts if a.get("doctor_id") == d["id"]],
                           key=lambda a: str(a.get("appointment_time") or ""))
             if not meus:
+                continue
+            if not get_notif_prefs(d["user_id"]).get("daily_summary", True):
+                com_casos.add(d["id"])
                 continue
             com_casos.add(d["id"])
             resumo = " · ".join(f"{str(a.get('appointment_time') or '')[:5]} {secs_push.get(a.get('sector_id') or '', '')} {a.get('procedure') or ''}".strip()
@@ -921,20 +927,76 @@ async def trigger_daily_reminder(user=Depends(auth)):
     result = await run_daily_reminder(org_id=user.get("org_id","default"))
     return result
 
+_notified_1h: set = set()
+_notified_1h_day = ""
+
+async def run_hour_before_check(now_sp=None):
+    """Push ⏰ 1h antes de cada procedimento para o médico designado (se habilitado)."""
+    global _notified_1h_day
+    now_sp = now_sp or datetime.now(SP_TZ)
+    hoje = now_sp.strftime("%Y-%m-%d")
+    if _notified_1h_day != hoje:
+        _notified_1h.clear()
+        _notified_1h_day = hoje
+    agora_min = now_sp.hour * 60 + now_sp.minute
+    appts = sb_rest("GET", f"/appointments?appointment_date=eq.{hoje}"
+                           f"&status=neq.cancelled&doctor_id=not.is.null&select=*")
+    alvo = []
+    for a in appts:
+        t = str(a.get("appointment_time") or "")[:5]
+        if ":" not in t or a["id"] in _notified_1h:
+            continue
+        h, m = t.split(":")[:2]
+        ev_min = int(h) * 60 + int(m)
+        # janela 55–70 min à frente (loop roda a cada 10 min — sem furo, sem duplicar)
+        if 55 <= ev_min - agora_min <= 70:
+            alvo.append((a, t))
+    if not alvo:
+        return 0
+    doc_ids = ",".join(f'"{a["doctor_id"]}"' for a, _ in alvo)
+    docs = {d["id"]: d for d in sb_rest("GET", f"/doctors?id=in.({doc_ids})&select=id,user_id,group_id")}
+    sec_ids = {a.get("sector_id") for a, _ in alvo if a.get("sector_id")}
+    secs = {}
+    if sec_ids:
+        sq = ",".join(f'"{s}"' for s in sec_ids)
+        secs = {s["id"]: s["name"] for s in sb_rest("GET", f"/sectors?id=in.({sq})&select=id,name")}
+    enviados = 0
+    for a, t in alvo:
+        d = docs.get(a["doctor_id"]) or {}
+        uid = d.get("user_id")
+        if not uid or not get_notif_prefs(uid).get("hour_before", True):
+            _notified_1h.add(a["id"])
+            continue
+        setor = secs.get(a.get("sector_id") or "", "")
+        await push_user(uid, f"⏰ Em 1 hora: {t}",
+                        f"{a.get('procedure') or ''}{' · ' + setor if setor else ''}"
+                        f"{' · ' + a.get('patient_name') if a.get('patient_name') and a.get('patient_name') != '—' else ''}")
+        _notified_1h.add(a["id"])
+        enviados += 1
+    if enviados:
+        log.info(f"⏰ lembrete 1h antes: {enviados} push(es)")
+    return enviados
+
+
 @app.on_event("startup")
 async def start_scheduler():
     import asyncio
     async def scheduler_loop():
         last_run_date = None
         while True:
-            now = datetime.now()
-            # Dispara uma vez por dia, próximo das 18h
+            now = datetime.now(SP_TZ)   # horário de Brasília/SP
+            # Resumo diário: uma vez por dia, próximo das 18h (fuso SP)
             if now.hour == 18 and last_run_date != now.date():
                 try:
                     await run_daily_reminder()
                 except Exception as e:
                     log.error(f"Erro no lembrete diário: {e}")
                 last_run_date = now.date()
+            # Lembrete ⏰ 1h antes de cada procedimento
+            try:
+                await run_hour_before_check(now)
+            except Exception as e:
+                log.error(f"Erro no lembrete 1h antes: {e}")
             await asyncio.sleep(60 * 10)  # checa a cada 10 minutos
     asyncio.create_task(scheduler_loop())
 
@@ -1290,6 +1352,35 @@ def get_vapid_key():
     if not VAPID_PUBLIC_KEY:
         raise HTTPException(400, "Web Push não configurado no servidor.")
     return {"public_key": VAPID_PUBLIC_KEY}
+
+_PREFS_DEFAULT = {"daily_summary": True, "hour_before": True, "new_appointment": True}
+
+def get_notif_prefs(user_id: str) -> dict:
+    try:
+        rows = sb_rest("GET", f"/ana_notification_prefs?user_id=eq.{user_id}")
+        if rows:
+            return {k: bool(rows[0].get(k, v)) for k, v in _PREFS_DEFAULT.items()}
+    except Exception:
+        pass
+    return dict(_PREFS_DEFAULT)
+
+@app.get("/api/notificacoes/prefs")
+def notif_prefs_get(user=Depends(auth)):
+    return get_notif_prefs(user["id"])
+
+@app.put("/api/notificacoes/prefs")
+def notif_prefs_put(body: dict, user=Depends(auth)):
+    prefs = {k: bool(body.get(k, v)) for k, v in _PREFS_DEFAULT.items()}
+    try:
+        existe = sb_rest("GET", f"/ana_notification_prefs?user_id=eq.{user['id']}&select=user_id")
+        if existe:
+            sb_rest("PATCH", f"/ana_notification_prefs?user_id=eq.{user['id']}", prefs)
+        else:
+            sb_rest("POST", "/ana_notification_prefs", {"user_id": user["id"], **prefs})
+        return {"ok": True, **prefs}
+    except Exception as e:
+        raise HTTPException(500, "Tabela de preferências ausente — rode o SQL de criação no Supabase (te passei no chat).")
+
 
 async def push_user(user_id: str, title: str, body: str, url: str = "/"):
     """Push individual: só os dispositivos do usuário informado."""

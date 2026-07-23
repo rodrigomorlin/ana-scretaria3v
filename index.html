@@ -736,6 +736,24 @@ html,body{height:100%;background:var(--bg);color:var(--text);
   </div>
 
   <div class="card">
+    <div class="card-title"><i class="ti ti-bell" style="color:var(--accent)"></i>Notificações</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Preferências pessoais — cada integrante configura as suas.</div>
+    <label style="display:flex;align-items:center;gap:10px;padding:8px 0;cursor:pointer;font-size:13px">
+      <input type="checkbox" id="np-daily" onchange="salvarNotifPrefs()" checked>
+      <span>🗓️ <b>Resumo diário (18h)</b> — seus casos do dia seguinte, na véspera</span>
+    </label>
+    <label style="display:flex;align-items:center;gap:10px;padding:8px 0;cursor:pointer;font-size:13px">
+      <input type="checkbox" id="np-hour" onchange="salvarNotifPrefs()" checked>
+      <span>⏰ <b>1 hora antes</b> — lembrete de cada procedimento seu</span>
+    </label>
+    <label style="display:flex;align-items:center;gap:10px;padding:8px 0;cursor:pointer;font-size:13px">
+      <input type="checkbox" id="np-new" onchange="salvarNotifPrefs()" checked>
+      <span>📅 <b>Novo agendamento</b> — quando marcarem um caso para você</span>
+    </label>
+    <div id="np-status" style="font-size:11px;color:var(--muted);margin-top:4px"></div>
+  </div>
+
+  <div class="card">
     <div class="card-title"><i class="ti ti-building-hospital" style="color:var(--accent)"></i>Setores</div>
     <div id="setlist"></div>
     <div class="sep"><div class="sep-lbl">Adicionar</div>
@@ -983,6 +1001,7 @@ async function loadAll(){
       api('GET','/api/medicos'),api('GET','/api/setores'),
       api('GET','/api/eventos'),api('GET','/api/memorias')]);
   lembrarSetores(eventos);
+  loadNotifPrefs();
     renderMem();renderDocList();renderSetorList();populateAgendaFilters();
     if(me?.role==='admin'){
     }
@@ -2424,6 +2443,24 @@ function escolherEndereco(i){
   const box=document.getElementById('nsend-sugestoes');
   box.innerHTML=`<span style="font-size:11px;color:var(--ok,#16a34a)">✓ ${s.nome}</span>`;
   setTimeout(()=>{box.style.display='none'},2500);
+}
+async function loadNotifPrefs(){
+  try{
+    const p=await api('GET','/api/notificacoes/prefs');
+    document.getElementById('np-daily').checked=!!p.daily_summary;
+    document.getElementById('np-hour').checked=!!p.hour_before;
+    document.getElementById('np-new').checked=!!p.new_appointment;
+  }catch{}
+}
+async function salvarNotifPrefs(){
+  const st=document.getElementById('np-status');
+  try{
+    await api('PUT','/api/notificacoes/prefs',{
+      daily_summary:document.getElementById('np-daily').checked,
+      hour_before:document.getElementById('np-hour').checked,
+      new_appointment:document.getElementById('np-new').checked});
+    st.textContent='✓ salvo';setTimeout(()=>st.textContent='',2000);
+  }catch(e){st.textContent='⚠️ '+e.message;}
 }
 async function addSetor(){
   const name=document.getElementById('nsname').value.trim();

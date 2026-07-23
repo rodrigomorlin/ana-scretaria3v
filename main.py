@@ -2078,7 +2078,7 @@ def _gerar_codigo_unico() -> str:
     for _ in range(6):
         codigo = secrets.token_hex(4).upper()
         try:
-            if not sb_rest("GET", f"/groups?access_code=eq.{codigo}&select=id"):
+            if not sb_rest("GET", f"/groups?invite_code=ilike.{codigo}&select=id"):
                 return codigo
         except Exception:
             return codigo
@@ -2100,7 +2100,7 @@ def criar_grupo(g: NovoGrupo, request: Request):
     except Exception as e:
         log.warning(f"profiles check/insert: {e}")
     grupo = sb_rest("POST", "/groups", {"name": nome, "created_by": u["id"],
-                                        "access_code": _gerar_codigo_unico()})[0]
+                                        "invite_code": _gerar_codigo_unico()})[0]
     sb_rest("POST", "/group_members",
             {"user_id": u["id"], "group_id": grupo["id"], "role": "admin"})
     _membership_cache.pop(u["id"], None)
@@ -2113,7 +2113,7 @@ def regenerar_codigo(user=Depends(auth)):
         raise HTTPException(403, "Apenas administradores.")
     gid = user.get("org_id") or user.get("group_id")
     novo = _gerar_codigo_unico()
-    sb_rest("PATCH", f"/groups?id=eq.{gid}", {"access_code": novo})
+    sb_rest("PATCH", f"/groups?id=eq.{gid}", {"invite_code": novo})
     log.info(f"Código de acesso regenerado para o grupo {gid}")
     return {"ok": True, "access_code": novo}
 

@@ -1,5 +1,5 @@
 // Service Worker — Ana Secretária Virtual
-const CACHE_NAME = 'ana-v3-cache-v1';
+const CACHE_NAME = 'ana-v3-cache-v2';
 
 self.addEventListener('install', e => {
   self.skipWaiting();
@@ -19,10 +19,12 @@ self.addEventListener('push', e => {
   e.waitUntil(
     self.registration.showNotification(data.title, {
       body: data.body,
-      icon: '/icon.svg',
-      badge: '/icon.svg',
-      tag: 'ana-notification',
+      icon: '/icon-192.png',
+      badge: '/icon-192.png',
+      tag: data.tag || ('ana-' + Date.now()),
       renotify: true,
+      requireInteraction: false,
+      vibrate: [120, 60, 120],
       data: { url: data.url || '/' },
       actions: [
         { action: 'open', title: 'Abrir Ana' },

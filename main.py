@@ -191,6 +191,24 @@ def get_gcal_id(org_id: str = "default") -> str:
     """Prioriza o valor configurado pelo usuário no app; cai para a env var como fallback."""
     return get_config("gcal_calendar_id", GCAL_ID, org_id=org_id)
 
+def get_gcal_target(org_id: str = "default"):
+    """(calendar_id, owner_user_id) do grupo — owner presente = usar o OAuth desse usuário."""
+    try:
+        rows = sb_rest("GET", f"/ana_gcal_config?group_id=eq.{org_id}&select=calendar_id,owner_user_id")
+        if rows and rows[0].get("calendar_id"):
+            return rows[0]["calendar_id"], rows[0].get("owner_user_id")
+    except Exception:
+        pass
+    return GCAL_ID, None
+
+def set_gcal_grupo(org_id: str, calendar_id: str, owner_user_id=None):
+    rows = sb_rest("GET", f"/ana_gcal_config?group_id=eq.{org_id}&select=group_id")
+    body = {"calendar_id": calendar_id, "owner_user_id": owner_user_id, "updated_at": "now()"}
+    if rows:
+        sb_rest("PATCH", f"/ana_gcal_config?group_id=eq.{org_id}", body)
+    else:
+        sb_rest("POST", "/ana_gcal_config", {"group_id": org_id, **{k: v for k, v in body.items() if k != "updated_at"}})
+
 # ── EMAIL ──────────────────────────────────────────────────
 async def send_email(to, subject, body):
     """Envio de email: Resend (RESEND_API_KEY) com fallback SMTP."""
@@ -439,8 +457,15 @@ def _build_gcal_service(user_access_token: Optional[str] = None):
 async def gcal_create(ev, setor_name, criado_por_id: Optional[str] = None, org_id: str = "default", event_id: str = ""):
     # Prioriza o calendário pessoal do médico que criou o evento (OAuth), senão usa a conta de serviço/calendário do grupo
     user_token = get_user_google_token(criado_por_id) if criado_por_id else None
-    calendar_id = "primary" if user_token else get_gcal_id(org_id)
-    log.info(f"GCal criar: criado_por_id={criado_por_id}, org_id={org_id}, tem_token_pessoal={bool(user_token)}, calendar_id={calendar_id}")
+    if user_token:
+        calendar_id = "primary"
+    else:
+        calendar_id, gcal_owner = get_gcal_target(org_id)
+        if gcal_owner:
+            user_token = get_user_google_token(gcal_owner)  # calendário do grupo via OAuth do dono
+            if not user_token:
+                log.warning(f"GCal: dono do calendário do grupo sem token válido — caindo para conta de serviço")
+    log.info(f"GCal criar: criado_por_id={criado_por_id}, org_id={org_id}, token={'sim' if user_token else 'não'}, calendar_id={calendar_id}")
     try:
         svc = _build_gcal_service(user_token)
         if not svc:
@@ -479,7 +504,12 @@ async def gcal_create(ev, setor_name, criado_por_id: Optional[str] = None, org_i
 async def gcal_delete(gcal_id, criado_por_id: Optional[str] = None, org_id: str = "default"):
     if not gcal_id: return
     user_token = get_user_google_token(criado_por_id) if criado_por_id else None
-    calendar_id = "primary" if user_token else get_gcal_id(org_id)
+    if user_token:
+        calendar_id = "primary"
+    else:
+        calendar_id, gcal_owner = get_gcal_target(org_id)
+        if gcal_owner:
+            user_token = get_user_google_token(gcal_owner)
     log.info(f"GCal delete: id={gcal_id}, calendário={'pessoal' if user_token else 'grupo'} ({calendar_id})")
     svc = _build_gcal_service(user_token)
     if not svc:
@@ -1485,16 +1515,60 @@ def get_gcal_config(user=Depends(auth)):
         sa_email = json.loads(GCAL_CREDS).get("client_email", "") if GCAL_CREDS else ""
     except Exception:
         pass
-    return {"calendar_id": get_gcal_id(org_id),
-            "configurado_via": "app" if get_config("gcal_calendar_id", org_id=org_id) else "padrao_global",
+    cal_id, owner = get_gcal_target(org_id)
+    return {"calendar_id": cal_id,
+            "configurado_via": ("oauth" if owner else "app") if get_config("gcal_calendar_id", org_id=org_id) else "padrao_global",
             "service_account_email": sa_email}
+
+@app.get("/api/config/gcal/meus-calendarios")
+def gcal_meus_calendarios(user=Depends(auth)):
+    if user["role"] != "admin":
+        raise HTTPException(403, "Apenas administradores.")
+    token = get_user_google_token(user["id"])
+    if not token:
+        raise HTTPException(400, "Conecte seu Google primeiro (card 'Meu Google Calendar pessoal').")
+    try:
+        svc = _build_gcal_service(token)
+        items = svc.calendarList().list(minAccessRole="writer", maxResults=50).execute().get("items", [])
+        return {"calendarios": [{"id": c["id"], "nome": c.get("summary", c["id"]),
+                                 "principal": bool(c.get("primary"))} for c in items]}
+    except Exception as e:
+        log.error(f"listar calendários: {e}")
+        raise HTTPException(502, "Não consegui listar seus calendários — reconecte o Google e tente de novo.")
+
+@app.post("/api/config/gcal/vincular")
+def gcal_vincular(body: dict, user=Depends(auth)):
+    if user["role"] != "admin":
+        raise HTTPException(403, "Apenas administradores.")
+    org_id = user.get("org_id", "default")
+    token = get_user_google_token(user["id"])
+    if not token:
+        raise HTTPException(400, "Conecte seu Google primeiro.")
+    cal_id = (body or {}).get("calendar_id") or ""
+    if (body or {}).get("criar"):
+        nome = (body or {}).get("nome") or "A.N.A — Agenda do grupo"
+        try:
+            svc = _build_gcal_service(token)
+            novo = svc.calendars().insert(body={"summary": nome, "timeZone": "America/Sao_Paulo"}).execute()
+            cal_id = novo["id"]
+        except Exception as e:
+            log.error(f"criar calendário: {e}")
+            raise HTTPException(502, "Não consegui criar o calendário — tente de novo.")
+    if not cal_id:
+        raise HTTPException(400, "Informe calendar_id ou criar=true.")
+    set_gcal_grupo(org_id, cal_id, owner_user_id=user["id"])
+    db_log("INFO", f"Calendário do grupo vinculado via OAuth: {cal_id}", usuario=user["id"], org_id=org_id)
+    return {"ok": True, "calendar_id": cal_id}
 
 @app.post("/api/config/gcal")
 def set_gcal_config(cfg: GCalConfig, user=Depends(auth)):
     if user["role"] != "admin":
         raise HTTPException(403, "Apenas administradores podem alterar essa configuração.")
     org_id = user.get("org_id","default")
-    set_config("gcal_calendar_id", cfg.calendar_id.strip(), org_id=org_id)
+    if cfg.calendar_id.strip():
+        set_gcal_grupo(org_id, cfg.calendar_id.strip(), owner_user_id=None)
+    else:
+        sb_rest("DELETE", f"/ana_gcal_config?group_id=eq.{org_id}")
     db_log("INFO", f"Google Calendar ID alterado para: {cfg.calendar_id}", usuario=user["id"], org_id=org_id)
     return {"ok": True, "calendar_id": cfg.calendar_id.strip()}
 

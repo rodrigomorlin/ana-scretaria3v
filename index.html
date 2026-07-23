@@ -717,10 +717,30 @@ html,body{height:100%;background:var(--bg);color:var(--text);
   </div>
 
   <div class="card" id="gcal-pessoal-card">
-    <div class="card-title"><i class="ti ti-calendar-event" style="color:var(--accent)"></i>Meu Google Calendar pessoal</div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Conecte seu calendário pessoal do Google para que os agendamentos feitos no seu nome sejam sincronizados diretamente nele, em vez do calendário geral do grupo.</div>
+    <div class="card-title"><i class="ti ti-calendar-event" style="color:var(--accent)"></i>Google Calendar</div>
+    <div class="sep"><div class="sep-lbl">Meu calendário pessoal</div></div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Conecte sua conta do Google para que os agendamentos feitos no seu nome sejam sincronizados diretamente no seu calendário, em vez do calendário geral do grupo.</div>
     <div id="gcal-pessoal-status" style="margin-bottom:10px"></div>
     <div id="gcal-pessoal-actions"></div>
+
+    <div id="gcal-card" style="display:none">
+      <div class="sep" style="margin-top:14px"><div class="sep-lbl">Calendário do grupo</div></div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Cada grupo pode sincronizar com um calendário próprio — ou deixar em branco para usar o padrão.</div>
+      <div id="gcal-facil" style="display:none;margin-bottom:8px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <select id="gcal-select" style="flex:1;min-width:180px;padding:8px;border:1px solid var(--border);border-radius:var(--rs);background:var(--surface);color:var(--text)"></select>
+          <button class="btn sm primary" onclick="usarCalendarioSelecionado()"><i class="ti ti-check"></i> Usar este</button>
+          <button class="btn sm" onclick="criarCalendarioGrupo()" title="Cria um calendário novo na sua conta Google"><i class="ti ti-plus"></i> Criar novo</button>
+        </div>
+      </div>
+      <details style="margin-bottom:6px"><summary style="font-size:11px;color:var(--muted);cursor:pointer">Configuração manual (avançado)</summary>
+        <div style="display:flex;gap:8px;margin-top:6px">
+          <input id="gcal-id-input" placeholder="ID do calendário (ex: abc123@group.calendar.google.com)" style="flex:1">
+          <button class="btn sm" onclick="salvarGcal()"><i class="ti ti-device-floppy"></i> Salvar</button>
+        </div>
+      </details>
+      <div id="gcal-info" style="font-size:11px;color:var(--hint)"></div>
+    </div>
   </div>
 
   <div class="card">
@@ -734,25 +754,6 @@ html,body{height:100%;background:var(--bg);color:var(--text);
       <div class="fl" style="margin-bottom:8px"><label>Email (para notificações)</label><input id="ndemail" type="email" placeholder="medico@hospital.com"></div>
       <button class="btn primary" onclick="addDoc()"><i class="ti ti-user-plus"></i> Adicionar</button>
     </div>
-  </div>
-
-  <div class="card" id="gcal-card" style="display:none">
-    <div class="card-title"><i class="ti ti-calendar-event" style="color:var(--accent)"></i>Google Calendar do grupo</div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Cada grupo pode sincronizar com um calendário próprio — ou deixar em branco para usar o padrão.</div>
-    <div id="gcal-facil" style="display:none;margin-bottom:8px">
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <select id="gcal-select" style="flex:1;min-width:180px;padding:8px;border:1px solid var(--border);border-radius:var(--rs);background:var(--surface);color:var(--text)"></select>
-        <button class="btn sm primary" onclick="usarCalendarioSelecionado()"><i class="ti ti-check"></i> Usar este</button>
-        <button class="btn sm" onclick="criarCalendarioGrupo()" title="Cria um calendário novo na sua conta Google com o nome do grupo"><i class="ti ti-plus"></i> Criar novo</button>
-      </div>
-    </div>
-    <details style="margin-bottom:6px"><summary style="font-size:11px;color:var(--muted);cursor:pointer">Configuração manual (avançado)</summary>
-      <div style="display:flex;gap:8px;margin-top:6px">
-        <input id="gcal-id-input" placeholder="ID do calendário (ex: abc123@group.calendar.google.com)" style="flex:1">
-        <button class="btn sm" onclick="salvarGcal()"><i class="ti ti-device-floppy"></i> Salvar</button>
-      </div>
-    </details>
-    <div id="gcal-info" style="font-size:11px;color:var(--hint)"></div>
   </div>
 
   <div class="card">
@@ -2520,7 +2521,7 @@ async function loadGcalCfg(){
     let info=c.configurado_via==='oauth'?`✓ Este grupo usa um calendário da sua conta Google (<b>${c.calendar_id}</b>).`
       :c.configurado_via==='app'?`✓ Este grupo usa calendário próprio via conta de serviço.`
       :`Este grupo usa o calendário padrão (${c.calendar_id==='primary'?'da conta de serviço':c.calendar_id}).`;
-    if(!temLista)info+=`<br>💡 Conecte seu Google no card "Meu Google Calendar pessoal" acima e volte aqui — aí é só escolher o calendário numa lista, sem copiar ID.`;
+    if(!temLista)info+=`<br>💡 Conecte sua conta do Google acima — aí o calendário do grupo é escolhido numa lista, sem copiar ID.`;
     else info+=`<br>💡 Escolha um calendário acima ou crie um novo — pronto, sem copiar IDs.`;
     if(c.service_account_email&&!temLista)info+=`<br>📌 Alternativa manual: compartilhe o calendário com <b style="user-select:all">${c.service_account_email}</b> ("Fazer alterações") e cole o ID em "Configuração manual".`;
     document.getElementById('gcal-info').innerHTML=info;

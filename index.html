@@ -719,7 +719,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
   <div class="card" id="gcal-pessoal-card">
     <div class="card-title"><i class="ti ti-calendar-event" style="color:var(--accent)"></i>Google Calendar</div>
     <div class="sep"><div class="sep-lbl">Meu calendário pessoal</div></div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Conecte sua conta do Google para escolher um calendário para o grupo (abaixo) e/ou para receber os agendamentos no seu calendário pessoal quando o grupo não tiver um calendário próprio configurado.</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Sua conta Google é <b>pessoal e única</b> — conectar aqui vale para você em qualquer grupo. O que muda por grupo é o <b>destino dos eventos</b>, escolhido logo abaixo.</div>
     <div id="gcal-pessoal-status" style="margin-bottom:10px"></div>
     <div id="gcal-pessoal-actions"></div>
 
@@ -2534,7 +2534,10 @@ async function carregarMeusCalendarios(){
   try{
     const r=await api('GET','/api/config/gcal/meus-calendarios');
     const sel=document.getElementById('gcal-select');
-    sel.innerHTML=r.calendarios.map(c=>`<option value="${c.id}">${c.principal?'⭐ ':''}${c.nome}</option>`).join('');
+    sel.innerHTML='<option value="__padrao__">— Calendário padrão (sem vínculo com sua conta) —</option>'
+      +'<option value="__pessoal__">📇 Minha agenda pessoal do Google</option>'
+      +r.calendarios.map(c=>`<option value="${c.id}">${c.principal?'⭐ ':''}${c.nome}</option>`).join('');
+    if(window._gcalAtual)sel.value=window._gcalAtual;
     facil.style.display=r.calendarios.length?'block':'none';
     return true;
   }catch{facil.style.display='none';return false;}
@@ -2543,8 +2546,17 @@ async function usarCalendarioSelecionado(){
   const id=document.getElementById('gcal-select').value;
   if(!id)return;
   try{
-    await api('POST','/api/config/gcal/vincular',{calendar_id:id});
-    toast('📆 Calendário do grupo vinculado!');loadGcalCfg();
+    if(id==='__padrao__'){
+      await api('POST','/api/config/gcal',{calendar_id:''});
+      toast('📆 Este grupo voltou ao calendário padrão.');
+    }else if(id==='__pessoal__'){
+      await api('POST','/api/config/gcal',{calendar_id:'__pessoal__'});
+      toast('📆 Eventos deste grupo irão para a agenda pessoal de quem agendar.');
+    }else{
+      await api('POST','/api/config/gcal/vincular',{calendar_id:id});
+      toast('📆 Calendário do grupo vinculado!');
+    }
+    loadGcalCfg();
   }catch(e){toast('⚠️ '+e.message);}
 }
 async function criarCalendarioGrupo(){
@@ -2562,10 +2574,12 @@ async function loadGcalCfg(){
     const c=await api('GET','/api/config/gcal');
     card.style.display='block';
     document.getElementById('gcal-id-input').value=(c.configurado_via==='app')?c.calendar_id:'';
+    window._gcalAtual=(c.configurado_via==='padrao_global')?'__padrao__':c.calendar_id;
     const temLista=await carregarMeusCalendarios();
-    let info=c.configurado_via==='oauth'?`✓ Este grupo usa um calendário da sua conta Google (<b>${c.calendar_id}</b>).`
-      :c.configurado_via==='app'?`✓ Este grupo usa calendário próprio via conta de serviço.`
-      :`Este grupo usa o calendário padrão (${c.calendar_id==='primary'?'da conta de serviço':c.calendar_id}).`;
+    let info=c.calendar_id==='__pessoal__'?`✓ Destino: <b>agenda pessoal de quem cria cada evento</b> (só deste grupo).`
+      :c.configurado_via==='oauth'?`✓ Destino: calendário <b>${c.calendar_id}</b> da sua conta Google (só deste grupo).`
+      :c.configurado_via==='app'?`✓ Destino: calendário próprio via conta de serviço (só deste grupo).`
+      :`Destino: calendário padrão — este grupo <b>não</b> está vinculado à sua conta Google.`;
     if(!temLista)info+=`<br>💡 Conecte sua conta do Google acima — aí o calendário do grupo é escolhido numa lista, sem copiar ID.`;
     else info+=`<br>💡 Escolha um calendário acima ou crie um novo — pronto, sem copiar IDs.`;
     if(c.service_account_email&&!temLista)info+=`<br>📌 Alternativa manual: compartilhe o calendário com <b style="user-select:all">${c.service_account_email}</b> ("Fazer alterações") e cole o ID em "Configuração manual".`;

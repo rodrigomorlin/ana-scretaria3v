@@ -463,14 +463,14 @@ async def gcal_create(ev, setor_name, criado_por_id: Optional[str] = None, org_i
         user_token = get_user_google_token(gcal_owner)
         if not user_token:
             log.warning(f"GCal: dono do calendário do grupo {org_id} sem token válido — caindo para conta de serviço")
-    elif calendar_id and calendar_id != GCAL_ID:
-        # grupo configurou um ID manual (conta de serviço deve ter acesso) — usa como está
-        pass
-    else:
-        # grupo NÃO configurou nada → usa a agenda pessoal de quem criou o evento, se houver
+    elif calendar_id == "__pessoal__":
+        # o grupo optou por usar a agenda pessoal de quem cria cada evento
         pessoal = get_user_google_token(criado_por_id) if criado_por_id else None
         if pessoal:
             user_token, calendar_id = pessoal, "primary"
+        else:
+            calendar_id = GCAL_ID
+    # sem config própria → conta de serviço/calendário padrão (NÃO usa a agenda pessoal automaticamente)
     log.info(f"GCal criar: criado_por_id={criado_por_id}, org_id={org_id}, token={'sim' if user_token else 'não'}, calendar_id={calendar_id}")
     try:
         svc = _build_gcal_service(user_token)
@@ -517,14 +517,14 @@ async def gcal_delete(gcal_id, criado_por_id: Optional[str] = None, org_id: str 
         user_token = get_user_google_token(gcal_owner)
         if not user_token:
             log.warning(f"GCal: dono do calendário do grupo {org_id} sem token válido — caindo para conta de serviço")
-    elif calendar_id and calendar_id != GCAL_ID:
-        # grupo configurou um ID manual (conta de serviço deve ter acesso) — usa como está
-        pass
-    else:
-        # grupo NÃO configurou nada → usa a agenda pessoal de quem criou o evento, se houver
+    elif calendar_id == "__pessoal__":
+        # o grupo optou por usar a agenda pessoal de quem cria cada evento
         pessoal = get_user_google_token(criado_por_id) if criado_por_id else None
         if pessoal:
             user_token, calendar_id = pessoal, "primary"
+        else:
+            calendar_id = GCAL_ID
+    # sem config própria → conta de serviço/calendário padrão (NÃO usa a agenda pessoal automaticamente)
     log.info(f"GCal delete: id={gcal_id}, calendário={'pessoal' if user_token else 'grupo'} ({calendar_id})")
     svc = _build_gcal_service(user_token)
     if not svc:

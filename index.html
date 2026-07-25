@@ -719,7 +719,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
   <div class="card" id="gcal-pessoal-card">
     <div class="card-title"><i class="ti ti-calendar-event" style="color:var(--accent)"></i>Google Calendar</div>
     <div class="sep"><div class="sep-lbl">Meu calendário pessoal</div></div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Conecte sua conta do Google para que os agendamentos feitos no seu nome sejam sincronizados diretamente no seu calendário, em vez do calendário geral do grupo.</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Conecte sua conta do Google para escolher um calendário para o grupo (abaixo) e/ou para receber os agendamentos no seu calendário pessoal quando o grupo não tiver um calendário próprio configurado.</div>
     <div id="gcal-pessoal-status" style="margin-bottom:10px"></div>
     <div id="gcal-pessoal-actions"></div>
 
@@ -2934,7 +2934,7 @@ async function loadGcalPessoal(){
       statusEl.innerHTML=`<span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ok)"><i class="ti ti-circle-check"></i> Conectado: <b>${st.email}</b></span>`;
       actionsEl.innerHTML=`<button class="btn sm" onclick="disconnectGcalPessoal()"><i class="ti ti-plug-x"></i> Desconectar</button>`;
     }else{
-      statusEl.innerHTML=`<span style="font-size:12px;color:var(--muted)">Não conectado — os seus agendamentos vão para o calendário geral do grupo.</span>`;
+      statusEl.innerHTML=`<span style="font-size:12px;color:var(--muted)">Não conectado — os agendamentos usam o calendário do grupo (configurado abaixo) ou o padrão.</span>`;
       actionsEl.innerHTML=`<button class="btn primary sm" onclick="connectGcalPessoal()"><i class="ti ti-brand-google"></i> Conectar com Google</button>`;
     }
   }catch{

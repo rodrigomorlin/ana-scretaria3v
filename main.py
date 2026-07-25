@@ -455,16 +455,22 @@ def _build_gcal_service(user_access_token: Optional[str] = None):
     return None
 
 async def gcal_create(ev, setor_name, criado_por_id: Optional[str] = None, org_id: str = "default", event_id: str = ""):
-    # Prioriza o calendário pessoal do médico que criou o evento (OAuth), senão usa a conta de serviço/calendário do grupo
-    user_token = get_user_google_token(criado_por_id) if criado_por_id else None
-    if user_token:
-        calendar_id = "primary"
+    # Resolução do calendário (prioridade): 1) calendário configurado do grupo  2) agenda pessoal de quem criou  3) conta de serviço
+    calendar_id, gcal_owner = get_gcal_target(org_id)
+    user_token = None
+    if gcal_owner:
+        # grupo tem calendário próprio via OAuth de um dono
+        user_token = get_user_google_token(gcal_owner)
+        if not user_token:
+            log.warning(f"GCal: dono do calendário do grupo {org_id} sem token válido — caindo para conta de serviço")
+    elif calendar_id and calendar_id != GCAL_ID:
+        # grupo configurou um ID manual (conta de serviço deve ter acesso) — usa como está
+        pass
     else:
-        calendar_id, gcal_owner = get_gcal_target(org_id)
-        if gcal_owner:
-            user_token = get_user_google_token(gcal_owner)  # calendário do grupo via OAuth do dono
-            if not user_token:
-                log.warning(f"GCal: dono do calendário do grupo sem token válido — caindo para conta de serviço")
+        # grupo NÃO configurou nada → usa a agenda pessoal de quem criou o evento, se houver
+        pessoal = get_user_google_token(criado_por_id) if criado_por_id else None
+        if pessoal:
+            user_token, calendar_id = pessoal, "primary"
     log.info(f"GCal criar: criado_por_id={criado_por_id}, org_id={org_id}, token={'sim' if user_token else 'não'}, calendar_id={calendar_id}")
     try:
         svc = _build_gcal_service(user_token)
@@ -503,13 +509,22 @@ async def gcal_create(ev, setor_name, criado_por_id: Optional[str] = None, org_i
 
 async def gcal_delete(gcal_id, criado_por_id: Optional[str] = None, org_id: str = "default"):
     if not gcal_id: return
-    user_token = get_user_google_token(criado_por_id) if criado_por_id else None
-    if user_token:
-        calendar_id = "primary"
+    # Resolução do calendário (prioridade): 1) calendário configurado do grupo  2) agenda pessoal de quem criou  3) conta de serviço
+    calendar_id, gcal_owner = get_gcal_target(org_id)
+    user_token = None
+    if gcal_owner:
+        # grupo tem calendário próprio via OAuth de um dono
+        user_token = get_user_google_token(gcal_owner)
+        if not user_token:
+            log.warning(f"GCal: dono do calendário do grupo {org_id} sem token válido — caindo para conta de serviço")
+    elif calendar_id and calendar_id != GCAL_ID:
+        # grupo configurou um ID manual (conta de serviço deve ter acesso) — usa como está
+        pass
     else:
-        calendar_id, gcal_owner = get_gcal_target(org_id)
-        if gcal_owner:
-            user_token = get_user_google_token(gcal_owner)
+        # grupo NÃO configurou nada → usa a agenda pessoal de quem criou o evento, se houver
+        pessoal = get_user_google_token(criado_por_id) if criado_por_id else None
+        if pessoal:
+            user_token, calendar_id = pessoal, "primary"
     log.info(f"GCal delete: id={gcal_id}, calendário={'pessoal' if user_token else 'grupo'} ({calendar_id})")
     svc = _build_gcal_service(user_token)
     if not svc:

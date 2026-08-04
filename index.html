@@ -306,11 +306,144 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 /* overlay de drag-and-drop de PDF: invisível até arrastar um arquivo */
 .drop-ov{display:none;position:fixed;inset:0;z-index:300;background:color-mix(in srgb,var(--bg) 82%,transparent);backdrop-filter:blur(3px);flex-direction:column;align-items:center;justify-content:center;gap:10px;border:3px dashed var(--accent);border-radius:14px;margin:10px;pointer-events:none}
 .drop-ov.on{display:flex}
+
+/* ── Abertura: o nome por extenso se contrai e vira o símbolo A.N.A ──
+   Animação 100% CSS: roda mesmo se o JS falhar ou a aba abrir em segundo plano. */
+#splash{position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;z-index:9999;
+  background:#0b1120;overflow:hidden;animation:splashSai .7s ease 3.5s both}
+#splash.done{opacity:0;visibility:hidden;pointer-events:none;transition:opacity .45s ease,visibility 0s .45s}
+#splash-nome,#splash-mark{position:absolute;top:50%;left:50%}
+/* 1 · nome por extenso entra, respira e se contrai rumo ao centro */
+#splash-nome{white-space:nowrap;text-align:center;
+  animation:nomeEntra .85s cubic-bezier(.2,.8,.3,1) .25s both, nomeContrai 1s cubic-bezier(.65,0,.2,1) 1.75s both}
+#splash-nome .linha{font-size:clamp(20px,4.6vw,46px);font-weight:700;color:#e2e8f0;letter-spacing:.015em;line-height:1.2}
+#splash-nome .linha b{color:#818cf8;font-weight:800}
+#splash-nome .sub{margin-top:12px;font-size:clamp(8px,1.4vw,11px);letter-spacing:.36em;color:#22d3ee;
+  text-transform:uppercase;animation:subEntra .8s ease .75s both}
+@keyframes nomeEntra{from{opacity:0;transform:translate(-50%,-50%) scale(1.06)}
+                     to{opacity:1;transform:translate(-50%,-50%) scale(1)}}
+@keyframes nomeContrai{from{opacity:1;filter:blur(0);transform:translate(-50%,-50%) scale(1)}
+                       to{opacity:0;filter:blur(4px);transform:translate(-50%,-50%) scale(.22)}}
+@keyframes subEntra{from{opacity:0}to{opacity:.85}}
+/* 2 · o símbolo emerge do ponto onde o nome desapareceu */
+#splash-mark{width:200px;height:200px;animation:markEntra 1.15s cubic-bezier(.18,.9,.28,1) 2.4s both}
+@keyframes markEntra{from{opacity:0;transform:translate(-50%,-50%) scale(.5) rotate(-14deg)}
+                     to{opacity:1;transform:translate(-50%,-50%) scale(1) rotate(0)}}
+#splash-svg{position:absolute;top:0;left:0;width:100%;height:100%}
+#splash-anel{position:absolute;top:50%;left:50%;width:200px;height:200px;margin:-100px 0 0 -100px;
+  border:1px solid rgba(34,211,238,.4);border-radius:50%;animation:anelPulsa 1.5s ease-out 2.7s both}
+@keyframes anelPulsa{0%{opacity:.6;transform:scale(1)}100%{opacity:0;transform:scale(2.4)}}
+#splash-legenda{position:absolute;top:50%;left:0;right:0;margin-top:128px;text-align:center;
+  animation:legendaEntra .8s ease 2.9s both}
+#splash-legenda .t{font-size:11px;color:#64748b;letter-spacing:.34em;text-transform:uppercase}
+@keyframes legendaEntra{from{opacity:0}to{opacity:1}}
+@keyframes splashSai{from{opacity:1;visibility:visible}to{opacity:0;visibility:hidden}}
+#splash-letras{display:none}
+@media (prefers-reduced-motion:reduce){
+  #splash{animation:splashSai .5s ease 1.4s both}
+  #splash-nome{animation:nomeEntra .4s ease both}
+  #splash-mark,#splash-anel,#splash-legenda{display:none}
+}
+}
+}
 </style>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" defer></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
 <body>
+<div id="splash" aria-hidden="true">
+  <div id="splash-mark">
+    <div id="splash-anel"></div>
+    <div id="splash-svg"><svg xmlns="http://www.w3.org/2000/svg" viewBox="-205 -205 410 410" style="width:100%;height:100%;display:block">
+  <defs>
+    <filter id="sglow" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="4" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="sglowSoft" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="8" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <linearGradient id="sgrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#67e8f9"/>
+      <stop offset="55%" stop-color="#22d3ee"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+    <style>
+      .spin-cw-slow  { animation: rot 46s linear infinite; transform-origin: 0 0; }
+      .spin-ccw      { animation: rotr 14s linear infinite; transform-origin: 0 0; }
+      .spin-cw       { animation: rot 22s linear infinite; transform-origin: 0 0; }
+      .spin-ccw-fast { animation: rotr 8s linear infinite; transform-origin: 0 0; }
+      .pulse         { animation: pulse 2.6s ease-in-out infinite; }
+      .pulse-txt     { animation: pulseTxt 2.6s ease-in-out infinite; }
+      .blink1        { animation: blink 1.8s ease-in-out infinite; }
+      .blink2        { animation: blink 2.4s ease-in-out .6s infinite; }
+      @keyframes rot     { to { transform: rotate(360deg); } }
+      @keyframes rotr    { to { transform: rotate(-360deg); } }
+      @keyframes pulse   { 0%,100% { opacity:.45; } 50% { opacity:1; } }
+      @keyframes pulseTxt{ 0%,100% { opacity:.85; } 50% { opacity:1; } }
+      @keyframes blink   { 0%,100% { opacity:.2; } 50% { opacity:.9; } }
+      text { font-family: 'Segoe UI', -apple-system, Arial, sans-serif; }
+    </style>
+  </defs>
+
+  <!-- anel externo: ticks finos -->
+  <g class="spin-cw-slow">
+    <circle r="178" fill="none" stroke="#22d3ee" stroke-width="1" opacity=".35"/>
+    <circle r="171" fill="none" stroke="#67e8f9" stroke-width="7" opacity=".8"
+            stroke-dasharray="1.5 7.7" filter="url(#sglow)"/>
+  </g>
+
+  <!-- marcadores cardeais: DENTRO do anel externo, simétricos -->
+  <g opacity=".85">
+    <rect x="-2.4" y="-160" width="4.8" height="11" rx="1.2" fill="#67e8f9" class="blink1"/>
+    <rect x="-2.4" y="149"  width="4.8" height="11" rx="1.2" fill="#67e8f9" class="blink2"/>
+    <rect x="-160" y="-2.4" width="11" height="4.8" rx="1.2" fill="#06b6d4" class="blink2"/>
+    <rect x="149"  y="-2.4" width="11" height="4.8" rx="1.2" fill="#06b6d4" class="blink1"/>
+  </g>
+
+  <!-- anel de arcos segmentados -->
+  <g class="spin-ccw">
+    <circle r="140" fill="none" stroke="url(#sgrad)" stroke-width="4" stroke-linecap="round"
+            stroke-dasharray="180 113.6" filter="url(#sglow)"/>
+    <circle r="140" fill="none" stroke="#06b6d4" stroke-width="2" opacity=".6"
+            stroke-dasharray="28 265.6" stroke-dashoffset="-215"/>
+  </g>
+
+  <!-- anel "binário" -->
+  <g class="spin-cw">
+    <circle r="120" fill="none" stroke="#22d3ee" stroke-width="10" opacity=".5"
+            stroke-dasharray="3 4 8 4 3 9 14 5"/>
+    <circle r="109" fill="none" stroke="#a5f3fc" stroke-width="1.4" opacity=".55"/>
+  </g>
+
+  <!-- arco de varredura rápido -->
+  <g class="spin-ccw-fast">
+    <circle r="97" fill="none" stroke="#06b6d4" stroke-width="3" stroke-linecap="round"
+            stroke-dasharray="82 527.5" filter="url(#sglowSoft)"/>
+    <circle r="97" fill="none" stroke="#67e8f9" stroke-width="1.4" opacity=".5"
+            stroke-dasharray="8 18"/>
+  </g>
+
+  <!-- núcleo -->
+  <circle r="84" fill="none" stroke="url(#sgrad)" stroke-width="2.5" filter="url(#sglow)" class="pulse"/>
+  <circle r="77" fill="#22d3ee" opacity=".08"/>
+  <circle r="77" fill="none" stroke="#22d3ee" stroke-width=".8" opacity=".5"/>
+
+  <!-- nome: A.N.A — x compensa metade do letter-spacing para centro óptico exato -->
+  <g class="pulse-txt" filter="url(#sglow)">
+    <text x="3" y="13" text-anchor="middle" font-size="37" font-weight="700"
+          letter-spacing="9" fill="#818cf8">A.N.A</text>
+  </g>
+</svg></div>
+    <div id="splash-letras">A.N.A</div>
+  </div>
+  <div id="splash-nome">
+    <div class="linha"><b>A</b>nesthesia <b>N</b>eural <b>A</b>ssistant</div>
+    <div class="sub">Assistente Neural de Anestesiologia</div>
+  </div>
+  <div id="splash-legenda"><div class="t">A.N.A</div></div>
+</div>
 
 <div class="drop-ov" id="dov"><i class="ti ti-file-text" style="font-size:46px;color:var(--accent)"></i><div style="font-size:15px;font-weight:500;color:var(--accent)">Solte o PDF aqui</div></div>
 
@@ -3015,6 +3148,19 @@ function initWelcome(){
 document.getElementById('modal-edit').addEventListener('click',e=>{if(e.target.id==='modal-edit')closeEditModal();});
 
 // ── PWA ──────────────────────────────────────────────────
+
+// ── Abertura: a animação é CSS; aqui só limpeza, "pular" e não repetir na sessão ──
+(function(){
+  const sp=document.getElementById('splash');
+  if(!sp)return;
+  const encerra=()=>{sp.classList.add('done');setTimeout(()=>sp.remove(),600);};
+  let jaViu=false;
+  try{jaViu=sessionStorage.getItem('ana-splash')==='1';}catch(e){}
+  if(jaViu){sp.remove();return;}                 // recarregou? vai direto ao app
+  try{sessionStorage.setItem('ana-splash','1');}catch(e){}
+  setTimeout(encerra,4100);                       // rede de segurança após a animação
+  ['click','touchstart','keydown'].forEach(ev=>sp.addEventListener(ev,encerra,{once:true,passive:true}));
+})();
 if('serviceWorker' in navigator)navigator.serviceWorker.register('/sw.js').catch(()=>{});
 
 // ── INIT ─────────────────────────────────────────────────

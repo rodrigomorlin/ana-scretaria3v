@@ -748,6 +748,123 @@ def organizar_escala(req: OrganizarRequest, user=Depends(auth)):
     return {"tabela": aloc, "resumo": resumo}
 
 
+# ── CONFIRMAÇÃO DE LEITURA ("ciente") ──────────────────────
+@app.post("/api/eventos/{ev_id}/ciente")
+def marcar_ciente(ev_id: str, user=Depends(auth)):
+    gid = user.get("org_id") or user.get("group_id")
+    ap = sb_rest("GET", f"/appointments?id=eq.{ev_id}&group_id=eq.{gid}&select=id,doctor_id")
+    if not ap:
+        raise HTTPException(404, "Agendamento não encontrado neste grupo.")
+    try:
+        ja = sb_rest("GET", f"/ana_appointment_ack?appointment_id=eq.{ev_id}&user_id=eq.{user['id']}&select=id")
+        if not ja:
+            sb_rest("POST", "/ana_appointment_ack",
+                    {"appointment_id": ev_id, "user_id": user["id"], "group_id": gid})
+    except Exception as e:
+        raise HTTPException(500, "Tabela de confirmações ausente — rode o SQL indicado no chat.")
+    log.info(f"Ciente: {user['id']} confirmou {ev_id}")
+    return {"ok": True}
+
+@app.get("/api/eventos/cientes")
+def listar_cientes(user=Depends(auth)):
+    """IDs dos agendamentos já confirmados, e quem confirmou (para o admin)."""
+    gid = user.get("org_id") or user.get("group_id")
+    try:
+        rows = sb_rest("GET", f"/ana_appointment_ack?group_id=eq.{gid}&select=appointment_id,user_id")
+    except Exception:
+        return {"meus": [], "por_evento": {}}
+    meus = [r["appointment_id"] for r in rows if r["user_id"] == user["id"]]
+    por_evento = {}
+    for r in rows:
+        por_evento.setdefault(r["appointment_id"], []).append(r["user_id"])
+    return {"meus": meus, "por_evento": por_evento}
+
+# ── AVISO DE ATRASO ────────────────────────────────────────
+class AtrasoRequest(BaseModel):
+    evento_id: str
+    minutos: int = 15
+
+@app.post("/api/atraso")
+async def avisar_atraso(req: AtrasoRequest, bg: BackgroundTasks, user=Depends(auth)):
+    """Sinaliza atraso e notifica exatamente quem é afetado (mesma pessoa depois, e o mesmo setor)."""
+    gid = user.get("org_id") or user.get("group_id")
+    ap = sb_rest("GET", f"/appointments?id=eq.{req.evento_id}&group_id=eq.{gid}&select=*")
+    if not ap:
+        raise HTTPException(404, "Agendamento não encontrado.")
+    ev = ap[0]
+    dia = ev.get("appointment_date")
+    hora = str(ev.get("appointment_time") or "")[:5]
+    mins = max(5, min(int(req.minutos or 15), 480))
+
+    docs = {d["id"]: d for d in sb_rest("GET", f"/doctors?group_id=eq.{gid}&select=id,name,user_id")}
+    secs = {s["id"]: s["name"] for s in sb_rest("GET", f"/sectors?group_id=eq.{gid}&select=id,name")}
+    quem = docs.get(ev.get("doctor_id") or "", {})
+    setor_nome = secs.get(ev.get("sector_id") or "", "")
+
+    # afetados: casos do MESMO dia, depois deste horário, do mesmo profissional OU do mesmo setor
+    todos = sb_rest("GET", f"/appointments?group_id=eq.{gid}&appointment_date=eq.{dia}"
+                           f"&status=neq.cancelled&select=id,doctor_id,sector_id,appointment_time,procedure")
+    afetados = [a for a in todos
+                if str(a.get("appointment_time") or "")[:5] > hora
+                and (a.get("doctor_id") == ev.get("doctor_id") or a.get("sector_id") == ev.get("sector_id"))]
+
+    alvos = {}
+    for a in afetados:
+        d = docs.get(a.get("doctor_id") or "")
+        if d and d.get("user_id") and d["user_id"] != user["id"]:
+            alvos.setdefault(d["user_id"], []).append(a)
+    # administradores também ficam sabendo (quem monta a escala)
+    for m in sb_rest("GET", f"/group_members?group_id=eq.{gid}&role=eq.admin&select=user_id"):
+        if m["user_id"] != user["id"]:
+            alvos.setdefault(m["user_id"], [])
+
+    titulo = f"⏱️ Atraso de {mins} min"
+    base = f"{quem.get('name','Um colega')} · {setor_nome} {hora}".strip(" ·")
+    for uid, casos in alvos.items():
+        if casos:
+            prox = sorted(casos, key=lambda a: str(a.get("appointment_time") or ""))[0]
+            corpo = f"{base} — pode afetar seu caso das {str(prox.get('appointment_time') or '')[:5]}"
+        else:
+            corpo = f"{base} — {len(afetados)} caso(s) do dia podem deslizar"
+        bg.add_task(push_user, uid, titulo, corpo)
+
+    db_log("WARN", f"Atraso de {mins}min informado em {setor_nome} {hora} ({len(afetados)} casos afetados)",
+           usuario=user["id"], org_id=gid)
+    return {"ok": True, "afetados": len(afetados), "avisados": len(alvos)}
+
+# ── RELATÓRIO DE PRODUÇÃO ──────────────────────────────────
+@app.get("/api/relatorio/producao")
+def relatorio_producao(de: str, ate: str, user=Depends(auth)):
+    gid = user.get("org_id") or user.get("group_id")
+    aps = sb_rest("GET", f"/appointments?group_id=eq.{gid}&appointment_date=gte.{de}"
+                         f"&appointment_date=lte.{ate}&select=*")
+    docs = {d["id"]: d["name"] for d in sb_rest("GET", f"/doctors?group_id=eq.{gid}&select=id,name")}
+    secs = {s["id"]: s["name"] for s in sb_rest("GET", f"/sectors?group_id=eq.{gid}&select=id,name")}
+
+    def bloco(chave_fn):
+        acc = {}
+        for a in aps:
+            if (a.get("status") or "") == "cancelled":
+                continue
+            k = chave_fn(a) or "—"
+            acc[k] = acc.get(k, 0) + 1
+        return sorted(({"nome": k, "casos": v} for k, v in acc.items()),
+                      key=lambda x: -x["casos"])
+
+    realizados = [a for a in aps if (a.get("status") or "") not in ("cancelled",)]
+    cancelados = [a for a in aps if (a.get("status") or "") == "cancelled"]
+    # dias com atividade e média por dia
+    dias = sorted({a.get("appointment_date") for a in realizados if a.get("appointment_date")})
+    return {
+        "periodo": {"de": de, "ate": ate, "dias_com_casos": len(dias)},
+        "total": len(realizados),
+        "cancelados": len(cancelados),
+        "media_por_dia": round(len(realizados) / len(dias), 1) if dias else 0,
+        "por_medico": bloco(lambda a: docs.get(a.get("doctor_id") or "")),
+        "por_setor": bloco(lambda a: secs.get(a.get("sector_id") or "")),
+        "por_procedimento": bloco(lambda a: (a.get("procedure") or "").strip()[:40])[:15],
+    }
+
 @app.post("/api/eventos")
 async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=Depends(auth)):
     out = ana_data.sb_create_evento(user, ev)
@@ -772,7 +889,7 @@ async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=
                 titulo = ("📅 Agendamento criado" if alvo_uid == user["id"]
                           else "📅 Novo agendamento para você")
                 bg.add_task(push_user, alvo_uid, titulo,
-                            f"{ev.proc} · {fmtDate(ev.date)} {ev.time}")
+                            f"{ev.proc} · {fmtDate(ev.date)} {ev.time}", "/", str(out.get("id", "")))
         elif not alvo_uid:
             bg.add_task(push_all_org, org_id, "📅 Novo agendamento",
                         f"{ev.proc} — {ev.doc} · {fmtDate(ev.date)} {ev.time}")
@@ -1429,7 +1546,7 @@ def notif_prefs_put(body: dict, user=Depends(auth)):
         raise HTTPException(500, "Tabela de preferências ausente — rode o SQL de criação no Supabase (te passei no chat).")
 
 
-async def push_user(user_id: str, title: str, body: str, url: str = "/"):
+async def push_user(user_id: str, title: str, body: str, url: str = "/", evento_id: str = None):
     """Push individual: só os dispositivos do usuário informado."""
     if not VAPID_PRIVATE_KEY or not user_id:
         return
@@ -1438,7 +1555,7 @@ async def push_user(user_id: str, title: str, body: str, url: str = "/"):
     except ImportError:
         return
     subs = sb_rest("GET", f"/ana_push_subscriptions?user_id=eq.{user_id}&select=id,subscription")
-    payload = json.dumps({"title": title, "body": body, "url": url})
+    payload = json.dumps({"title": title, "body": body, "url": url, "evento_id": evento_id})
     entregues = 0
     for s in subs:
         try:
@@ -2268,9 +2385,19 @@ def supabase_whoami(request: Request):
     m = None
     if memberships:
         m = next((x for x in memberships if x["group_id"] == wanted), None) or memberships[0]
+    # cadastro de médico vinculado a esta conta no grupo atual (habilita "minha agenda", ciente e atraso)
+    medico_id = ""
+    if m:
+        try:
+            d = sb_rest("GET", f"/doctors?group_id=eq.{m['group_id']}&user_id=eq.{u['id']}"
+                               f"&active=eq.true&select=id")
+            medico_id = d[0]["id"] if d else ""
+        except Exception:
+            pass
     return {"id": u["id"], "nome": u["nome"],
             "role": ("admin" if m and m.get("role") == "admin" else "medico") if m else None,
             "group_id": m["group_id"] if m else None,
+            "medico_id": medico_id,
             "auth_source": "supabase", "memberships": memberships}
 
 @app.get("/api/health")

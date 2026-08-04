@@ -954,7 +954,13 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <div style="font-size:10px;color:var(--hint);margin-top:8px">Os usuários que solicitarem entrada precisarão da sua aprovação antes de acessar o grupo.</div>
   </div>
 
-  <div class="card" id="membros-card" style="display:none">
+  <div class="card" id="perigo-card" style="display:none;border-color:#fca5a5">
+    <div class="card-title" style="color:#dc2626"><i class="ti ti-alert-triangle"></i> Zona de perigo</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Excluir o grupo remove <b>permanentemente</b> todos os agendamentos, médicos, setores, plantões e memórias. Esta ação não pode ser desfeita.</div>
+    <button class="btn danger sm" onclick="excluirGrupo()"><i class="ti ti-trash"></i> Excluir este grupo</button>
+  </div>
+
+    <div class="card" id="membros-card" style="display:none">
     <div class="card-title"><i class="ti ti-users-group"></i> Integrantes do grupo <span id="membros-count" style="font-size:10px;color:var(--hint);font-weight:400;margin-left:4px"></span></div>
     <div id="sol-wrap" style="display:none;margin-bottom:12px">
       <div style="font-size:10px;font-weight:700;letter-spacing:.5px;color:var(--warn-text);margin-bottom:6px"><i class="ti ti-hourglass"></i> SOLICITAÇÕES PENDENTES <span id="sol-badge" style="background:var(--err);color:#fff;border-radius:10px;font-size:10px;padding:1px 7px;font-weight:600"></span></div>
@@ -1150,10 +1156,11 @@ async function getToken(){
   const {data:{session}}=await sb.auth.getSession();
   return session?.access_token||'';
 }
-async function api(m,p,b=null){
+async function api(m,p,b=null,extra=null){
   const t=await getToken();
   const h={'Content-Type':'application/json','Authorization':'Bearer '+t};
   if(groupId)h['X-Group-Id']=groupId;
+  if(extra)Object.assign(h,extra);
   const o={method:m,headers:h};
   if(b)o.body=JSON.stringify(b);
   const r=await fetch(API+p,o);
@@ -2743,6 +2750,26 @@ function escolherEndereco(i){
   box.innerHTML=`<span style="font-size:11px;color:var(--ok,#16a34a)">✓ ${s.nome}</span>`;
   setTimeout(()=>{box.style.display='none'},2500);
 }
+async function excluirGrupo(){
+  const nome=(me&&me.grupoNome)||(document.querySelector('#hub-lista .grupo-nome-atual')||{}).textContent||'';
+  const alvo=prompt('⚠️ Isto apaga TUDO deste grupo, sem volta.\n\nPara confirmar, digite o NOME EXATO do grupo:');
+  if(alvo===null)return;
+  try{
+    const r=await api('DELETE',`/api/grupos/${me.org_id}?confirmar=${encodeURIComponent(alvo.trim())}`);
+    toast(`🗑️ Grupo "${r.nome}" excluído.`);
+    localStorage.removeItem('ana-group');
+    setTimeout(()=>location.reload(),900);
+  }catch(e){toast('⚠️ '+e.message);}
+}
+async function sairGrupo(gid,nome){
+  if(!confirm(`Sair do grupo "${nome}"? Você precisará do código de acesso para voltar.`))return;
+  try{
+    await api('POST','/api/grupos/sair',{},{'X-Group-Id':gid});
+    toast('Você saiu do grupo.');
+    if(me&&me.org_id===gid)localStorage.removeItem('ana-group');
+    setTimeout(()=>location.reload(),800);
+  }catch(e){toast('⚠️ '+e.message);}
+}
 async function regenerarCodigo(){
   if(!confirm('Gerar um novo código de acesso? O código atual deixa de funcionar para novas solicitações.'))return;
   try{
@@ -2978,7 +3005,9 @@ let cctDias=['all'],cctTurnos=['all'];
 async function loadCodigoAcesso(){
   const card=document.getElementById('codigo-card');
   if(!card)return;
-  if(me?.role!=='admin'){card.style.display='none';return;}
+  const perigo=document.getElementById('perigo-card');
+  if(me?.role!=='admin'){card.style.display='none';if(perigo)perigo.style.display='none';return;}
+  if(perigo)perigo.style.display='block';
   try{
     const r=await api('GET','/api/grupos/codigo');
     if(r.codigo){card.style.display='block';document.getElementById('codigo-valor').textContent=r.codigo;}

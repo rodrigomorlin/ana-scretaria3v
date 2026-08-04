@@ -31,6 +31,8 @@ SECRET         = os.environ.get("SECRET_KEY", "ana-secretaria-default-secret-cha
 GROQ_KEY       = os.environ.get("GROQ_API_KEY", "")
 CEREBRAS_API_KEY = os.environ.get("CEREBRAS_API_KEY", "")
 CEREBRAS_MODEL   = os.environ.get("CEREBRAS_MODEL", "gpt-oss-120b")
+GROQ_MODEL       = os.environ.get("GROQ_MODEL", "qwen/qwen3.6-27b")
+GEMINI_MODEL     = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 EMAIL_FROM     = os.environ.get("EMAIL_FROM", "A.N.A <onboarding@resend.dev>")
 SMTP_HOST      = os.environ.get("SMTP_HOST", "")
@@ -1245,7 +1247,7 @@ def _extract_image_ocrspace(image_b64: str, mime_type: str = "image/png") -> str
 def _gemini_request(payload_bytes: bytes, timeout: int = 60):
     """POST no Gemini nativo compatível com chaves antigas (AIza) e novas (AQ. Auth keys).
     Tenta o header x-goog-api-key; se a chave nova for recusada (401/403), tenta Authorization: Bearer."""
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
     tentativas = [{"x-goog-api-key": GEMINI_API_KEY}]
     if GEMINI_API_KEY.startswith("AQ."):
         tentativas.append({"Authorization": f"Bearer {GEMINI_API_KEY}"})
@@ -1483,7 +1485,7 @@ def chat_proxy(req: ChatRequest, user=Depends(auth)):
                     text = _gemini_chat()
                 elif motor == "groq":
                     text = _openai_compat("groq", "https://api.groq.com/openai/v1/chat/completions",
-                                          GROQ_KEY, "llama-3.3-70b-versatile")
+                                          GROQ_KEY, GROQ_MODEL)
                 else:
                     text = _openai_compat("cerebras", "https://api.cerebras.ai/v1/chat/completions",
                                           CEREBRAS_API_KEY, CEREBRAS_MODEL)
@@ -2365,6 +2367,58 @@ def vincular_medico(uid: str, body: dict, user=Depends(auth)):
     sb_rest("PATCH", f"/doctors?id=eq.{doctor_id}", {"user_id": uid, "active": True})
     log.info(f"Médico {doc[0]['name']} vinculado ao membro {uid}")
     return {"ok": True, "medico": doc[0]["name"]}
+
+@app.post("/api/grupos/sair")
+def sair_grupo(user=Depends(auth)):
+    """Membro sai do próprio grupo (não exclui o grupo)."""
+    gid = user.get("org_id") or user.get("group_id")
+    uid = user["id"]
+    # se for o único admin, não pode simplesmente sair e deixar o grupo órfão
+    admins = sb_rest("GET", f"/group_members?group_id=eq.{gid}&role=eq.admin&select=user_id")
+    if any(a["user_id"] == uid for a in admins) and len(admins) == 1:
+        outros = sb_rest("GET", f"/group_members?group_id=eq.{gid}&select=user_id&limit=2")
+        if len(outros) > 1:
+            raise HTTPException(400, "Você é o único administrador. Promova outro membro a admin antes de sair, "
+                                     "ou exclua o grupo.")
+    sb_rest("DELETE", f"/group_members?group_id=eq.{gid}&user_id=eq.{uid}")
+    sb_rest("PATCH", f"/doctors?group_id=eq.{gid}&user_id=eq.{uid}", {"user_id": None})
+    _membership_cache.pop(uid, None)
+    log.info(f"{user['nome']} saiu do grupo {gid}")
+    return {"ok": True}
+
+@app.delete("/api/grupos/{gid}")
+def excluir_grupo(gid: str, confirmar: str = "", user=Depends(auth)):
+    """Exclui um grupo por completo. Apenas admin, com confirmação pelo nome."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Apenas administradores podem excluir o grupo.")
+    atual = user.get("org_id") or user.get("group_id")
+    if gid != atual:
+        raise HTTPException(400, "Só é possível excluir o grupo em que você está.")
+    grupo = sb_rest("GET", f"/groups?id=eq.{gid}&select=name")
+    if not grupo:
+        raise HTTPException(404, "Grupo não encontrado.")
+    nome = grupo[0]["name"]
+    # confirmação: o cliente reenvia o nome exato do grupo
+    if (confirmar or "").strip() != nome:
+        raise HTTPException(400, f"Confirmação incorreta. Digite o nome exato do grupo para excluir: {nome}")
+    # remove os dados vinculados (ordem tolerante a tabelas ausentes)
+    tabelas = ["appointments", "doctors", "sectors", "sector_displacements", "shifts",
+               "ana_memories", "ana_logs", "ana_push_subscriptions", "ana_appointment_ack",
+               "ana_gcal_config", "ana_notification_prefs", "credit_types", "group_members"]
+    apagadas = []
+    for t in tabelas:
+        try:
+            sb_rest("DELETE", f"/{t}?group_id=eq.{gid}")
+            apagadas.append(t)
+        except Exception as e:
+            log.warning(f"excluir_grupo: {t} — {e}")
+    try:
+        sb_rest("DELETE", f"/groups?id=eq.{gid}")
+    except Exception as e:
+        raise HTTPException(500, f"Não consegui excluir o grupo em si: {e}")
+    _membership_cache.clear()
+    log.warning(f"GRUPO EXCLUÍDO: '{nome}' ({gid}) por {user['nome']} — tabelas limpas: {len(apagadas)}")
+    return {"ok": True, "nome": nome}
 
 @app.post("/api/grupos/regenerar-codigo")
 def regenerar_codigo(user=Depends(auth)):

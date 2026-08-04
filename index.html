@@ -831,6 +831,16 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <button class="btn" onclick="loadRelatorios()"><i class="ti ti-refresh"></i> Atualizar</button>
   </div>
   <div class="grid4" id="rel-stats"></div>
+  <div class="card" style="margin-bottom:14px">
+    <div class="card-title"><i class="ti ti-report-analytics" style="color:var(--accent)"></i>Produção por período</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:end;margin-bottom:10px">
+      <div class="fl" style="margin:0"><label>De</label><input type="date" id="prod-de" style="min-width:150px"></div>
+      <div class="fl" style="margin:0"><label>Até</label><input type="date" id="prod-ate" style="min-width:150px"></div>
+      <button class="btn primary sm" onclick="gerarProducao()"><i class="ti ti-chart-bar"></i> Gerar</button>
+      <button class="btn sm" onclick="prodCSV()" id="prod-csv" style="display:none"><i class="ti ti-download"></i> Exportar CSV</button>
+    </div>
+    <div id="prod-out" style="font-size:12px;color:var(--muted)">Escolha o período e clique em Gerar.</div>
+  </div>
   <div class="chart-grid">
     <div class="chart-card"><div class="chart-title">Procedimentos por médico</div><div class="chart-wrap"><canvas id="ch-medico"></canvas></div></div>
     <div class="chart-card"><div class="chart-title">Procedimentos por setor</div><div class="chart-wrap"><canvas id="ch-setor"></canvas></div></div>
@@ -1164,6 +1174,7 @@ async function loadAll(){
       api('GET','/api/medicos'),api('GET','/api/setores'),
       api('GET','/api/eventos'),api('GET','/api/memorias')]);
   lembrarSetores(eventos);
+  loadCientes();
   loadNotifPrefs();loadGcalCfg();
     renderMem();renderDocList();renderSetorList();populateAgendaFilters();
     if(me?.role==='admin'){
@@ -1231,7 +1242,7 @@ async function doForgot(){
 }
 async function afterLogin(){
   const who=await api('GET','/api/supabase/whoami');
-  me={id:who.id,nome:who.nome,role:who.role,org_id:who.group_id};
+  me={id:who.id,nome:who.nome,role:who.role,org_id:who.group_id,medico_id:who.medico_id||''};
   await showHub();
 }
 async function showHub(){
@@ -1310,6 +1321,8 @@ function entrarGrupo(gid,role){
   salvarEstadoChat();              // guarda a conversa do grupo que está saindo
   groupId=gid;localStorage.setItem('ana-group',gid);
   me.org_id=gid;me.role=role==='admin'?'admin':'medico';
+  me.medico_id='';                 // o vínculo de médico é por grupo — recarregado abaixo
+  api('GET','/api/supabase/whoami').then(w=>{me.medico_id=w.medico_id||'';if(window.renderAgenda)renderAgenda();}).catch(()=>{});
   limparEstadoChat();              // zera tela e caches do grupo anterior
   window._restaurou=restaurarEstadoChat(gid);  // se já conversou neste grupo, volta de onde parou
   document.getElementById('hub').style.display='none';
@@ -1758,6 +1771,10 @@ function tab(n){
   if(n==='escala')loadEscala();
   if(n==='relatorios')loadRelatorios();
   if(n==='logs')loadLogs();
+  if(n==='rel'){
+    const de=document.getElementById('prod-de'),ate=document.getElementById('prod-ate');
+    if(de&&!de.value){const h=new Date();de.value=new Date(h.getFullYear(),h.getMonth(),1).toISOString().slice(0,10);ate.value=h.toISOString().slice(0,10);}
+  }
   if(n==='config'){[loadCorrecoes,loadGcalCfg,loadGcalPessoal,loadOrgInfo,loadPushStatus,loadCreditConfig,loadCodigoAcesso,loadMembros,loadNotifPrefs].forEach(f=>{try{Promise.resolve(f()).catch(e=>console.warn(f.name,e));}catch(e){console.warn(f.name,e);}});}
 }
 
@@ -2234,7 +2251,7 @@ function renderAgenda(){
     <div class="stat-card"><div class="stat-n">${hojeN}</div><div class="stat-l">hoje</div></div>
     <div class="stat-card"><div class="stat-n">${fut}</div><div class="stat-l">futuros</div></div>
     <div class="stat-card"><div class="stat-n">${mesN}</div><div class="stat-l">este mês</div></div>`;
-  if(!sorted.length){document.getElementById('agtbl').innerHTML='<tr><td colspan="9" style="padding:18px;color:var(--muted);text-align:center">Nenhum agendamento encontrado.</td></tr>';return;}
+  if(!sorted.length){document.getElementById('agtbl').innerHTML='<tr><td colspan="10" style="padding:18px;color:var(--muted);text-align:center">Nenhum agendamento encontrado.</td></tr>';return;}
 
   // Mapa de status com badge style
   const STATUS_STYLE={
@@ -2245,7 +2262,7 @@ function renderAgenda(){
   };
   const STATUS_LABEL={aguardando:'Aguardando',confirmado:'Confirmado',realizado:'Realizado',cancelado:'Cancelado'};
 
-  let html=`<tr><th>Data</th><th>Hora</th><th>Setor</th><th>Procedimento</th><th>Paciente</th><th>Médico</th><th>Status</th><th></th><th></th></tr>`;
+  let html=`<tr><th>Data</th><th>Hora</th><th>Setor</th><th>Procedimento</th><th>Paciente</th><th>Médico</th><th>Status</th><th></th><th></th><th></th></tr>`;
   sorted.forEach(e=>{const s=getS(e.setor);const bc=BADGE[e.setor]||'';const past=e.date<hoje;
     const pdfIcon=e.pdf_filename?`<i class="ti ti-file-text" style="color:var(--accent);font-size:13px" title="${e.pdf_filename}"></i>`:'';
     const st=e.status||'aguardando';
@@ -2254,11 +2271,84 @@ function renderAgenda(){
     const stDropdown=`<select onchange="updateStatus('${e.id}',this.value)" style="${stStyle};border:none;border-radius:20px;padding:3px 8px;font-size:10px;font-weight:600;cursor:pointer">
       ${Object.entries(STATUS_LABEL).map(([v,l])=>`<option value="${v}"${v===st?' selected':''}>${l}</option>`).join('')}
     </select>`;
-    html+=`<tr style="${past?'opacity:.5':''}"><td style="white-space:nowrap">${fmtD(e.date)}</td><td>${e.time}</td><td><span class="ev-tag ${bc}">${s.name}</span></td><td>${e.proc} ${pdfIcon}</td><td>${e.paciente||'—'}</td><td style="font-size:11px;color:var(--muted)">${e.doc}</td><td>${stDropdown}</td><td><button class="btn sm" onclick="openEditModal('${e.id}')" title="Editar"><i class="ti ti-pencil"></i></button></td><td><button class="btn danger sm" onclick="delEvt('${e.id}')" title="Excluir"><i class="ti ti-trash"></i></button></td></tr>`;
+    html+=`<tr style="${past?'opacity:.5':''}"><td style="white-space:nowrap">${fmtD(e.date)}</td><td>${e.time}</td><td><span class="ev-tag ${bc}">${s.name}</span></td><td>${e.proc} ${pdfIcon}</td><td>${e.paciente||'—'}</td><td style="font-size:11px;color:var(--muted)">${e.doc}</td><td>${stDropdown}</td><td>${acoesMeu(e,past)}</td><td><button class="btn sm" onclick="openEditModal('${e.id}')" title="Editar"><i class="ti ti-pencil"></i></button></td><td><button class="btn danger sm" onclick="delEvt('${e.id}')" title="Excluir"><i class="ti ti-trash"></i></button></td></tr>`;
   });
   document.getElementById('agtbl').innerHTML=html;
 }
 
+async function gerarProducao(){
+  const de=document.getElementById('prod-de').value, ate=document.getElementById('prod-ate').value;
+  const out=document.getElementById('prod-out');
+  if(!de||!ate){out.textContent='Informe as duas datas.';return;}
+  if(de>ate){out.textContent='A data inicial precisa ser anterior à final.';return;}
+  out.textContent='Calculando…';
+  try{
+    const r=await api('GET',`/api/relatorio/producao?de=${de}&ate=${ate}`);
+    window._producao={dados:r,de,ate};
+    document.getElementById('prod-csv').style.display='';
+    const tab=(titulo,lista)=>lista.length?`<div style="flex:1;min-width:210px">
+        <div style="font-size:11px;font-weight:700;color:var(--text);margin:10px 0 4px">${titulo}</div>
+        <table style="width:100%"><tr><th>Nome</th><th style="width:60px;text-align:right">Casos</th></tr>
+        ${lista.map(i=>`<tr><td>${i.nome}</td><td style="text-align:right;font-weight:600">${i.casos}</td></tr>`).join('')}</table></div>`:'';
+    out.innerHTML=`
+      <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:4px">
+        <span><b style="font-size:16px;color:var(--text)">${r.total}</b> procedimentos</span>
+        <span><b style="font-size:16px;color:var(--text)">${r.media_por_dia}</b> por dia ativo</span>
+        <span><b style="font-size:16px;color:var(--text)">${r.periodo.dias_com_casos}</b> dias com casos</span>
+        ${r.cancelados?`<span style="color:#dc2626">${r.cancelados} cancelado(s)</span>`:''}
+      </div>
+      <div style="display:flex;gap:18px;flex-wrap:wrap">
+        ${tab('Por médico',r.por_medico)}${tab('Por setor',r.por_setor)}${tab('Procedimentos mais frequentes',r.por_procedimento)}
+      </div>`;
+  }catch(e){out.innerHTML=`<span style="color:#dc2626">⚠️ ${e.message}</span>`;}
+}
+function prodCSV(){
+  const p=window._producao;if(!p)return;
+  const linhas=[['Categoria','Nome','Casos']];
+  p.dados.por_medico.forEach(i=>linhas.push(['Médico',i.nome,i.casos]));
+  p.dados.por_setor.forEach(i=>linhas.push(['Setor',i.nome,i.casos]));
+  p.dados.por_procedimento.forEach(i=>linhas.push(['Procedimento',i.nome,i.casos]));
+  const csv='\ufeff'+linhas.map(l=>l.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(';')).join('\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+  a.download=`producao_${p.de}_a_${p.ate}.csv`;a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+}
+window._cientes={meus:[],por_evento:{}};
+async function loadCientes(){
+  try{window._cientes=await api('GET','/api/eventos/cientes');}catch(e){}
+}
+function acoesMeu(e,past){
+  const meu=medicos.find(m=>m.id===me.medico_id);
+  const souEu=meu&&e.doc===meu.name;
+  const hoje=new Date().toISOString().slice(0,10);
+  if(!souEu||past)return '';
+  const jaCiente=(window._cientes.meus||[]).includes(e.id);
+  let h='';
+  h+=jaCiente
+    ? `<span title="Você confirmou" style="font-size:11px;color:var(--ok,#16a34a);font-weight:600">✓ ciente</span>`
+    : `<button class="btn sm" onclick="darCiente('${e.id}')" title="Confirmar que você viu este caso">✓ Ciente</button>`;
+  if(e.date===hoje)
+    h+=` <button class="btn sm" onclick="avisarAtraso('${e.id}')" title="Avisar atraso aos afetados"><i class="ti ti-clock-exclamation"></i></button>`;
+  return h;
+}
+async function darCiente(id){
+  try{
+    await api('POST',`/api/eventos/${id}/ciente`);
+    (window._cientes.meus=window._cientes.meus||[]).push(id);
+    toast('✓ Confirmado');renderAgenda();
+  }catch(e){toast('⚠️ '+e.message);}
+}
+async function avisarAtraso(id){
+  const min=prompt('Atraso de quantos minutos? Os colegas afetados serão avisados.','20');
+  if(min===null)return;
+  const n=parseInt(min,10);
+  if(!n||n<5){toast('Informe um número de minutos (mínimo 5).');return;}
+  try{
+    const r=await api('POST','/api/atraso',{evento_id:id,minutos:n});
+    toast(`⏱️ Aviso enviado — ${r.afetados} caso(s) podem ser afetados, ${r.avisados} pessoa(s) avisada(s).`);
+  }catch(e){toast('⚠️ '+e.message);}
+}
 async function updateStatus(id, status){
   try{
     await api('PATCH',`/api/eventos/${id}/status?status=${status}`);
@@ -3148,6 +3238,40 @@ function initWelcome(){
 document.getElementById('modal-edit').addEventListener('click',e=>{if(e.target.id==='modal-edit')closeEditModal();});
 
 // ── PWA ──────────────────────────────────────────────────
+
+// ── Modo offline: avisa e mantém a agenda utilizável ──
+window._offline=false;
+function marcarOffline(v){
+  window._offline=v;
+  let b=document.getElementById('offline-bar');
+  if(v){
+    if(!b){
+      b=document.createElement('div');b.id='offline-bar';
+      b.style.cssText='position:fixed;top:0;left:0;right:0;z-index:400;background:#f59e0b;color:#1a1a1a;'+
+        'font-size:12px;font-weight:600;text-align:center;padding:6px 10px';
+      b.textContent='📴 Sem conexão — mostrando a última agenda salva no aparelho';
+      document.body.appendChild(b);
+    }
+  }else if(b)b.remove();
+}
+window.addEventListener('online',()=>{marcarOffline(false);if(window.loadAll)loadAll();});
+window.addEventListener('offline',()=>marcarOffline(true));
+
+// ── "Ciente" acionado pela notificação (abre o app com ?ciente=ID) ──
+(function(){
+  const p=new URLSearchParams(location.search);
+  const id=p.get('ciente');
+  if(!id)return;
+  history.replaceState({},'',location.pathname);
+  const tenta=()=>{
+    if(!window.api||!window.me){setTimeout(tenta,600);return;}
+    api('POST',`/api/eventos/${id}/ciente`).then(()=>{
+      if(window.toast)toast('✓ Confirmado — obrigado!');
+      if(window.loadAll)loadAll();
+    }).catch(e=>{if(window.toast)toast('⚠️ '+e.message);});
+  };
+  setTimeout(tenta,1200);
+})();
 
 // ── Abertura: a animação é CSS; aqui só limpeza, "pular" e não repetir na sessão ──
 (function(){

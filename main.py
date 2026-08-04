@@ -2046,10 +2046,16 @@ def meus_grupos(request: Request):
     if not memberships:
         return {"grupos": [], "nome": u["nome"], "pendentes": pend_nomes}
     ids = ",".join(f'"{m["group_id"]}"' for m in memberships)
-    grupos = {g["id"]: g["name"] for g in sb_rest("GET", f"/groups?id=in.({ids})&select=id,name")}
+    try:
+        rows = sb_rest("GET", f"/groups?id=in.({ids})&select=id,name,tipo")
+    except Exception:
+        rows = sb_rest("GET", f"/groups?id=in.({ids})&select=id,name")
+    grupos = {g["id"]: g for g in rows}
     return {"nome": u["nome"],
             "grupos": [{"group_id": m["group_id"], "role": m["role"],
-                        "nome": grupos.get(m["group_id"], m["group_id"][:8])} for m in memberships],
+                        "nome": grupos.get(m["group_id"], {}).get("name", m["group_id"][:8]),
+                        "tipo": grupos.get(m["group_id"], {}).get("tipo") or "anestesia"}
+                       for m in memberships],
             "pendentes": pend_nomes}
 
 @app.post("/api/grupos/solicitar")
@@ -2306,6 +2312,7 @@ def auth_jwt_only(request: Request) -> dict:
 
 class NovoGrupo(BaseModel):
     nome: str
+    tipo: str = "anestesia"      # "anestesia" | "cirurgia"
 
 def _gerar_codigo_unico() -> str:
     """Código de acesso aleatório e inédito (8 hex maiúsculos)."""
@@ -2318,6 +2325,30 @@ def _gerar_codigo_unico() -> str:
             return codigo
     return secrets.token_hex(6).upper()
 
+
+def get_tipo_grupo(gid: str) -> str:
+    """Tipo do grupo: 'anestesia' (padrão) ou 'cirurgia'."""
+    try:
+        rows = sb_rest("GET", f"/groups?id=eq.{gid}&select=tipo")
+        t = (rows[0].get("tipo") if rows else "") or "anestesia"
+        return t if t in ("anestesia", "cirurgia") else "anestesia"
+    except Exception:
+        return "anestesia"
+
+@app.put("/api/grupos/tipo")
+def alterar_tipo_grupo(body: dict, user=Depends(auth)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Apenas administradores.")
+    tipo = (body or {}).get("tipo", "")
+    if tipo not in ("anestesia", "cirurgia"):
+        raise HTTPException(400, "Tipo inválido.")
+    gid = user.get("org_id") or user.get("group_id")
+    try:
+        sb_rest("PATCH", f"/groups?id=eq.{gid}", {"tipo": tipo})
+    except Exception:
+        raise HTTPException(500, "Coluna 'tipo' ausente em groups — rode o SQL indicado no chat.")
+    log.info(f"Grupo {gid} agora é do tipo {tipo}")
+    return {"ok": True, "tipo": tipo}
 
 @app.post("/api/grupos")
 def criar_grupo(g: NovoGrupo, request: Request):
@@ -2333,8 +2364,14 @@ def criar_grupo(g: NovoGrupo, request: Request):
             sb_rest("POST", "/profiles", {"id": u["id"], "full_name": u["nome"]})
     except Exception as e:
         log.warning(f"profiles check/insert: {e}")
-    grupo = sb_rest("POST", "/groups", {"name": nome, "created_by": u["id"],
-                                        "invite_code": _gerar_codigo_unico()})[0]
+    tipo = g.tipo if g.tipo in ("anestesia", "cirurgia") else "anestesia"
+    corpo = {"name": nome, "created_by": u["id"], "invite_code": _gerar_codigo_unico(), "tipo": tipo}
+    try:
+        grupo = sb_rest("POST", "/groups", corpo)[0]
+    except Exception as e:
+        log.warning(f"groups.tipo indisponível ({e}) — criando sem o campo")
+        corpo.pop("tipo", None)
+        grupo = sb_rest("POST", "/groups", corpo)[0]
     sb_rest("POST", "/group_members",
             {"user_id": u["id"], "group_id": grupo["id"], "role": "admin"})
     _membership_cache.pop(u["id"], None)
@@ -2398,6 +2435,7 @@ def supabase_whoami(request: Request):
             "role": ("admin" if m and m.get("role") == "admin" else "medico") if m else None,
             "group_id": m["group_id"] if m else None,
             "medico_id": medico_id,
+            "tipo_grupo": get_tipo_grupo(m["group_id"]) if m else "anestesia",
             "auth_source": "supabase", "memberships": memberships}
 
 @app.get("/api/health")

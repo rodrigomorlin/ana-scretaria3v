@@ -578,6 +578,13 @@ html,body{height:100%;background:var(--bg);color:var(--text);
       <div id="hub-criar" style="display:none;margin-bottom:14px">
         <div class="f"><label>Nome do grupo / clínica</label>
           <input id="ob-nome" placeholder="ex: Grupo de Anestesia POA" onkeydown="if(event.key==='Enter')doCreateGroup()"></div>
+        <div class="f"><label>Tipo de grupo</label>
+          <select id="ob-tipo" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:var(--rs);background:var(--surface);color:var(--text)">
+            <option value="anestesia">🩺 Anestesiologia — distribui casos entre os anestesistas</option>
+            <option value="cirurgia">🔪 Cirurgia — agenda e equipe por cirurgião</option>
+          </select>
+          <div style="font-size:10px;color:var(--hint);margin-top:4px">Isso ajusta os termos e as ferramentas do grupo. Pode ser alterado depois em Config.</div>
+        </div>
         <button class="btn-full" onclick="doCreateGroup()" id="ob-btn"><i class="ti ti-plus"></i> Criar — serei o administrador</button>
       </div>
 
@@ -798,7 +805,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 <!-- ESCALA (MedSS integrado) -->
 <div id="pescala" class="panel">
   <div class="panel-header">
-    <div class="panel-title">Escala de plantões</div>
+    <div class="panel-title" id="escala-titulo">Escala de plantões</div>
     <div class="panel-actions">
       <button class="btn sm" onclick="escalaMes(-1)"><i class="ti ti-chevron-left"></i></button>
       <span id="escala-mes-label" style="font-size:13px;font-weight:600;min-width:130px;text-align:center"></span>
@@ -859,6 +866,19 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <button class="btn primary sm" onclick="saveOrgInfo()"><i class="ti ti-check"></i> Salvar</button>
   </div>
 
+  <div class="card" id="tipo-card" style="display:none">
+    <div class="card-title"><i class="ti ti-category" style="color:var(--accent)"></i>Tipo de grupo</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Define os termos e as ferramentas: grupos de anestesia distribuem casos entre profissionais; grupos de cirurgia organizam a agenda e a equipe de cada cirurgião.</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <select id="tipo-select" style="flex:1;min-width:220px;padding:8px;border:1px solid var(--border);border-radius:var(--rs);background:var(--surface);color:var(--text)">
+        <option value="anestesia">🩺 Anestesiologia</option>
+        <option value="cirurgia">🔪 Cirurgia</option>
+      </select>
+      <button class="btn sm primary" onclick="salvarTipoGrupo()"><i class="ti ti-check"></i> Salvar</button>
+    </div>
+    <div id="tipo-info" style="font-size:11px;color:var(--hint);margin-top:6px"></div>
+  </div>
+
   <div class="card" id="gcal-pessoal-card">
     <div class="card-title"><i class="ti ti-calendar-event" style="color:var(--accent)"></i>Google Calendar</div>
     <div class="sep"><div class="sep-lbl">Meu calendário pessoal</div></div>
@@ -887,7 +907,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
   </div>
 
   <div class="card">
-    <div class="card-title"><i class="ti ti-users" style="color:var(--accent)"></i>Médicos</div>
+    <div class="card-title" id="card-medicos-title"><i class="ti ti-users" style="color:var(--accent)"></i>Médicos</div>
     <div id="doclist"></div>
     <div class="sep"><div class="sep-lbl">Adicionar</div>
       <div class="grid2" style="margin-bottom:8px">
@@ -1174,7 +1194,7 @@ async function loadAll(){
       api('GET','/api/medicos'),api('GET','/api/setores'),
       api('GET','/api/eventos'),api('GET','/api/memorias')]);
   lembrarSetores(eventos);
-  loadCientes();
+  loadCientes();aplicarTermos();
   loadNotifPrefs();loadGcalCfg();
     renderMem();renderDocList();renderSetorList();populateAgendaFilters();
     if(me?.role==='admin'){
@@ -1242,7 +1262,7 @@ async function doForgot(){
 }
 async function afterLogin(){
   const who=await api('GET','/api/supabase/whoami');
-  me={id:who.id,nome:who.nome,role:who.role,org_id:who.group_id,medico_id:who.medico_id||''};
+  me={id:who.id,nome:who.nome,role:who.role,org_id:who.group_id,medico_id:who.medico_id||'',tipo_grupo:who.tipo_grupo||'anestesia'};try{localStorage.setItem('ana-tipo',me.tipo_grupo);}catch(e){}
   await showHub();
 }
 async function showHub(){
@@ -1322,7 +1342,7 @@ function entrarGrupo(gid,role){
   groupId=gid;localStorage.setItem('ana-group',gid);
   me.org_id=gid;me.role=role==='admin'?'admin':'medico';
   me.medico_id='';                 // o vínculo de médico é por grupo — recarregado abaixo
-  api('GET','/api/supabase/whoami').then(w=>{me.medico_id=w.medico_id||'';if(window.renderAgenda)renderAgenda();}).catch(()=>{});
+  api('GET','/api/supabase/whoami').then(w=>{me.medico_id=w.medico_id||'';me.tipo_grupo=w.tipo_grupo||'anestesia';try{localStorage.setItem('ana-tipo',me.tipo_grupo);}catch(e){}aplicarTermos();if(window.renderAgenda)renderAgenda();}).catch(()=>{});
   limparEstadoChat();              // zera tela e caches do grupo anterior
   window._restaurou=restaurarEstadoChat(gid);  // se já conversou neste grupo, volta de onde parou
   document.getElementById('hub').style.display='none';
@@ -1686,7 +1706,7 @@ async function doCreateGroup(){
   if(!nome){showObErr('Digite o nome do grupo.');return;}
   const btn=document.getElementById('ob-btn');btn.disabled=true;
   try{
-    const r=await api('POST','/api/grupos',{nome});
+    const r=await api('POST','/api/grupos',{tipo:(document.getElementById('ob-tipo')||{}).value||'anestesia',nome});
     toast(`Grupo "${r.nome}" criado! Você é o administrador.`);
     document.getElementById('ob-nome').value='';
     document.getElementById('hub-criar').style.display='none';
@@ -1775,7 +1795,7 @@ function tab(n){
     const de=document.getElementById('prod-de'),ate=document.getElementById('prod-ate');
     if(de&&!de.value){const h=new Date();de.value=new Date(h.getFullYear(),h.getMonth(),1).toISOString().slice(0,10);ate.value=h.toISOString().slice(0,10);}
   }
-  if(n==='config'){[loadCorrecoes,loadGcalCfg,loadGcalPessoal,loadOrgInfo,loadPushStatus,loadCreditConfig,loadCodigoAcesso,loadMembros,loadNotifPrefs].forEach(f=>{try{Promise.resolve(f()).catch(e=>console.warn(f.name,e));}catch(e){console.warn(f.name,e);}});}
+  if(n==='config'){[loadCorrecoes,loadTipoGrupo,loadGcalCfg,loadGcalPessoal,loadOrgInfo,loadPushStatus,loadCreditConfig,loadCodigoAcesso,loadMembros,loadNotifPrefs].forEach(f=>{try{Promise.resolve(f()).catch(e=>console.warn(f.name,e));}catch(e){console.warn(f.name,e);}});}
 }
 
 // ── MEMÓRIA ──────────────────────────────────────────────
@@ -1948,10 +1968,14 @@ window._ctxCache=ctx;
     : 'nenhum tempo de deslocamento cadastrado ainda';
 
   const semMedicos = !ctx.medicos.length;
+  const ehCirurgia = tipoGrupo()==='cirurgia';
+  const contextoTipo = ehCirurgia
+    ? '\nCONTEXTO DO GRUPO: este é um grupo de CIRURGIA. Os profissionais cadastrados são CIRURGIÕES e cada caso pertence ao cirurgião que o marcou — NUNCA redistribua casos entre cirurgiões. Se pedirem para "organizar", ajude a ordenar a agenda do próprio cirurgião (sequência, horários, conflitos), não a dividir casos entre pessoas.'
+    : '\nCONTEXTO DO GRUPO: este é um grupo de ANESTESIOLOGIA. Os profissionais são intercambiáveis: qualquer anestesista pode assumir qualquer caso, por isso a distribuição automática faz sentido.';
   const semSetores = !Object.keys(ctx.setores).length;
-  const avisoInicial = (semMedicos||semSetores)
+  const avisoInicial = contextoTipo + ((semMedicos||semSetores)
     ? `\nATENÇÃO: este grupo ainda não tem ${semMedicos?'médicos':''}${semMedicos&&semSetores?' nem ':''}${semSetores?'setores':''} cadastrados. Se o usuário pedir um agendamento, explique educadamente que primeiro é preciso cadastrar ${semMedicos?'pelo menos um médico':''}${semMedicos&&semSetores?' e ':''}${semSetores?'um setor':''} em Config, antes de agendar.`
-    : '';
+    : '');
 
   const system=`Você é Ana, secretária virtual de anestesiologia. Usuário: ${me.nome}. Hoje: ${todayFull} (${today}).${avisoInicial}
 MÉDICOS: ${ctx.medicos.join(', ')||'(nenhum cadastrado ainda)'}
@@ -2313,6 +2337,30 @@ function prodCSV(){
   a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
   a.download=`producao_${p.de}_a_${p.ate}.csv`;a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+}
+// ── Termos que mudam conforme o tipo do grupo ──
+window.TERMOS={
+  anestesia:{prof:'Médico',profs:'Médicos',profPl:'anestesistas',
+             addProf:'Dr. Nome Sobrenome',escala:'Escala de plantões',
+             organiza:true,titulo:'Secretária de Anestesiologia'},
+  cirurgia:{prof:'Cirurgião',profs:'Cirurgiões',profPl:'cirurgiões',
+            addProf:'Dr. Nome Sobrenome',escala:'Escala da equipe',
+            organiza:false,titulo:'Assistente de Cirurgia'}
+};
+window.tipoGrupo=()=>((window.me&&me.tipo_grupo)||localStorage.getItem('ana-tipo')||'anestesia');
+window.T=()=>TERMOS[tipoGrupo()]||TERMOS.anestesia;
+function aplicarTermos(){
+  const t=T();
+  // título do card de profissionais (preserva o ícone)
+  const ct=document.getElementById('card-medicos-title');
+  if(ct)ct.childNodes.forEach(n=>{if(n.nodeType===3&&n.textContent.trim())n.textContent=t.profs;});
+  const esc=document.getElementById('escala-titulo');if(esc)esc.textContent=t.escala;
+  const sub=document.querySelector('.sidenav-ver');if(sub)sub.textContent=t.titulo;
+  const lsub=document.querySelector('.login-sub');if(lsub)lsub.textContent=t.titulo;
+  // rótulos do menu e da agenda
+  const nav=document.getElementById('snav-escala');
+  if(nav){const s=nav.querySelector('span');if(s)s.textContent=t.escala.split(' ')[0]==='Escala'?'Escala':s.textContent;}
+  document.title='A.N.A · '+t.titulo;
 }
 window._cientes={meus:[],por_evento:{}};
 async function loadCientes(){
@@ -2788,6 +2836,28 @@ async function criarCalendarioGrupo(){
   try{
     const r=await api('POST','/api/config/gcal/vincular',{criar:true,nome:nome||'A.N.A — Agenda do grupo'});
     toast('📆 Calendário criado e vinculado!');loadGcalCfg();
+  }catch(e){toast('⚠️ '+e.message);}
+}
+function loadTipoGrupo(){
+  const card=document.getElementById('tipo-card');
+  if(!card)return;
+  if(me?.role!=='admin'){card.style.display='none';return;}
+  card.style.display='block';
+  const sel=document.getElementById('tipo-select');
+  if(sel)sel.value=tipoGrupo();
+  const info=document.getElementById('tipo-info');
+  if(info)info.innerHTML=tipoGrupo()==='cirurgia'
+    ? 'Modo cirurgia: os termos usam "Cirurgiões" e a organização automática de escala fica oculta (ela distribui casos entre profissionais intercambiáveis).'
+    : 'Modo anestesia: organização automática de escala disponível a partir do mapa cirúrgico.';
+}
+async function salvarTipoGrupo(){
+  const tipo=document.getElementById('tipo-select').value;
+  try{
+    await api('PUT','/api/grupos/tipo',{tipo});
+    me.tipo_grupo=tipo;
+    try{localStorage.setItem('ana-tipo',tipo);}catch(e){}
+    aplicarTermos();loadTipoGrupo();
+    toast(tipo==='cirurgia'?'🔪 Grupo agora é de cirurgia.':'🩺 Grupo agora é de anestesiologia.');
   }catch(e){toast('⚠️ '+e.message);}
 }
 async function loadGcalCfg(){

@@ -1182,7 +1182,9 @@ async function loadAll(){
       api('GET','/api/eventos'),api('GET','/api/memorias')]);
   lembrarSetores(eventos);
   loadCientes();
-  loadNotifPrefs();loadGcalCfg();
+  // loadNotifPrefs() e loadGcalCfg() saíram do polling: não mudam sozinhos e já
+  // são carregados ao abrir a aba Config (evita ~30% das chamadas e o campo de
+  // calendário se resetar enquanto o admin digita).
     renderMem();renderDocList();renderSetorList();populateAgendaFilters();
     if(me?.role==='admin'){
     }
@@ -1710,7 +1712,7 @@ async function doLogout(){
   document.getElementById('login-form').style.display='block';
   document.getElementById('hub').style.display='none';
   limparEstadoChat();window._chatByGroup={};
-  if(window._loadAllTimer){clearInterval(window._loadAllTimer);window._loadAllTimer=null;}
+  pararPolling();
 }
 async function showApp(){
   document.getElementById('lwrap').style.display='none';
@@ -1728,8 +1730,28 @@ async function showApp(){
   await loadAll();loadIntStatus();
   if(!window._restaurou)initWelcome();
   window._restaurou=false;
-  if(window._loadAllTimer)clearInterval(window._loadAllTimer);
-  window._loadAllTimer=setInterval(loadAll,30000);
+  iniciarPolling();
+}
+
+// ── Polling inteligente: pausa em segundo plano, retoma ao voltar ──
+function iniciarPolling(){
+  pararPolling();
+  // só agenda o próximo ciclo se a aba estiver visível
+  window._loadAllTimer=setInterval(()=>{
+    if(document.visibilityState==='visible' && !window._offline) loadAll();
+  },30000);
+}
+function pararPolling(){
+  if(window._loadAllTimer){clearInterval(window._loadAllTimer);window._loadAllTimer=null;}
+}
+if(!window._visHooked){
+  window._visHooked=true;
+  document.addEventListener('visibilitychange',()=>{
+    // ao voltar para a aba, atualiza na hora (sem esperar os 30s)
+    if(document.visibilityState==='visible' && me && groupId && !window._offline){
+      loadAll();
+    }
+  });
 }
 async function tryAuto(){
   try{

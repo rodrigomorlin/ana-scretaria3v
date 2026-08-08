@@ -110,6 +110,22 @@ def validate_supabase_jwt(token: str) -> Optional[dict]:
         log.warning(f"JWT Supabase inválido: {type(e).__name__}: {e}")
         return None
 
+def sb_auth_admin(method: str, path: str, body=None):
+    """Chamada à API administrativa de auth do Supabase (ex: excluir usuário). Exige service role."""
+    if not SUPABASE_SERVICE_ROLE_KEY:
+        raise HTTPException(500, "SUPABASE_SERVICE_ROLE_KEY não configurada.")
+    headers = {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Content-Type": "application/json",
+    }
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(f"{SUPABASE_URL}/auth/v1{path}", data=data, headers=headers, method=method)
+    with urllib.request.urlopen(req, timeout=15) as r:
+        raw = r.read()
+        return json.loads(raw) if raw else {}
+
+
 def sb_rest(method: str, path: str, body=None, use_service_role=True, user_jwt: str = ""):
     """Chamada ao PostgREST do Supabase. path ex: '/group_members?user_id=eq.xxx&select=group_id,role'"""
     key = SUPABASE_SERVICE_ROLE_KEY if use_service_role else SUPABASE_ANON_KEY
@@ -564,11 +580,15 @@ class Evento(BaseModel):
     obs: Optional[str]=""; ai: Optional[bool]=True
     pdf_filename: Optional[str]=""; pdf_data: Optional[str]=""
     duracao_min: Optional[int]=60
+    forcar: Optional[bool]=False        # ignora aviso de conflito
+    repetir: Optional[str]=""           # ""|"diario"|"semanal"|"14dias"
+    repetir_ate: Optional[str]=""       # data final da série (YYYY-MM-DD)
 
 class EventoUpdate(BaseModel):
     doc: Optional[str]=None; setor: Optional[str]=None; proc: Optional[str]=None
     paciente: Optional[str]=None; date: Optional[str]=None; time: Optional[str]=None
     obs: Optional[str]=None; duracao_min: Optional[int]=None
+    forcar: Optional[bool]=False
 
 class Medico(BaseModel):
     id: str; name: str; spec: Optional[str]=""; email: Optional[str]=""
@@ -835,6 +855,41 @@ async def avisar_atraso(req: AtrasoRequest, bg: BackgroundTasks, user=Depends(au
     return {"ok": True, "afetados": len(afetados), "avisados": len(alvos)}
 
 # ── RELATÓRIO DE PRODUÇÃO ──────────────────────────────────
+@app.get("/api/export")
+def exportar_dados(user=Depends(auth)):
+    """Exporta todos os dados do grupo (agenda, cadastros, plantões) em JSON."""
+    gid = user.get("org_id") or user.get("group_id")
+    def puxar(tabela, campos="*"):
+        try:
+            return sb_rest("GET", f"/{tabela}?group_id=eq.{gid}&select={campos}")
+        except Exception as e:
+            log.warning(f"export {tabela}: {e}")
+            return []
+    grupo = sb_rest("GET", f"/groups?id=eq.{gid}&select=name,created_at")
+    docs = {d["id"]: d["name"] for d in puxar("doctors", "id,name")}
+    secs = {s["id"]: s["name"] for s in puxar("sectors", "id,name")}
+    aps = puxar("appointments")
+    # troca ids por nomes para o arquivo ser legível fora do sistema
+    agenda = []
+    for a in aps:
+        agenda.append({
+            "data": a.get("appointment_date"), "hora": str(a.get("appointment_time") or "")[:5],
+            "medico": docs.get(a.get("doctor_id") or "", ""), "setor": secs.get(a.get("sector_id") or "", ""),
+            "procedimento": a.get("procedure"), "paciente": a.get("patient_name"),
+            "status": a.get("status"), "observacoes": a.get("notes"),
+        })
+    agenda.sort(key=lambda x: (x["data"] or "", x["hora"] or ""))
+    return {
+        "exportado_em": datetime.now(SP_TZ).isoformat() if "SP_TZ" in globals() else datetime.now().isoformat(),
+        "grupo": (grupo[0]["name"] if grupo else gid),
+        "totais": {"agendamentos": len(agenda), "medicos": len(docs), "setores": len(secs)},
+        "agenda": agenda,
+        "medicos": [{"nome": n} for n in sorted(docs.values())],
+        "setores": [{"nome": n} for n in sorted(secs.values())],
+        "plantoes": puxar("shifts"),
+        "memorias": [m.get("content") or m.get("texto") for m in puxar("ana_memories")],
+    }
+
 @app.get("/api/relatorio/producao")
 def relatorio_producao(de: str, ate: str, user=Depends(auth)):
     gid = user.get("org_id") or user.get("group_id")
@@ -867,10 +922,130 @@ def relatorio_producao(de: str, ate: str, user=Depends(auth)):
         "por_procedimento": bloco(lambda a: (a.get("procedure") or "").strip()[:40])[:15],
     }
 
+def _hhmm_para_min(t) -> int:
+    try:
+        p = str(t or "")[:5].split(":")
+        return int(p[0]) * 60 + int(p[1])
+    except Exception:
+        return -1
+
+def checar_conflito(gid: str, doctor_id, data: str, hora: str, duracao: int = 60, excluir_id: str = ""):
+    """Devolve os casos do mesmo profissional que se sobrepõem ao intervalo informado."""
+    if not doctor_id or not data or not hora:
+        return []
+    ini = _hhmm_para_min(hora)
+    if ini < 0:
+        return []
+    fim = ini + max(15, int(duracao or 60))
+    try:
+        outros = sb_rest("GET", f"/appointments?group_id=eq.{gid}&doctor_id=eq.{doctor_id}"
+                                f"&appointment_date=eq.{data}&status=neq.cancelled"
+                                f"&select=id,appointment_time,procedure,patient_name,sector_id,duracao_min")
+    except Exception:
+        outros = sb_rest("GET", f"/appointments?group_id=eq.{gid}&doctor_id=eq.{doctor_id}"
+                                f"&appointment_date=eq.{data}&status=neq.cancelled"
+                                f"&select=id,appointment_time,procedure,patient_name,sector_id")
+    conflitos = []
+    for o in outros:
+        if excluir_id and str(o.get("id")) == str(excluir_id):
+            continue
+        oi = _hhmm_para_min(o.get("appointment_time"))
+        if oi < 0:
+            continue
+        of = oi + max(15, int(o.get("duracao_min") or 60))
+        if ini < of and oi < fim:      # sobreposição de intervalos
+            conflitos.append(o)
+    return conflitos
+
+def _descrever_conflitos(gid: str, conflitos: list) -> str:
+    secs = {}
+    try:
+        secs = {s["id"]: s["name"] for s in sb_rest("GET", f"/sectors?group_id=eq.{gid}&select=id,name")}
+    except Exception:
+        pass
+    partes = []
+    for c in conflitos[:3]:
+        h = str(c.get("appointment_time") or "")[:5]
+        sn = secs.get(c.get("sector_id") or "", "")
+        partes.append(f"{h} {c.get('procedure') or 'caso'}{(' · ' + sn) if sn else ''}"
+                      f"{(' (' + c['patient_name'] + ')') if c.get('patient_name') and c['patient_name'] != '—' else ''}")
+    return "; ".join(partes)
+
+def _datas_da_serie(inicio: str, ate: str, modo: str, limite: int = 60):
+    """Gera as datas da série a partir do modo de repetição."""
+    from datetime import date as _d, timedelta as _td
+    try:
+        d0 = _d.fromisoformat(inicio); dF = _d.fromisoformat(ate)
+    except Exception:
+        return [inicio]
+    if dF < d0:
+        return [inicio]
+    passo = {"diario": 1, "semanal": 7, "14dias": 14}.get(modo, 0)
+    if not passo:
+        return [inicio]
+    datas, atual = [], d0
+    while atual <= dF and len(datas) < limite:
+        # "diario" pula fins de semana (rotina de bloco/radioterapia)
+        if modo != "diario" or atual.weekday() < 5:
+            datas.append(atual.isoformat())
+        atual += _td(days=passo if modo != "diario" else 1)
+    return datas or [inicio]
+
 @app.post("/api/eventos")
 async def create_evento(ev: Evento, bg: BackgroundTasks, request: Request, user=Depends(auth)):
-    out = ana_data.sb_create_evento(user, ev)
     org_id = user.get("org_id", "default")
+
+    # ── rede de proteção: o mesmo profissional já tem caso nesse intervalo? ──
+    if not ev.forcar:
+        try:
+            doc_id = ana_data._find_doctor_id(org_id, ev.doc) if ev.doc else None
+            conflitos = checar_conflito(org_id, doc_id, ev.date, ev.time, ev.duracao_min or 60)
+            if conflitos:
+                raise HTTPException(409, f"⚠️ {ev.doc} já tem {len(conflitos)} caso(s) nesse horário: "
+                                         f"{_descrever_conflitos(org_id, conflitos)}. "
+                                         f"Confirme se deseja agendar mesmo assim.")
+        except HTTPException:
+            raise
+        except Exception as e:
+            log.warning(f"checagem de conflito falhou (seguindo): {e}")
+
+    # ── série (repetição) ──
+    datas = [ev.date]
+    if ev.repetir and ev.repetir_ate:
+        datas = _datas_da_serie(ev.date, ev.repetir_ate, ev.repetir)
+    if len(datas) > 1:
+        criados, pulados = [], []
+        for d in datas:
+            copia = ev.copy(update={"date": d, "repetir": "", "repetir_ate": "", "forcar": True})
+            try:
+                if not ev.forcar:
+                    doc_id = ana_data._find_doctor_id(org_id, ev.doc) if ev.doc else None
+                    if checar_conflito(org_id, doc_id, d, ev.time, ev.duracao_min or 60):
+                        pulados.append(d)
+                        continue
+                criados.append(ana_data.sb_create_evento(user, copia))
+            except Exception as e:
+                log.warning(f"série: {d} não criada — {e}")
+                pulados.append(d)
+        if not criados:
+            raise HTTPException(400, "Nenhuma data da série pôde ser criada (todas com conflito?).")
+        db_log("INFO", f"Série criada: {len(criados)} sessões de '{ev.proc}' ({datas[0]} a {datas[-1]})",
+               usuario=user["id"], org_id=org_id)
+        primeiro = criados[0]
+        if VAPID_PUBLIC_KEY:
+            try:
+                d = sb_rest("GET", f"/doctors?group_id=eq.{org_id}&active=eq.true"
+                                   f"&name=eq.{urllib.parse.quote(ev.doc)}&select=user_id") if ev.doc else []
+                alvo = d[0].get("user_id") if d else None
+                if alvo and get_notif_prefs(alvo).get("new_appointment", True):
+                    bg.add_task(push_user, alvo, "📅 Série agendada",
+                                f"{ev.proc} · {len(criados)} sessões a partir de {fmtDate(datas[0])}")
+            except Exception:
+                pass
+        return {**primeiro, "serie": True, "criados": len(criados), "pulados": len(pulados),
+                "datas": [c.get("date") or c.get("appointment_date") for c in criados]}
+
+    out = ana_data.sb_create_evento(user, ev)
     try:
         if get_user_google_token(user["id"]) or GCAL_CREDS:
             await gcal_create(ev.dict(), out.get("setor_nome") or "", criado_por_id=user["id"], org_id=org_id,
@@ -909,6 +1084,25 @@ async def delete_evento(ev_id: str, bg: BackgroundTasks, user=Depends(auth)):
 
 @app.put("/api/eventos/{ev_id}")
 async def update_evento(ev_id: str, ev: EventoUpdate, bg: BackgroundTasks, user=Depends(auth)):
+    org_id = user.get("org_id", "default")
+    if not ev.forcar and (ev.date or ev.time or ev.doc):
+        try:
+            atual = sb_rest("GET", f"/appointments?id=eq.{ev_id}&group_id=eq.{org_id}"
+                                   f"&select=doctor_id,appointment_date,appointment_time,duracao_min")
+            if atual:
+                a = atual[0]
+                doc_id = ana_data._find_doctor_id(org_id, ev.doc) if ev.doc else a.get("doctor_id")
+                data = ev.date or a.get("appointment_date")
+                hora = ev.time or str(a.get("appointment_time") or "")[:5]
+                dur = ev.duracao_min or a.get("duracao_min") or 60
+                conflitos = checar_conflito(org_id, doc_id, data, hora, dur, excluir_id=ev_id)
+                if conflitos:
+                    raise HTTPException(409, f"⚠️ Conflito de horário: {_descrever_conflitos(org_id, conflitos)}. "
+                                             f"Confirme se deseja salvar mesmo assim.")
+        except HTTPException:
+            raise
+        except Exception as e:
+            log.warning(f"conflito na edição (seguindo): {e}")
     return ana_data.sb_update_evento(user, ev_id, ev)
 
 # ── MÉDICOS ────────────────────────────────────────────────
@@ -2367,6 +2561,81 @@ def vincular_medico(uid: str, body: dict, user=Depends(auth)):
     sb_rest("PATCH", f"/doctors?id=eq.{doctor_id}", {"user_id": uid, "active": True})
     log.info(f"Médico {doc[0]['name']} vinculado ao membro {uid}")
     return {"ok": True, "medico": doc[0]["name"]}
+
+@app.delete("/api/conta")
+def excluir_minha_conta(confirmar: str = "", user=Depends(auth)):
+    """Exclui a conta do próprio usuário: vínculos, dados pessoais e o login."""
+    uid = user["id"]
+    email = (user.get("email") or "").strip().lower()
+    if (confirmar or "").strip().lower() not in ("excluir", email) or not (confirmar or "").strip():
+        raise HTTPException(400, "Confirmação necessária: digite EXCLUIR (ou seu email) para apagar a conta.")
+
+    # trava: administrador único de um grupo que ainda tem outros membros
+    try:
+        vinculos = sb_rest("GET", f"/group_members?user_id=eq.{uid}&select=group_id,role")
+    except Exception:
+        vinculos = []
+    bloqueios = []
+    for v in vinculos:
+        if v.get("role") != "admin":
+            continue
+        gid = v["group_id"]
+        admins = sb_rest("GET", f"/group_members?group_id=eq.{gid}&role=eq.admin&select=user_id")
+        membros = sb_rest("GET", f"/group_members?group_id=eq.{gid}&select=user_id")
+        if len(admins) == 1 and len(membros) > 1:
+            g = sb_rest("GET", f"/groups?id=eq.{gid}&select=name")
+            bloqueios.append(g[0]["name"] if g else gid[:8])
+    if bloqueios:
+        raise HTTPException(400, "Você é o único administrador de: " + ", ".join(bloqueios) +
+                                 ". Promova outro administrador (ou exclua esses grupos) antes de apagar sua conta.")
+
+    # solta o vínculo com cadastros de médico (preserva o histórico de agendamentos do grupo)
+    try:
+        sb_rest("PATCH", f"/doctors?user_id=eq.{uid}", {"user_id": None})
+    except Exception as e:
+        log.warning(f"excluir_conta: desvincular médico — {e}")
+
+    # remove dados pessoais do usuário
+    for tabela, campo in [("ana_push_subscriptions", "user_id"), ("ana_notification_prefs", "user_id"),
+                          ("ana_appointment_ack", "user_id"), ("ana_user_google_tokens", "user_id"),
+                          ("group_members", "user_id")]:
+        try:
+            sb_rest("DELETE", f"/{tabela}?{campo}=eq.{uid}")
+        except Exception as e:
+            log.warning(f"excluir_conta: {tabela} — {e}")
+
+    # grupos que ficaram sem ninguém são removidos junto
+    for v in vinculos:
+        gid = v["group_id"]
+        try:
+            if not sb_rest("GET", f"/group_members?group_id=eq.{gid}&select=user_id&limit=1"):
+                for t in ["appointments", "doctors", "sectors", "sector_displacements", "shifts",
+                          "ana_memories", "ana_logs", "ana_gcal_config", "credit_types"]:
+                    try:
+                        sb_rest("DELETE", f"/{t}?group_id=eq.{gid}")
+                    except Exception:
+                        pass
+                sb_rest("DELETE", f"/groups?id=eq.{gid}")
+                log.info(f"Grupo {gid} removido: ficou sem membros após exclusão de conta")
+        except Exception as e:
+            log.warning(f"excluir_conta: limpeza do grupo {gid} — {e}")
+
+    try:
+        sb_rest("DELETE", f"/profiles?id=eq.{uid}")
+    except Exception:
+        pass
+
+    # por fim, o login em si
+    try:
+        sb_auth_admin("DELETE", f"/admin/users/{uid}")
+    except Exception as e:
+        log.error(f"excluir_conta: falha ao apagar o login {uid} — {e}")
+        raise HTTPException(500, "Seus dados foram removidos, mas o login não pôde ser apagado. "
+                                 "Contate o administrador do sistema.")
+
+    _membership_cache.pop(uid, None)
+    log.warning(f"CONTA EXCLUÍDA: {email or uid}")
+    return {"ok": True}
 
 @app.post("/api/grupos/sair")
 def sair_grupo(user=Depends(auth)):

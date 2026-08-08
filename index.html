@@ -954,6 +954,21 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <div style="font-size:10px;color:var(--hint);margin-top:8px">Os usuários que solicitarem entrada precisarão da sua aprovação antes de acessar o grupo.</div>
   </div>
 
+  <div class="card" id="export-card" style="display:none">
+    <div class="card-title"><i class="ti ti-download" style="color:var(--accent)"></i>Exportar dados do grupo</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Baixe uma cópia completa da agenda, cadastros, plantões e memórias — para backup ou para levar os dados a outro sistema.</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn sm" onclick="exportarDados('json')"><i class="ti ti-file-code"></i> JSON completo</button>
+      <button class="btn sm" onclick="exportarDados('csv')"><i class="ti ti-file-spreadsheet"></i> Agenda em CSV</button>
+    </div>
+  </div>
+
+  <div class="card" id="conta-card" style="border-color:#fecaca">
+    <div class="card-title" style="color:#dc2626"><i class="ti ti-user-x"></i> Minha conta</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Excluir sua conta remove seu acesso, suas notificações e sua conexão com o Google. Os agendamentos que você criou permanecem no histórico do grupo. Esta ação é <b>permanente</b>.</div>
+    <button class="btn danger sm" onclick="excluirConta()"><i class="ti ti-user-x"></i> Excluir minha conta</button>
+  </div>
+
   <div class="card" id="perigo-card" style="display:none;border-color:#fca5a5">
     <div class="card-title" style="color:#dc2626"><i class="ti ti-alert-triangle"></i> Zona de perigo</div>
     <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Excluir o grupo remove <b>permanentemente</b> todos os agendamentos, médicos, setores, plantões e memórias. Esta ação não pode ser desfeita.</div>
@@ -1885,6 +1900,8 @@ function hideTyp(){document.getElementById('typ').style.display='none';}
 function send(){
   const inp=document.getElementById('minp');const txt=inp.value.trim();const pdf=pdfData;
   if(!txt&&!pdf)return;rmPDF();inp.value='';
+  // Sugestão "repetir em série": fluxo direto, sem passar pela IA
+  if(txt==='🔁 Repetir em série'){criarSerie();return;}
   // Confirmação da distribuição: agenda DIRETO da tabela calculada (caminho determinístico, sem IA)
   if(/^agendar tudo conforme a distribui/i.test(txt)&&window._ultimaDistrib?.tabela?.length){
     addMsg(txt,'user');showTyp();
@@ -1892,7 +1909,7 @@ function send(){
       const dist=window._ultimaDistrib;const okL=[],falhas=[];
       for(const r of dist.tabela){
         try{
-          const saved=await api('POST','/api/eventos',{doc:r.medico,setor:r.setor,proc:r.proc,paciente:r.paciente||'',date:r.data||dist.data,time:r.hora,obs:r.obs||'',ai:true});
+          const saved=await criarEvento({doc:r.medico,setor:r.setor,proc:r.proc,paciente:r.paciente||'',date:r.data||dist.data,time:r.hora,obs:r.obs||'',ai:true,forcar:true});
           eventos.push(saved);lembrarSetores([saved]);
           okL.push(`${r.hora} ${r.proc} — ${r.medico}`);
         }catch(e){falhas.push(`${r.hora} ${r.proc} (${r.medico}): ${e.message}`);}
@@ -2136,7 +2153,7 @@ RETORNE APENAS JSON sem markdown:
       try{
         const payload={...ev,ai:true};
         if(pdf){payload.pdf_filename=pdf.name;payload.pdf_data=pdf.b64;}
-        const saved=await api('POST','/api/eventos',payload);eventos.push(saved);lembrarSetores([saved]);
+        const saved=await criarEvento(payload);eventos.push(saved);lembrarSetores([saved]);window._ultimoEvento=ev;
         const s=getS(ev.setor);const bc=BADGE[ev.setor]||'';
         let html=pdf?'📄 <b>PDF lido!</b><br>':'✅ <b>Agendado!</b><br>';
         if(saved.aviso){
@@ -2147,7 +2164,7 @@ RETORNE APENAS JSON sem markdown:
           html+=`<div style="${style}">${saved.aviso}</div>`;
         }
         html+=`<div class="ev-card"><div class="ev-row"><i class="ti ti-calendar"></i><b>${fmtD(ev.date)}</b> às <b>${ev.time}</b></div><div class="ev-row"><i class="ti ti-building-hospital"></i><span class="ev-tag ${bc}">${s.name}</span></div><div class="ev-row"><i class="ti ti-clipboard-list"></i>${ev.proc}</div><div class="ev-row"><i class="ti ti-user"></i>${ev.paciente||'—'}</div><div class="ev-row"><i class="ti ti-stethoscope"></i>${ev.doc}</div>${ev.obs?`<div class="ev-row"><i class="ti ti-notes"></i><span style="font-size:11px">${ev.obs}</span></div>`:''}${pdf?`<div class="ev-row"><i class="ti ti-paperclip"></i><span style="font-size:11px">${pdf.name} anexado</span></div>`:''}</div>`;
-        addMsg(html,'bot',{feedback:true,sug,eventoContext:saved,origTxt:txt});
+        addMsg(html,'bot',{feedback:true,sug:[...(sug||[]),'🔁 Repetir em série'],eventoContext:saved,origTxt:txt});
         const same=eventos.filter(e=>e.setor===ev.setor&&e.proc?.split(' ')[0]===ev.proc?.split(' ')[0]);
         if(same.length>=3)addMem(`"${ev.proc.split('—')[0].trim()}" frequente no ${s.name}`,'ti-star');
       }catch(e){addMsg(`⚠️ ${e.message}`,'bot',{sug});}
@@ -2162,9 +2179,10 @@ RETORNE APENAS JSON sem markdown:
         try{
           const payload={...ev,ai:true};
           if(pdf&&agendados.length===0){payload.pdf_filename=pdf.name;payload.pdf_data=pdf.b64;}
-          const saved=await api('POST','/api/eventos',payload);
+          const saved=await criarEvento(payload,{silencioso:true});
           eventos.push(saved);agendados.push(saved);
-        }catch(e){erros.push(`${ev.paciente||ev.proc}: ${e.message}`);}
+        }catch(e){ if(e.conflito) conflitos.push(`${ev.paciente||ev.proc} (${ev.time}) — ${e.message.replace('⚠️ ','')}`);
+                   else erros.push(`${ev.paciente||ev.proc}: ${e.message}`); }
       }
       // Monta resumo visual
       let html=p.resposta?`${p.resposta}<br><br>`:'';
@@ -2342,6 +2360,39 @@ function prodCSV(){
   a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
   a.download=`producao_${p.de}_a_${p.ate}.csv`;a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+}
+// ── Criação de evento com rede de proteção contra conflito de horário ──
+async function criarEvento(payload,{silencioso=false}={}){
+  try{
+    return await api('POST','/api/eventos',payload);
+  }catch(e){
+    const msg=String(e.message||'');
+    const ehConflito=msg.includes('já tem')&&msg.includes('horário')||msg.includes('Conflito de horário');
+    if(!ehConflito)throw e;
+    if(silencioso){const err=new Error(msg);err.conflito=true;throw err;}
+    if(!confirm(msg+'\n\nAgendar mesmo assim?'))
+      {const err=new Error('Agendamento cancelado por conflito de horário.');err.cancelado=true;throw err;}
+    return await api('POST','/api/eventos',{...payload,forcar:true});
+  }
+}
+// ── Série: repete o último agendamento até uma data ──
+async function criarSerie(){
+  const ev=window._ultimoEvento;
+  if(!ev){toast('Agende um caso primeiro.');return;}
+  const modo=prompt('Repetir como?\n\n1 = todo dia útil\n2 = toda semana (mesmo dia)\n3 = a cada 14 dias\n\nDigite 1, 2 ou 3:','2');
+  if(modo===null)return;
+  const mapa={'1':'diario','2':'semanal','3':'14dias'};
+  const rep=mapa[String(modo).trim()];
+  if(!rep){toast('Opção inválida.');return;}
+  const ate=prompt('Repetir até que data? (AAAA-MM-DD)','');
+  if(ate===null||!/^\d{4}-\d{2}-\d{2}$/.test((ate||'').trim())){if(ate!==null)toast('Data inválida — use AAAA-MM-DD.');return;}
+  try{
+    const r=await api('POST','/api/eventos',{doc:ev.doc,setor:ev.setor,proc:ev.proc,paciente:ev.paciente||'',
+      date:ev.date,time:ev.time,obs:ev.obs||'',ai:false,repetir:rep,repetir_ate:ate.trim()});
+    const extra=r.pulados?` (${r.pulados} pulada(s) por conflito)`:'';
+    addMsg(`🔁 <b>Série criada:</b> ${r.criados} sessões de ${ev.proc}${extra}.`,'bot');
+    await loadAll();
+  }catch(e){toast('⚠️ '+e.message);}
 }
 window._cientes={meus:[],por_evento:{}};
 async function loadCientes(){
@@ -2772,6 +2823,38 @@ function escolherEndereco(i){
   box.innerHTML=`<span style="font-size:11px;color:var(--ok,#16a34a)">✓ ${s.nome}</span>`;
   setTimeout(()=>{box.style.display='none'},2500);
 }
+async function excluirConta(){
+  if(!confirm('⚠️ Excluir sua conta é PERMANENTE.\n\nVocê perderá o acesso a todos os grupos. Recomendamos exportar seus dados antes.\n\nDeseja continuar?'))return;
+  const c=prompt('Para confirmar, digite EXCLUIR (ou seu email):');
+  if(c===null)return;
+  try{
+    await api('DELETE',`/api/conta?confirmar=${encodeURIComponent(c.trim())}`);
+    alert('Sua conta foi excluída. Até logo!');
+    try{localStorage.clear();sessionStorage.clear();}catch(e){}
+    if(sb&&sb.auth)try{await sb.auth.signOut();}catch(e){}
+    location.href='/';
+  }catch(e){toast('⚠️ '+e.message);}
+}
+async function exportarDados(formato){
+  try{
+    toast('Preparando exportação…');
+    const d=await api('GET','/api/export');
+    const hoje=new Date().toISOString().slice(0,10);
+    const nomeGrupo=(d.grupo||'grupo').replace(/[^\w\-]+/g,'_');
+    let blob,nome;
+    if(formato==='csv'){
+      const cab=['Data','Hora','Médico','Setor','Procedimento','Paciente','Status','Observações'];
+      const linhas=[cab].concat((d.agenda||[]).map(a=>[a.data,a.hora,a.medico,a.setor,a.procedimento,a.paciente,a.status,a.observacoes||'']));
+      const csv='\ufeff'+linhas.map(l=>l.map(c=>`"${String(c==null?'':c).replace(/"/g,'""')}"`).join(';')).join('\n');
+      blob=new Blob([csv],{type:'text/csv;charset=utf-8'});nome=`ana_agenda_${nomeGrupo}_${hoje}.csv`;
+    }else{
+      blob=new Blob([JSON.stringify(d,null,2)],{type:'application/json'});nome=`ana_backup_${nomeGrupo}_${hoje}.json`;
+    }
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=nome;a.click();
+    setTimeout(()=>URL.revokeObjectURL(a.href),3000);
+    toast(`✅ ${d.totais.agendamentos} agendamentos exportados.`);
+  }catch(e){toast('⚠️ '+e.message);}
+}
 async function excluirGrupo(){
   const nome=(me&&me.grupoNome)||(document.querySelector('#hub-lista .grupo-nome-atual')||{}).textContent||'';
   const alvo=prompt('⚠️ Isto apaga TUDO deste grupo, sem volta.\n\nPara confirmar, digite o NOME EXATO do grupo:');
@@ -3028,8 +3111,10 @@ async function loadCodigoAcesso(){
   const card=document.getElementById('codigo-card');
   if(!card)return;
   const perigo=document.getElementById('perigo-card');
-  if(me?.role!=='admin'){card.style.display='none';if(perigo)perigo.style.display='none';return;}
+  const exp=document.getElementById('export-card');
+  if(me?.role!=='admin'){card.style.display='none';if(perigo)perigo.style.display='none';if(exp)exp.style.display='none';return;}
   if(perigo)perigo.style.display='block';
+  if(exp)exp.style.display='block';
   try{
     const r=await api('GET','/api/grupos/codigo');
     if(r.codigo){card.style.display='block';document.getElementById('codigo-valor').textContent=r.codigo;}

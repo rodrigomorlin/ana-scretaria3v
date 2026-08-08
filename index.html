@@ -2913,12 +2913,19 @@ async function alterarEmail(){
   }catch(e){toast('⚠️ '+e.message);}
 }
 async function excluirConta(){
-  if(!confirm('⚠️ Excluir sua conta é PERMANENTE.\n\nVocê perderá o acesso a todos os grupos. Recomendamos exportar seus dados antes.\n\nDeseja continuar?'))return;
+  // avisa sobre a sucessão nos grupos em que a pessoa é admin
+  let aviso='⚠️ Excluir sua conta é PERMANENTE.\n\nVocê perderá o acesso a todos os grupos. Recomendamos exportar seus dados antes.';
+  try{
+    const p=await api('GET','/api/perfil');
+    const adm=(p.grupos||[]).filter(g=>g.papel==='admin').map(g=>g.nome);
+    if(adm.length)aviso+=`\n\n👑 Você administra: ${adm.join(', ')}.\nSe for o único administrador, a administração passa automaticamente ao integrante mais antigo do grupo, que será avisado.`;
+  }catch(e){}
+  if(!confirm(aviso+'\n\nDeseja continuar?'))return;
   const c=prompt('Para confirmar, digite EXCLUIR (ou seu email):');
   if(c===null)return;
   try{
-    await api('DELETE',`/api/conta?confirmar=${encodeURIComponent(c.trim())}`);
-    alert('Sua conta foi excluída. Até logo!');
+    const r=await api('DELETE',`/api/conta?confirmar=${encodeURIComponent(c.trim())}`);
+    alert('Sua conta foi excluída. Até logo!'+((r&&r.sucessoes&&r.sucessoes.length)?`\n\nA administração de ${r.sucessoes.join(', ')} foi transferida ao integrante mais antigo.`:''));
     try{localStorage.clear();sessionStorage.clear();}catch(e){}
     if(sb&&sb.auth)try{await sb.auth.signOut();}catch(e){}
     location.href='/';
@@ -3229,11 +3236,23 @@ async function loadMembros(){
         <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
           <span style="font-size:9px;background:${m.role==='admin'?'var(--text)':'var(--faint)'};color:${m.role==='admin'?'var(--surface)':'var(--muted)'};border-radius:10px;padding:2px 8px">${m.role==='admin'?'👑 Admin':'Membro'}</span>
           ${me.role==='admin'&&!m.medico?`<select onchange="vincularMedico('${m.user_id}',this.value)" style="font-size:10px;padding:3px 6px;border:1px solid var(--border);border-radius:6px;background:var(--surface);color:var(--text);max-width:130px"><option value="">🩺 Vincular…</option>${(medicos||[]).filter(d=>!d.vinculado).map(d=>`<option value="${d.id}">${d.name}</option>`).join('')}<option value="novo">➕ Criar novo médico</option></select>`:''}
+          ${me.role==='admin'&&!m.sou_eu?`<button class="btn sm" title="${m.role==='admin'?'Rebaixar a membro':'Promover a administrador'}" onclick="alterarPapel('${m.user_id}','${m.nome.replace(/'/g,"\\'")}','${m.role==='admin'?'medico':'admin'}')"><i class="ti ti-${m.role==='admin'?'arrow-down':'crown'}"></i></button>`:''}
           ${me.role==='admin'&&!m.sou_eu?`<button class="btn danger sm" title="Remover do grupo" onclick="removerMembro('${m.user_id}','${m.nome.replace(/'/g,"\\'")}')"><i class="ti ti-user-minus"></i></button>`:''}
         </span>
       </div>`).join('');
     loadSolicitacoes();
   }catch{card.style.display='none';}
+}
+async function alterarPapel(uid,nome,papel){
+  const txt=papel==='admin'
+    ? `Promover ${nome} a administrador?\n\nEle poderá aprovar entradas, gerenciar médicos, setores e configurações do grupo.`
+    : `Rebaixar ${nome} a membro comum?`;
+  if(!confirm(txt))return;
+  try{
+    await api('PUT',`/api/grupos/membros/${uid}/papel`,{papel});
+    toast(papel==='admin'?`👑 ${nome} agora é administrador.`:`${nome} voltou a ser membro.`);
+    loadMembros();
+  }catch(e){toast('⚠️ '+e.message);}
 }
 async function vincularMedico(uid,docId){
   if(!docId)return;

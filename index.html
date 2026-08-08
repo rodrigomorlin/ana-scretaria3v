@@ -448,6 +448,44 @@ html,body{height:100%;background:var(--bg);color:var(--text);
 <div class="drop-ov" id="dov"><i class="ti ti-file-text" style="font-size:46px;color:var(--accent)"></i><div style="font-size:15px;font-weight:500;color:var(--accent)">Solte o PDF aqui</div></div>
 
 <!-- LOGIN -->
+<div class="modal-bg" id="conta-modal">
+<div class="modal">
+  <h3><i class="ti ti-user-cog" style="color:var(--accent)"></i>Minha conta</h3>
+
+  <div class="sep"><div class="sep-lbl">Dados pessoais</div></div>
+  <div class="fl" style="margin-bottom:8px"><label>Nome completo</label><input id="pf-nome" placeholder="Dr. Nome Sobrenome"></div>
+  <div class="grid2" style="margin-bottom:8px">
+    <div class="fl"><label>Telefone</label><input id="pf-tel" placeholder="(51) 90000-0000"></div>
+    <div class="fl"><label>CRM</label><input id="pf-crm" placeholder="12345"></div>
+  </div>
+  <div class="fl" style="margin-bottom:8px"><label>Especialidade</label><input id="pf-esp" placeholder="ex: Anestesiologia"></div>
+  <div id="pf-info" style="font-size:11px;color:var(--hint);margin-bottom:10px"></div>
+  <button class="btn primary sm" onclick="salvarPerfil()"><i class="ti ti-device-floppy"></i> Salvar dados</button>
+
+  <div class="sep" style="margin-top:18px"><div class="sep-lbl">Acesso</div></div>
+  <div class="fl" style="margin-bottom:4px"><label>Email de acesso</label>
+    <div style="display:flex;gap:8px"><input id="pf-email" placeholder="voce@exemplo.com" style="flex:1">
+      <button class="btn sm" onclick="alterarEmail()">Alterar</button></div>
+  </div>
+  <div style="font-size:10px;color:var(--hint);margin-bottom:10px">Trocar o email exige confirmação na caixa de entrada nova.</div>
+  <div class="fl" style="margin-bottom:10px"><label>Nova senha</label>
+    <div style="display:flex;gap:8px"><input type="password" id="pf-senha" placeholder="mínimo 6 caracteres" style="flex:1">
+      <button class="btn sm" onclick="alterarSenha()">Trocar</button></div>
+  </div>
+
+  <div class="sep" style="margin-top:14px"><div class="sep-lbl">Meus grupos</div></div>
+  <div id="pf-grupos" style="font-size:12px;color:var(--muted);margin-bottom:10px"></div>
+
+  <div class="sep" style="margin-top:14px"><div class="sep-lbl" style="color:#dc2626">Excluir conta</div></div>
+  <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Remove seu acesso, notificações e conexões. Os agendamentos que você criou permanecem no histórico do grupo. Permanente.</div>
+  <button class="btn danger sm" onclick="excluirConta()"><i class="ti ti-user-x"></i> Excluir minha conta</button>
+
+  <div style="display:flex;gap:8px;margin-top:16px">
+    <button class="btn" style="flex:1" onclick="fecharConta()">Fechar</button>
+  </div>
+</div>
+</div>
+
 <div class="login-wrap" id="lwrap">
   <div class="login-card">
     <div class="login-logo" style="background:transparent;padding:0"><svg xmlns="http://www.w3.org/2000/svg" viewBox="-205 -205 410 410" style="width:100%;height:100%">
@@ -569,6 +607,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <div id="hub" style="display:none">
       <div style="text-align:center;margin-bottom:14px">
         <div style="font-size:13px;color:var(--muted)" id="hub-ola"></div>
+        <button class="btn sm" style="margin-top:8px" onclick="abrirConta()"><i class="ti ti-user-cog"></i> Minha conta</button>
       </div>
       <div style="display:flex;gap:8px;margin-bottom:14px">
         <button class="btn-full" style="flex:1" onclick="hubShow('criar')"><i class="ti ti-plus"></i> Criar Grupo</button>
@@ -717,7 +756,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <div class="sidenav-user">
       <div class="user-avatar" id="user-avatar">?</div>
       <div><div class="user-name" id="uname">—</div><div class="user-role" id="urole">—</div></div>
-      <button class="sidenav-logout" onclick="voltarGrupos()" title="Trocar de grupo"><i class="ti ti-users"></i></button>
+      <button class="sidenav-logout" onclick="abrirConta()" title="Minha conta"><i class="ti ti-user-cog"></i></button><button class="sidenav-logout" onclick="voltarGrupos()" title="Trocar de grupo"><i class="ti ti-users"></i></button>
       <button class="sidenav-logout" onclick="doLogout()" title="Sair" style="margin-left:4px"><i class="ti ti-logout"></i></button>
       <button class="sidenav-logout" id="dark-toggle" onclick="toggleDark()" title="Alternar tema" style="margin-left:4px"><i class="ti ti-moon"></i></button>
     </div>
@@ -954,28 +993,7 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <div style="font-size:10px;color:var(--hint);margin-top:8px">Os usuários que solicitarem entrada precisarão da sua aprovação antes de acessar o grupo.</div>
   </div>
 
-  <div class="card" id="export-card" style="display:none">
-    <div class="card-title"><i class="ti ti-download" style="color:var(--accent)"></i>Exportar dados do grupo</div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Baixe uma cópia completa da agenda, cadastros, plantões e memórias — para backup ou para levar os dados a outro sistema.</div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
-      <button class="btn sm" onclick="exportarDados('json')"><i class="ti ti-file-code"></i> JSON completo</button>
-      <button class="btn sm" onclick="exportarDados('csv')"><i class="ti ti-file-spreadsheet"></i> Agenda em CSV</button>
-    </div>
-  </div>
-
-  <div class="card" id="conta-card" style="border-color:#fecaca">
-    <div class="card-title" style="color:#dc2626"><i class="ti ti-user-x"></i> Minha conta</div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Excluir sua conta remove seu acesso, suas notificações e sua conexão com o Google. Os agendamentos que você criou permanecem no histórico do grupo. Esta ação é <b>permanente</b>.</div>
-    <button class="btn danger sm" onclick="excluirConta()"><i class="ti ti-user-x"></i> Excluir minha conta</button>
-  </div>
-
-  <div class="card" id="perigo-card" style="display:none;border-color:#fca5a5">
-    <div class="card-title" style="color:#dc2626"><i class="ti ti-alert-triangle"></i> Zona de perigo</div>
-    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Excluir o grupo remove <b>permanentemente</b> todos os agendamentos, médicos, setores, plantões e memórias. Esta ação não pode ser desfeita.</div>
-    <button class="btn danger sm" onclick="excluirGrupo()"><i class="ti ti-trash"></i> Excluir este grupo</button>
-  </div>
-
-    <div class="card" id="membros-card" style="display:none">
+  <div class="card" id="membros-card" style="display:none">
     <div class="card-title"><i class="ti ti-users-group"></i> Integrantes do grupo <span id="membros-count" style="font-size:10px;color:var(--hint);font-weight:400;margin-left:4px"></span></div>
     <div id="sol-wrap" style="display:none;margin-bottom:12px">
       <div style="font-size:10px;font-weight:700;letter-spacing:.5px;color:var(--warn-text);margin-bottom:6px"><i class="ti ti-hourglass"></i> SOLICITAÇÕES PENDENTES <span id="sol-badge" style="background:var(--err);color:#fff;border-radius:10px;font-size:10px;padding:1px 7px;font-weight:600"></span></div>
@@ -1025,6 +1043,22 @@ html,body{height:100%;background:var(--bg);color:var(--text);
     <div style="margin-top:6px"><button class="btn primary sm" onclick="saveCreditConfig()"><i class="ti ti-device-floppy"></i> Salvar Configurações</button></div>
   </div>
 
+  <div class="card" id="export-card" style="display:none">
+    <div class="card-title"><i class="ti ti-download" style="color:var(--accent)"></i>Exportar dados do grupo</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Baixe uma cópia completa da agenda, cadastros, plantões e memórias — para backup ou para levar os dados a outro sistema.</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn sm" onclick="exportarDados('json')"><i class="ti ti-file-code"></i> JSON completo</button>
+      <button class="btn sm" onclick="exportarDados('csv')"><i class="ti ti-file-spreadsheet"></i> Agenda em CSV</button>
+    </div>
+  </div>
+
+  <div class="card" id="perigo-card" style="display:none;border-color:#fca5a5">
+    <div class="card-title" style="color:#dc2626"><i class="ti ti-alert-triangle"></i> Zona de perigo</div>
+    <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Excluir o grupo remove <b>permanentemente</b> todos os agendamentos, médicos, setores, plantões e memórias. Esta ação não pode ser desfeita.</div>
+    <button class="btn danger sm" onclick="excluirGrupo()"><i class="ti ti-trash"></i> Excluir este grupo</button>
+  </div>
+
+  
 <!-- LOGS -->
 <div id="plogs" class="panel">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.9rem">
@@ -2822,6 +2856,61 @@ function escolherEndereco(i){
   const box=document.getElementById('nsend-sugestoes');
   box.innerHTML=`<span style="font-size:11px;color:var(--ok,#16a34a)">✓ ${s.nome}</span>`;
   setTimeout(()=>{box.style.display='none'},2500);
+}
+// ── Minha conta: dados, senha, email ──
+function fecharConta(){document.getElementById('conta-modal').style.display='none';}
+async function abrirConta(){
+  const m=document.getElementById('conta-modal');
+  m.style.display='flex';
+  document.getElementById('pf-info').textContent='Carregando…';
+  try{
+    const p=await api('GET','/api/perfil');
+    document.getElementById('pf-nome').value=p.nome||'';
+    document.getElementById('pf-tel').value=p.telefone||'';
+    document.getElementById('pf-crm').value=p.crm||'';
+    document.getElementById('pf-esp').value=p.especialidade||'';
+    document.getElementById('pf-email').value=p.email||'';
+    document.getElementById('pf-info').innerHTML=p.vinculado_como
+      ? `🩺 Vinculado ao cadastro de médico <b>${p.vinculado_como}</b> — alterar seu nome aqui atualiza a agenda do grupo.`
+      : 'Você ainda não está vinculado a um cadastro de médico neste grupo.';
+    document.getElementById('pf-grupos').innerHTML=(p.grupos||[]).length
+      ? p.grupos.map(g=>`• ${g.nome} <span style="color:var(--hint)">(${g.papel==='admin'?'administrador':'membro'})</span>`).join('<br>')
+      : 'Você ainda não participa de nenhum grupo.';
+  }catch(e){document.getElementById('pf-info').innerHTML=`<span style="color:#dc2626">⚠️ ${e.message}</span>`;}
+}
+async function salvarPerfil(){
+  const nome=document.getElementById('pf-nome').value.trim();
+  if(nome.length<2){toast('Informe seu nome completo.');return;}
+  try{
+    await api('PUT','/api/perfil',{nome,telefone:document.getElementById('pf-tel').value.trim(),
+      crm:document.getElementById('pf-crm').value.trim(),especialidade:document.getElementById('pf-esp').value.trim()});
+    if(window.me)me.nome=nome;
+    const un=document.getElementById('uname');if(un)un.textContent=nome;
+    toast('✅ Dados atualizados.');
+    if(window.loadAll)loadAll();
+  }catch(e){toast('⚠️ '+e.message);}
+}
+async function alterarSenha(){
+  const s=document.getElementById('pf-senha').value;
+  if(!s||s.length<6){toast('A senha precisa ter ao menos 6 caracteres.');return;}
+  if(!sb||!sb.auth){toast('Sessão indisponível — entre novamente.');return;}
+  try{
+    const {error}=await sb.auth.updateUser({password:s});
+    if(error)throw new Error(error.message);
+    document.getElementById('pf-senha').value='';
+    toast('🔐 Senha alterada.');
+  }catch(e){toast('⚠️ '+e.message);}
+}
+async function alterarEmail(){
+  const novo=document.getElementById('pf-email').value.trim();
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(novo)){toast('Informe um email válido.');return;}
+  if(!confirm(`Alterar o email de acesso para ${novo}?\n\nVocê receberá um link de confirmação no email NOVO. Até confirmar, continue entrando com o atual.`))return;
+  if(!sb||!sb.auth){toast('Sessão indisponível — entre novamente.');return;}
+  try{
+    const {error}=await sb.auth.updateUser({email:novo});
+    if(error)throw new Error(error.message);
+    toast('📧 Confirme o link enviado ao novo email.');
+  }catch(e){toast('⚠️ '+e.message);}
 }
 async function excluirConta(){
   if(!confirm('⚠️ Excluir sua conta é PERMANENTE.\n\nVocê perderá o acesso a todos os grupos. Recomendamos exportar seus dados antes.\n\nDeseja continuar?'))return;

@@ -2562,6 +2562,104 @@ def vincular_medico(uid: str, body: dict, user=Depends(auth)):
     log.info(f"Médico {doc[0]['name']} vinculado ao membro {uid}")
     return {"ok": True, "medico": doc[0]["name"]}
 
+class PerfilUpdate(BaseModel):
+    nome: Optional[str] = None
+    telefone: Optional[str] = None
+    especialidade: Optional[str] = None
+    crm: Optional[str] = None
+
+@app.get("/api/perfil")
+def ler_perfil(user=Depends(auth)):
+    """Dados da conta do próprio usuário (perfil + cadastro de médico vinculado no grupo atual)."""
+    uid = user["id"]
+    gid = user.get("org_id") or user.get("group_id")
+    perfil = {}
+    try:
+        rows = sb_rest("GET", f"/profiles?id=eq.{uid}&select=full_name,email,phone,crm")
+        perfil = rows[0] if rows else {}
+    except Exception:
+        try:
+            rows = sb_rest("GET", f"/profiles?id=eq.{uid}&select=full_name,email")
+            perfil = rows[0] if rows else {}
+        except Exception as e:
+            log.warning(f"ler_perfil: {e}")
+    medico = {}
+    if gid:
+        try:
+            d = sb_rest("GET", f"/doctors?group_id=eq.{gid}&user_id=eq.{uid}&select=id,name,specialty,phone")
+            medico = d[0] if d else {}
+        except Exception:
+            pass
+    grupos = []
+    try:
+        vin = sb_rest("GET", f"/group_members?user_id=eq.{uid}&select=group_id,role")
+        if vin:
+            ids = ",".join(f'"{v["group_id"]}"' for v in vin)
+            nomes = {g["id"]: g["name"] for g in sb_rest("GET", f"/groups?id=in.({ids})&select=id,name")}
+            grupos = [{"nome": nomes.get(v["group_id"], "—"), "papel": v["role"]} for v in vin]
+    except Exception:
+        pass
+    return {
+        "nome": perfil.get("full_name") or user.get("nome", ""),
+        "email": perfil.get("email") or user.get("email", ""),
+        "telefone": perfil.get("phone") or medico.get("phone") or "",
+        "crm": perfil.get("crm") or "",
+        "especialidade": medico.get("specialty") or "",
+        "vinculado_como": medico.get("name") or "",
+        "grupos": grupos,
+    }
+
+@app.put("/api/perfil")
+def salvar_perfil(p: PerfilUpdate, user=Depends(auth)):
+    uid = user["id"]
+    gid = user.get("org_id") or user.get("group_id")
+    nome = (p.nome or "").strip()
+    if p.nome is not None and len(nome) < 2:
+        raise HTTPException(400, "Informe um nome com pelo menos 2 caracteres.")
+
+    campos = {}
+    if p.nome is not None: campos["full_name"] = nome
+    if p.telefone is not None: campos["phone"] = p.telefone.strip()
+    if p.crm is not None: campos["crm"] = p.crm.strip()
+    if campos:
+        try:
+            if sb_rest("GET", f"/profiles?id=eq.{uid}&select=id"):
+                sb_rest("PATCH", f"/profiles?id=eq.{uid}", campos)
+            else:
+                sb_rest("POST", "/profiles", {"id": uid, "email": user.get("email", ""), **campos})
+        except Exception as e:
+            # colunas opcionais (phone/crm) podem não existir ainda
+            log.warning(f"salvar_perfil (tentando só o nome): {e}")
+            if "full_name" in campos:
+                try:
+                    sb_rest("PATCH", f"/profiles?id=eq.{uid}", {"full_name": campos["full_name"]})
+                except Exception as e2:
+                    raise HTTPException(500, f"Não consegui salvar o perfil: {e2}")
+
+    # reflete no cadastro de médico do grupo atual (nome, especialidade, telefone)
+    if gid:
+        try:
+            d = sb_rest("GET", f"/doctors?group_id=eq.{gid}&user_id=eq.{uid}&select=id")
+            if d:
+                med = {}
+                if nome: med["name"] = nome
+                if p.especialidade is not None: med["specialty"] = p.especialidade.strip()
+                if p.telefone is not None: med["phone"] = p.telefone.strip()
+                if med:
+                    sb_rest("PATCH", f"/doctors?id=eq.{d[0]['id']}", med)
+        except Exception as e:
+            log.warning(f"salvar_perfil (médico): {e}")
+
+    # mantém o nome também nos metadados do login
+    try:
+        if nome:
+            sb_auth_admin("PUT", f"/admin/users/{uid}", {"user_metadata": {"full_name": nome}})
+    except Exception as e:
+        log.warning(f"salvar_perfil (auth metadata): {e}")
+
+    _membership_cache.pop(uid, None)
+    return {"ok": True}
+
 @app.delete("/api/conta")
 def excluir_minha_conta(confirmar: str = "", user=Depends(auth)):
     """Exclui a conta do próprio usuário: vínculos, dados pessoais e o login."""

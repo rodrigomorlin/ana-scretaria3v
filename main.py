@@ -2562,6 +2562,46 @@ def vincular_medico(uid: str, body: dict, user=Depends(auth)):
     log.info(f"Médico {doc[0]['name']} vinculado ao membro {uid}")
     return {"ok": True, "medico": doc[0]["name"]}
 
+def escolher_sucessor(gid: str, excluir_uid: str):
+    """Quem herda a administração: prioriza quem está vinculado a um cadastro de médico
+    (participação real no grupo) e, entre esses, o membro mais antigo."""
+    try:
+        membros = sb_rest("GET", f"/group_members?group_id=eq.{gid}&select=user_id,role,created_at&order=created_at")
+    except Exception:
+        membros = sb_rest("GET", f"/group_members?group_id=eq.{gid}&select=user_id,role")
+    candidatos = [m for m in membros if m["user_id"] != excluir_uid]
+    if not candidatos:
+        return None
+    try:
+        vinculados = {d["user_id"] for d in
+                      sb_rest("GET", f"/doctors?group_id=eq.{gid}&active=eq.true&select=user_id")
+                      if d.get("user_id")}
+    except Exception:
+        vinculados = set()
+    com_vinculo = [m for m in candidatos if m["user_id"] in vinculados]
+    return (com_vinculo or candidatos)[0]["user_id"]
+
+async def transferir_admin(gid: str, novo_uid: str, motivo: str = ""):
+    """Promove um membro a administrador e avisa a pessoa."""
+    sb_rest("PATCH", f"/group_members?group_id=eq.{gid}&user_id=eq.{novo_uid}", {"role": "admin"})
+    _membership_cache.pop(novo_uid, None)
+    try:
+        g = sb_rest("GET", f"/groups?id=eq.{gid}&select=name")
+        nome = g[0]["name"] if g else "seu grupo"
+        await push_user(novo_uid, "🔑 Você agora é administrador",
+                        f"Assumiu a administração de {nome}{(' — ' + motivo) if motivo else ''}.")
+        perfil = sb_rest("GET", f"/profiles?id=eq.{novo_uid}&select=email,full_name")
+        if perfil and perfil[0].get("email"):
+            await send_email(perfil[0]["email"], f"Você agora administra {nome} na A.N.A",
+                             f"<p>Olá{(' ' + perfil[0].get('full_name','')) if perfil[0].get('full_name') else ''},</p>"
+                             f"<p>Você passou a ser <b>administrador</b> do grupo <b>{nome}</b> na A.N.A"
+                             f"{(' porque ' + motivo) if motivo else ''}.</p>"
+                             f"<p>Como administrador você aprova novas entradas, gerencia médicos, setores "
+                             f"e o calendário do grupo.</p>")
+    except Exception as e:
+        log.warning(f"transferir_admin: aviso não enviado — {e}")
+    log.info(f"Administração de {gid} transferida para {novo_uid} ({motivo})")
+
 class PerfilUpdate(BaseModel):
     nome: Optional[str] = None
     telefone: Optional[str] = None
@@ -2661,7 +2701,7 @@ def salvar_perfil(p: PerfilUpdate, user=Depends(auth)):
     return {"ok": True}
 
 @app.delete("/api/conta")
-def excluir_minha_conta(confirmar: str = "", user=Depends(auth)):
+async def excluir_minha_conta(confirmar: str = "", user=Depends(auth)):
     """Exclui a conta do próprio usuário: vínculos, dados pessoais e o login."""
     uid = user["id"]
     email = (user.get("email") or "").strip().lower()
@@ -2673,7 +2713,8 @@ def excluir_minha_conta(confirmar: str = "", user=Depends(auth)):
         vinculos = sb_rest("GET", f"/group_members?user_id=eq.{uid}&select=group_id,role")
     except Exception:
         vinculos = []
-    bloqueios = []
+    # onde o usuário é o único admin, a administração passa adiante (o grupo nunca fica órfão)
+    sucessoes = []
     for v in vinculos:
         if v.get("role") != "admin":
             continue
@@ -2681,11 +2722,16 @@ def excluir_minha_conta(confirmar: str = "", user=Depends(auth)):
         admins = sb_rest("GET", f"/group_members?group_id=eq.{gid}&role=eq.admin&select=user_id")
         membros = sb_rest("GET", f"/group_members?group_id=eq.{gid}&select=user_id")
         if len(admins) == 1 and len(membros) > 1:
-            g = sb_rest("GET", f"/groups?id=eq.{gid}&select=name")
-            bloqueios.append(g[0]["name"] if g else gid[:8])
-    if bloqueios:
-        raise HTTPException(400, "Você é o único administrador de: " + ", ".join(bloqueios) +
-                                 ". Promova outro administrador (ou exclua esses grupos) antes de apagar sua conta.")
+            novo = escolher_sucessor(gid, uid)
+            if novo:
+                try:
+                    await transferir_admin(gid, novo, "o administrador anterior encerrou a conta")
+                    g = sb_rest("GET", f"/groups?id=eq.{gid}&select=name")
+                    sucessoes.append(g[0]["name"] if g else gid[:8])
+                except Exception as e:
+                    log.error(f"excluir_conta: sucessão em {gid} falhou — {e}")
+                    raise HTTPException(500, "Não consegui transferir a administração de um dos seus grupos. "
+                                             "Promova outro administrador manualmente e tente de novo.")
 
     # solta o vínculo com cadastros de médico (preserva o histórico de agendamentos do grupo)
     try:
@@ -2732,26 +2778,57 @@ def excluir_minha_conta(confirmar: str = "", user=Depends(auth)):
                                  "Contate o administrador do sistema.")
 
     _membership_cache.pop(uid, None)
-    log.warning(f"CONTA EXCLUÍDA: {email or uid}")
-    return {"ok": True}
+    log.warning(f"CONTA EXCLUÍDA: {email or uid}" + (f" — administração transferida em: {', '.join(sucessoes)}" if sucessoes else ""))
+    return {"ok": True, "sucessoes": sucessoes}
+
+@app.put("/api/grupos/membros/{uid}/papel")
+async def alterar_papel(uid: str, body: dict, user=Depends(auth)):
+    """Promove um membro a administrador ou o rebaixa a médico."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Apenas administradores.")
+    gid = user.get("org_id") or user.get("group_id")
+    papel = (body or {}).get("papel", "")
+    if papel not in ("admin", "medico"):
+        raise HTTPException(400, "Papel inválido.")
+    alvo = sb_rest("GET", f"/group_members?group_id=eq.{gid}&user_id=eq.{uid}&select=user_id,role")
+    if not alvo:
+        raise HTTPException(404, "Membro não encontrado neste grupo.")
+    if papel == "medico" and uid == user["id"]:
+        admins = sb_rest("GET", f"/group_members?group_id=eq.{gid}&role=eq.admin&select=user_id")
+        if len(admins) <= 1:
+            raise HTTPException(400, "Você é o único administrador — promova outra pessoa antes de se rebaixar.")
+    if papel == "admin":
+        await transferir_admin(gid, uid, f"promovido por {user.get('nome','um administrador')}")
+    else:
+        sb_rest("PATCH", f"/group_members?group_id=eq.{gid}&user_id=eq.{uid}", {"role": "medico"})
+        _membership_cache.pop(uid, None)
+    return {"ok": True, "papel": papel}
 
 @app.post("/api/grupos/sair")
-def sair_grupo(user=Depends(auth)):
+async def sair_grupo(user=Depends(auth)):
     """Membro sai do próprio grupo (não exclui o grupo)."""
     gid = user.get("org_id") or user.get("group_id")
     uid = user["id"]
     # se for o único admin, não pode simplesmente sair e deixar o grupo órfão
+    sucessor_nome = ""
     admins = sb_rest("GET", f"/group_members?group_id=eq.{gid}&role=eq.admin&select=user_id")
     if any(a["user_id"] == uid for a in admins) and len(admins) == 1:
         outros = sb_rest("GET", f"/group_members?group_id=eq.{gid}&select=user_id&limit=2")
         if len(outros) > 1:
-            raise HTTPException(400, "Você é o único administrador. Promova outro membro a admin antes de sair, "
-                                     "ou exclua o grupo.")
+            novo = escolher_sucessor(gid, uid)
+            if not novo:
+                raise HTTPException(400, "Não encontrei ninguém para assumir a administração.")
+            await transferir_admin(gid, novo, "o administrador anterior saiu do grupo")
+            try:
+                p = sb_rest("GET", f"/profiles?id=eq.{novo}&select=full_name")
+                sucessor_nome = (p[0].get("full_name") if p else "") or ""
+            except Exception:
+                pass
     sb_rest("DELETE", f"/group_members?group_id=eq.{gid}&user_id=eq.{uid}")
     sb_rest("PATCH", f"/doctors?group_id=eq.{gid}&user_id=eq.{uid}", {"user_id": None})
     _membership_cache.pop(uid, None)
-    log.info(f"{user['nome']} saiu do grupo {gid}")
-    return {"ok": True}
+    log.info(f"{user['nome']} saiu do grupo {gid}" + (f" — administração para {sucessor_nome}" if sucessor_nome else ""))
+    return {"ok": True, "sucessor": sucessor_nome}
 
 @app.delete("/api/grupos/{gid}")
 def excluir_grupo(gid: str, confirmar: str = "", user=Depends(auth)):
